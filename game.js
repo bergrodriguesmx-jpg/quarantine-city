@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 import * as Textures from './textures.js';
 import * as Scenery from './scenery.js';
 import * as Sfx from './audio.js';
@@ -23,7 +24,7 @@ const CONFIG = {
     attackCooldown: 1.2,
     xpReward: 10,
     coinReward: 2,
-    knockbackStagger: 0.2,  // tempo que cambaleia ao ser atingido
+    knockbackStagger: 0.25,
   },
   wave: {
     baseZombies: 6,
@@ -32,10 +33,11 @@ const CONFIG = {
     breakTime: 5,
   },
   arena: { size: 80 },
-  death: {
-    fallDuration: 0.9,   // tempo para cair
-    stayOnGround: 4,     // tempo morto no chão antes de desaparecer
-    fadeDuration: 1.2,   // tempo do fade
+  ragdoll: {
+    maxActive: 8,          // quantos ragdolls ao mesmo tempo
+    settleTime: 6,         // tempo parado antes de fade
+    fadeDuration: 1.5,     // duração do fade
+    impactImpulse: 12,     // força do empurrão no impacto
   },
 };
 
@@ -108,7 +110,26 @@ fillLight.position.set(-40, 30, -30);
 scene.add(fillLight);
 
 // ============================================================
-// CHÃO
+// FÍSICA (cannon-es) — só pra ragdolls
+// ============================================================
+const world = new CANNON.World({
+  gravity: new CANNON.Vec3(0, -22, 0),
+});
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.allowSleep = true;
+world.defaultContactMaterial.friction = 0.55;
+world.defaultContactMaterial.restitution = 0.12;
+
+// Chão físico
+const groundBody = new CANNON.Body({
+  mass: 0,
+  shape: new CANNON.Plane(),
+});
+groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+world.addBody(groundBody);
+
+// ============================================================
+// CHÃO VISUAL
 // ============================================================
 function createFloor() {
   const size = CONFIG.arena.size;
@@ -124,14 +145,10 @@ function createFloor() {
 }
 createFloor();
 
-// ============================================================
-// CENÁRIO
-// ============================================================
+// Cenário
 Scenery.populateScene(scene, CONFIG.arena.size);
 
-// ============================================================
-// LIMITES INVISÍVEIS
-// ============================================================
+// Limites invisíveis
 const limit = CONFIG.arena.size / 2 - 2;
 const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
 [
@@ -225,7 +242,7 @@ const player = {
 };
 
 // ============================================================
-// ZUMBIS — com sistema de ragdoll
+// ZUMBIS
 // ============================================================
 const zombies = [];
 
@@ -254,7 +271,6 @@ function createZombieMesh() {
   head.castShadow = true;
   g.add(head);
 
-  // Olhos
   const eyeGeo = new THREE.BoxGeometry(0.1, 0.1, 0.02);
   const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
   eyeL.position.set(-0.12, 1.92, 0.28);
@@ -263,12 +279,10 @@ function createZombieMesh() {
   eyeR.position.set(0.12, 1.92, 0.28);
   g.add(eyeR);
 
-  // Boca
   const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.02), woundMat);
   mouth.position.set(0, 1.72, 0.28);
   g.add(mouth);
 
-  // Ferida na cabeça
   const woundHead = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.02), woundMat);
   woundHead.position.set(-0.2, 2, 0.2);
   woundHead.rotation.y = -0.5;
@@ -342,6 +356,11 @@ function createZombieMesh() {
   g.userData.armR = armR;
   g.userData.legL = legL;
   g.userData.legR = legR;
+  g.userData.head = head;
+  g.userData.torso = torso;
+  g.userData.skinColor = skinColor;
+  g.userData.shirtColor = shirtColor;
+  g.userData.pantsColor = pantsColor;
 
   return g;
 }
@@ -366,28 +385,19 @@ function spawnZombie() {
     health: CONFIG.zombie.maxHealth,
     lastAttackTime: 0,
     walkPhase: Math.random() * Math.PI * 2,
-    // Sistema de estados
-    state: 'alive',           // 'alive' | 'dying' | 'dead'
-    dieStartTime: 0,
-    fallAxis: new THREE.Vector3(1, 0, 0),
-    fallDirection: new THREE.Vector3(0, 0, 1),
-    hitReactEndTime: 0,       // cambaleio ao ser atingido (não morre)
+    hitReactEndTime: 0,
     hitDirection: new THREE.Vector3(),
-    maxFallAngle: Math.PI / 2,
-    yStart: 0,
   });
   state.zombiesAlive++;
   updateHUD();
 }
 
 // ============================================================
-// PARTÍCULAS DE SANGUE — spray direcional
+// PARTÍCULAS DE SANGUE
 // ============================================================
 const particles = [];
 
 function spawnBlood(position, direction = null, count = 16) {
-  // direction: direção do spray (ex: direção do ataque)
-  // se null, spray radial
   for (let i = 0; i < count; i++) {
     const size = 0.08 + Math.random() * 0.1;
     const geo = new THREE.BoxGeometry(size, size, size);
@@ -399,22 +409,19 @@ function spawnBlood(position, direction = null, count = 16) {
     const p = new THREE.Mesh(geo, mat);
     p.position.copy(position);
 
-    // Velocidade: se tem direção, spray em cone na direção + espalhamento
     let vel;
     if (direction) {
       const spread = 0.7;
       const dir = direction.clone().normalize();
-      // Vetores perpendiculares
       const perp1 = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
       const perp2 = new THREE.Vector3().crossVectors(dir, perp1).normalize();
       const a = (Math.random() - 0.5) * spread * 2;
       const b = (Math.random() - 0.5) * spread * 2;
-
       const speed = 4 + Math.random() * 5;
       vel = dir.clone().multiplyScalar(speed);
       vel.addScaledVector(perp1, a * speed * 0.5);
       vel.addScaledVector(perp2, b * speed * 0.5);
-      vel.y += 2 + Math.random() * 3; // sobe um pouco
+      vel.y += 2 + Math.random() * 3;
     } else {
       vel = new THREE.Vector3(
         (Math.random() - 0.5) * 6,
@@ -453,12 +460,12 @@ function updateParticles(dt) {
 }
 
 // ============================================================
-// POÇAS DE SANGUE (marcas no chão)
+// POÇAS DE SANGUE
 // ============================================================
 const bloodPools = [];
 
-function spawnBloodPool(position, fallDirection) {
-  const size = 0.6 + Math.random() * 0.5;
+function spawnBloodPool(position) {
+  const size = 0.7 + Math.random() * 0.5;
   const geo = new THREE.CircleGeometry(size, 12);
   const mat = new THREE.MeshBasicMaterial({
     color: 0x6B0000,
@@ -469,17 +476,11 @@ function spawnBloodPool(position, fallDirection) {
   const pool = new THREE.Mesh(geo, mat);
   pool.rotation.x = -Math.PI / 2;
   pool.rotation.z = Math.random() * Math.PI * 2;
-  // Estica na direção da queda
-  if (fallDirection) {
-    pool.scale.set(1 + Math.random() * 0.5, 0.6, 1);
-    pool.rotation.z = Math.atan2(fallDirection.x, fallDirection.z);
-  }
   pool.position.set(position.x, 0.03, position.z);
   pool.renderOrder = 1;
   scene.add(pool);
   bloodPools.push({ mesh: pool, life: 30 });
 
-  // Limita a 20 poças
   if (bloodPools.length > 20) {
     const old = bloodPools.shift();
     scene.remove(old.mesh);
@@ -505,105 +506,317 @@ function updateBloodPools(dt) {
 }
 
 // ============================================================
-// RAGDOLL — iniciar queda e animar
+// RAGDOLL — física real com cannon-es
 // ============================================================
-function startDying(z, hitDirection) {
-  z.state = 'dying';
-  z.dieStartTime = performance.now() / 1000;
-  z.yStart = z.mesh.position.y;
+const ragdolls = [];
 
-  // Direção da queda: empurrado na direção do golpe
-  let fallDir;
-  if (hitDirection && hitDirection.lengthSq() > 0.01) {
-    fallDir = hitDirection.clone().normalize();
-  } else {
-    fallDir = new THREE.Vector3(
-      (Math.random() - 0.5) * 2, 0, (Math.random() - 0.5) * 2
-    ).normalize();
-  }
-  z.fallDirection.copy(fallDir);
+class Ragdoll {
+  constructor(zombieMesh, hitDir, hitStrength) {
+    this.parts = [];        // { mesh, body, mesh }
+    this.constraints = [];
+    this.startTime = performance.now() / 1000;
+    this.settleStart = 0;
+    this.state = 'falling'; // falling → settled → fading
+    this.fadeProgress = 0;
+    this.meshes = [];       // pra limpar depois
 
-  // Eixo de rotação perpendicular à direção da queda (para o zumbi tombar de lado)
-  z.fallAxis.set(-fallDir.z, 0, fallDir.x).normalize();
+    zombieMesh.updateMatrixWorld(true);
 
-  // Quantidade de rotação: tomba ~90 graus
-  z.maxFallAngle = Math.PI / 2;
+    const skin = zombieMesh.userData.skinColor;
+    const shirt = zombieMesh.userData.shirtColor;
+    const pants = zombieMesh.userData.pantsColor;
 
-  // Pernas e braços ficam moles
-  if (z.mesh.userData.armL) {
-    z.mesh.userData.armL.rotation.x = -0.3 + Math.random() * 0.6;
-    z.mesh.userData.armL.rotation.z = (Math.random() - 0.5) * 0.5;
-    z.mesh.userData.armR.rotation.x = -0.3 + Math.random() * 0.6;
-    z.mesh.userData.armR.rotation.z = (Math.random() - 0.5) * 0.5;
-    z.mesh.userData.legL.rotation.x = (Math.random() - 0.5) * 0.5;
-    z.mesh.userData.legL.rotation.z = (Math.random() - 0.5) * 0.3;
-    z.mesh.userData.legR.rotation.x = (Math.random() - 0.5) * 0.5;
-    z.mesh.userData.legR.rotation.z = (Math.random() - 0.5) * 0.3;
-  }
+    const skinMat  = new THREE.MeshLambertMaterial({ color: skin });
+    const shirtMat = new THREE.MeshLambertMaterial({ color: shirt });
+    const pantsMat = new THREE.MeshLambertMaterial({ color: pants });
 
-  // Prepara materiais para fade futuro
-  z.mesh.traverse(c => {
-    if (c.material) {
-      c.material.transparent = true;
+    // Helper: pega posição/quaternion do mundo a partir de um objeto
+    const getWorld = (obj) => {
+      const p = new THREE.Vector3();
+      const q = new THREE.Quaternion();
+      obj.getWorldPosition(p);
+      obj.getWorldQuaternion(q);
+      return { p, q };
+    };
+
+    // DEFINIÇÃO DAS PARTES
+    // Cada parte: tamanho, massa, material, e função para pegar world transform
+    const partDefs = [
+      {
+        key: 'torso',
+        size: new THREE.Vector3(0.7, 0.85, 0.35),
+        mass: 6,
+        material: shirtMat,
+        getWorld: () => getWorld(zombieMesh.userData.torso),
+      },
+      {
+        key: 'head',
+        size: new THREE.Vector3(0.55, 0.55, 0.55),
+        mass: 2.5,
+        material: skinMat,
+        getWorld: () => getWorld(zombieMesh.userData.head),
+      },
+      {
+        key: 'armL',
+        size: new THREE.Vector3(0.22, 0.9, 0.22),
+        mass: 1.2,
+        material: shirtMat,
+        getWorld: () => {
+          // Arm center offset: a group do braço está em (side*0.46, 1.5, 0) local
+          // Mas o centro visual do braço (upper+lower+hand) está mais ou menos
+          // em y=-0.5 dentro do group. Vou usar a posição do group.
+          const p = new THREE.Vector3();
+          const q = new THREE.Quaternion();
+          zombieMesh.userData.armL.getWorldPosition(p);
+          zombieMesh.userData.armL.getWorldQuaternion(q);
+          // Ajusta p/ o centro visual (o braço se estende pra baixo)
+          p.y -= 0.45;
+          return { p, q };
+        },
+      },
+      {
+        key: 'armR',
+        size: new THREE.Vector3(0.22, 0.9, 0.22),
+        mass: 1.2,
+        material: shirtMat,
+        getWorld: () => {
+          const p = new THREE.Vector3();
+          const q = new THREE.Quaternion();
+          zombieMesh.userData.armR.getWorldPosition(p);
+          zombieMesh.userData.armR.getWorldQuaternion(q);
+          p.y -= 0.45;
+          return { p, q };
+        },
+      },
+      {
+        key: 'legL',
+        size: new THREE.Vector3(0.26, 0.75, 0.26),
+        mass: 1.8,
+        material: pantsMat,
+        getWorld: () => {
+          const p = new THREE.Vector3();
+          const q = new THREE.Quaternion();
+          zombieMesh.userData.legL.getWorldPosition(p);
+          zombieMesh.userData.legL.getWorldQuaternion(q);
+          p.y -= 0.35;
+          return { p, q };
+        },
+      },
+      {
+        key: 'legR',
+        size: new THREE.Vector3(0.26, 0.75, 0.26),
+        mass: 1.8,
+        material: pantsMat,
+        getWorld: () => {
+          const p = new THREE.Vector3();
+          const q = new THREE.Quaternion();
+          zombieMesh.userData.legR.getWorldPosition(p);
+          zombieMesh.userData.legR.getWorldQuaternion(q);
+          p.y -= 0.35;
+          return { p, q };
+        },
+      },
+    ];
+
+    // Cria cada parte
+    const partsByKey = {};
+    for (const def of partDefs) {
+      const { p, q } = def.getWorld();
+
+      // Mesh Three.js
+      const geo = new THREE.BoxGeometry(def.size.x, def.size.y, def.size.z);
+      const mesh = new THREE.Mesh(geo, def.material);
+      mesh.position.copy(p);
+      mesh.quaternion.copy(q);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      this.meshes.push(mesh);
+
+      // Corpo Cannon
+      const shape = new CANNON.Box(new CANNON.Vec3(
+        def.size.x / 2, def.size.y / 2, def.size.z / 2
+      ));
+      const body = new CANNON.Body({
+        mass: def.mass,
+        shape,
+        position: new CANNON.Vec3(p.x, p.y, p.z),
+        quaternion: new CANNON.Quaternion(q.x, q.y, q.z, q.w),
+        linearDamping: 0.15,
+        angularDamping: 0.25,
+        sleepSpeedLimit: 0.4,
+        sleepTimeLimit: 0.8,
+      });
+      world.addBody(body);
+
+      const part = { mesh, body, key: def.key, size: def.size };
+      this.parts.push(part);
+      partsByKey[def.key] = part;
     }
-  });
 
-  // Guarda rotação inicial (posição do "olhar" antes da morte)
-  z.initialQuat = z.mesh.quaternion.clone();
+    // ============================================================
+    // JOINTS (constraints) — pescoço, ombros e quadris
+    // ============================================================
+    const torso = partsByKey.torso;
+    const head  = partsByKey.head;
+    const armL  = partsByKey.armL;
+    const armR  = partsByKey.armR;
+    const legL  = partsByKey.legL;
+    const legR  = partsByKey.legR;
 
-  // Poça de sangue embaixo (será criada conforme cai)
-  spawnBloodPool(z.mesh.position.clone(), fallDir);
+    // Pescoço: ponto no topo do torso e no fundo da cabeça
+    this.constraints.push(new CANNON.PointToPointConstraint(
+      torso.body,
+      new CANNON.Vec3(0, torso.size.y / 2, 0),
+      head.body,
+      new CANNON.Vec3(0, -head.size.y / 2, 0),
+      Math.max(15, (torso.body.mass + head.body.mass) * 4)
+    ));
+
+    // Ombro esquerdo
+    this.constraints.push(new CANNON.PointToPointConstraint(
+      torso.body,
+      new CANNON.Vec3(-torso.size.x / 2 + 0.05, torso.size.y / 2 - 0.1, 0),
+      armL.body,
+      new CANNON.Vec3(0, armL.size.y / 2, 0),
+      12
+    ));
+
+    // Ombro direito
+    this.constraints.push(new CANNON.PointToPointConstraint(
+      torso.body,
+      new CANNON.Vec3(torso.size.x / 2 - 0.05, torso.size.y / 2 - 0.1, 0),
+      armR.body,
+      new CANNON.Vec3(0, armR.size.y / 2, 0),
+      12
+    ));
+
+    // Quadril esquerdo
+    this.constraints.push(new CANNON.PointToPointConstraint(
+      torso.body,
+      new CANNON.Vec3(-0.18, -torso.size.y / 2 + 0.05, 0),
+      legL.body,
+      new CANNON.Vec3(0, legL.size.y / 2, 0),
+      14
+    ));
+
+    // Quadril direito
+    this.constraints.push(new CANNON.PointToPointConstraint(
+      torso.body,
+      new CANNON.Vec3(0.18, -torso.size.y / 2 + 0.05, 0),
+      legR.body,
+      new CANNON.Vec3(0, legR.size.y / 2, 0),
+      14
+    ));
+
+    this.constraints.forEach(c => world.addConstraint(c));
+
+    // ============================================================
+    // IMPULSO INICIAL — empurra na direção do golpe
+    // ============================================================
+    const impulseStrength = CONFIG.ragdoll.impactImpulse * hitStrength;
+    const impulseDir = hitDir.clone().normalize();
+
+    // Aplica no torso principal
+    torso.body.applyImpulse(
+      new CANNON.Vec3(
+        impulseDir.x * impulseStrength,
+        impulseStrength * 0.35,   // sobe um pouco
+        impulseDir.z * impulseStrength
+      ),
+      new CANNON.Vec3(0, 0.2, 0)  // aplicado acima do centro (faz girar)
+    );
+
+    // Aplica um pouco nos braços e pernas pra dar espalhamento
+    [armL, armR, legL, legR].forEach(part => {
+      const rand = () => (Math.random() - 0.5) * 0.6;
+      part.body.applyImpulse(
+        new CANNON.Vec3(
+          impulseDir.x * impulseStrength * 0.3 + rand(),
+          impulseStrength * 0.15 + rand(),
+          impulseDir.z * impulseStrength * 0.3 + rand()
+        ),
+        new CANNON.Vec3(0, 0, 0)
+      );
+    });
+
+    // Rotação aleatória na cabeça
+    head.body.angularVelocity.set(
+      (Math.random() - 0.5) * 6,
+      (Math.random() - 0.5) * 6,
+      (Math.random() - 0.5) * 6
+    );
+
+    // Remove o mesh original do zumbi
+    scene.remove(zombieMesh);
+  }
+
+  update(dt) {
+    if (this.state === 'fading') {
+      this.fadeProgress += dt / CONFIG.ragdoll.fadeDuration;
+      const opacity = Math.max(0, 1 - this.fadeProgress);
+      this.meshes.forEach(m => {
+        m.material.transparent = true;
+        m.material.opacity = opacity;
+      });
+      if (this.fadeProgress >= 1) {
+        return true; // remove
+      }
+      return false;
+    }
+
+    // Sincroniza meshes com bodies
+    this.parts.forEach(p => {
+      p.mesh.position.copy(p.body.position);
+      p.mesh.quaternion.copy(p.body.quaternion);
+    });
+
+    // Checa se está tudo dormindo (settled)
+    if (this.state === 'falling') {
+      const allSleeping = this.parts.every(p => p.body.sleepState === CANNON.Body.SLEEPING);
+      const timeSinceSpawn = performance.now() / 1000 - this.startTime;
+      if (allSleeping || timeSinceSpawn > 3) {
+        // Começa a contar tempo parado
+        if (this.settleStart === 0) this.settleStart = performance.now() / 1000;
+      } else {
+        this.settleStart = 0;
+      }
+
+      if (this.settleStart > 0) {
+        const settleDur = performance.now() / 1000 - this.settleStart;
+        if (settleDur > CONFIG.ragdoll.settleTime) {
+          this.state = 'fading';
+          this.fadeProgress = 0;
+          // Solta poça de sangue embaixo
+          const torso = this.parts.find(p => p.key === 'torso');
+          if (torso) spawnBloodPool(torso.mesh.position);
+        }
+      }
+    }
+
+    return false;
+  }
+
+  dispose() {
+    this.parts.forEach(p => {
+      scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      p.mesh.material.dispose();
+      world.removeBody(p.body);
+    });
+    this.constraints.forEach(c => world.removeConstraint(c));
+  }
 }
 
-function updateDying(z, now) {
-  const t = now - z.dieStartTime;
-  const fallDur = CONFIG.death.fallDuration;
-  const stayDur = CONFIG.death.stayOnGround;
-  const fadeDur = CONFIG.death.fadeDuration;
-
-  if (t < fallDur) {
-    // Fase de queda com ease-out
-    const p = t / fallDur;
-    const ease = 1 - Math.pow(1 - p, 3);
-    const angle = ease * z.maxFallAngle;
-
-    // Aplica rotação: parte da rotação original + giro de queda
-    const fallQuat = new THREE.Quaternion().setFromAxisAngle(z.fallAxis, angle);
-    z.mesh.quaternion.copy(z.initialQuat).multiply(fallQuat);
-
-    // Ajusta Y: sobe um pouco no meio (impacto) e assenta
-    const bumpY = Math.sin(p * Math.PI) * 0.15;
-    z.mesh.position.y = z.yStart + ease * 0.25 + bumpY;
-
-  } else if (t < fallDur + stayDur) {
-    // Parado no chão
-    const fallQuat = new THREE.Quaternion().setFromAxisAngle(z.fallAxis, z.maxFallAngle);
-    z.mesh.quaternion.copy(z.initialQuat).multiply(fallQuat);
-    z.mesh.position.y = z.yStart + 0.25;
-
-  } else if (t < fallDur + stayDur + fadeDur) {
-    // Fade out
-    const p = (t - fallDur - stayDur) / fadeDur;
-    const fallQuat = new THREE.Quaternion().setFromAxisAngle(z.fallAxis, z.maxFallAngle);
-    z.mesh.quaternion.copy(z.initialQuat).multiply(fallQuat);
-    z.mesh.position.y = z.yStart + 0.25;
-
-    z.mesh.traverse(c => {
-      if (c.material && c.material.transparent) {
-        c.material.opacity = 1 - p;
-      }
-    });
-
-  } else {
-    // Remove
-    scene.remove(z.mesh);
-    z.mesh.traverse(c => {
-      if (c.geometry) c.geometry.dispose();
-      if (c.material) c.material.dispose();
-    });
-    return true;
+function startRagdoll(zombieMesh, hitDir, hitStrength = 1) {
+  // Limita quantidade de ragdolls
+  if (ragdolls.length >= CONFIG.ragdoll.maxActive) {
+    const oldest = ragdolls.shift();
+    oldest.dispose();
   }
-  return false;
+
+  const ragdoll = new Ragdoll(zombieMesh, hitDir, hitStrength);
+  ragdolls.push(ragdoll);
 }
 
 // ============================================================
@@ -654,7 +867,7 @@ function attack() {
   forward.y = 0; forward.normalize();
 
   zombies.forEach(z => {
-    if (z.state !== 'alive') return;
+    if (z.health <= 0) return;
 
     const toZ = new THREE.Vector3().subVectors(z.mesh.position, player.position);
     toZ.y = 0;
@@ -662,27 +875,21 @@ function attack() {
     toZ.normalize();
     if (forward.dot(toZ) < 0.4) return;
 
-    // === DANO ===
     z.health -= CONFIG.player.attackDamage;
 
-    // Direção do hit (do jogador para o zumbi)
     const hitDir = new THREE.Vector3()
       .subVectors(z.mesh.position, player.position);
     hitDir.y = 0;
     hitDir.normalize();
 
-    // Ponto de impacto (peito do zumbi, ~1.1m)
     const hitPoint = z.mesh.position.clone();
     hitPoint.y += 1.1;
 
-    // === SANGUE NO PONTO DE IMPACTO ===
     spawnBlood(hitPoint, hitDir, 14);
-
-    // === FEEDBACK VISUAL ===
     Sfx.playHit();
     showHitMarker();
 
-    // Pisca branco rápido
+    // Pisca branco
     z.mesh.traverse(c => {
       if (c.material && c.material.color && !c.material.emissive) {
         if (!c.userData._origColor) c.userData._origColor = c.material.color.getHex();
@@ -695,19 +902,24 @@ function attack() {
       }
     });
 
-    // === MORTE ou CAMBALEIO ===
     if (z.health <= 0) {
-      // MORTE: inicia ragdoll
+      // MORTE: cria ragdoll
       Sfx.playZombieDeath();
       Sfx.playCoin();
       state.coins += CONFIG.zombie.coinReward;
       state.xp += CONFIG.zombie.xpReward;
       checkLevelUp();
-      startDying(z, hitDir);
+
+      // Strength do impulso varia com o quanto de dano sobrou no golpe
+      const overkill = Math.min(2, Math.max(0.6, -z.health / CONFIG.zombie.maxHealth + 1));
+      startRagdoll(z.mesh, hitDir, overkill);
+
+      // Remove dos zumbis
+      const idx = zombies.indexOf(z);
+      if (idx >= 0) zombies.splice(idx, 1);
       state.zombiesAlive--;
       updateHUD();
     } else {
-      // CAMBALEIO: empurra pra trás e inclina
       z.hitReactEndTime = now + CONFIG.zombie.knockbackStagger;
       z.hitDirection.copy(hitDir);
     }
@@ -909,61 +1121,74 @@ function updateZombies(dt) {
   const now = performance.now() / 1000;
 
   groanTimer -= dt;
-  if (groanTimer <= 0 && zombies.some(z => z.state === 'alive')) {
+  if (groanTimer <= 0 && zombies.length > 0) {
     groanTimer = 1.5 + Math.random() * 3;
     Sfx.playGroan();
   }
 
-  for (let i = zombies.length - 1; i >= 0; i--) {
-    const z = zombies[i];
+  zombies.forEach(z => {
+    if (z.health <= 0) return;
 
-    // Morto (ragdoll)
-    if (z.state === 'dying') {
-      const removed = updateDying(z, now);
-      if (removed) zombies.splice(i, 1);
-      continue;
-    }
-
-    if (z.state !== 'alive') continue;
+    // === MANCANDO: se HP baixo, anda torto e mais devagar ===
+    const hpPercent = z.health / CONFIG.zombie.maxHealth;
+    const isWounded = hpPercent < 0.5;
+    const woundedFactor = isWounded ? hpPercent / 0.5 : 1; // 0..1
 
     const toP = new THREE.Vector3().subVectors(player.position, z.mesh.position);
     toP.y = 0;
     const dist = toP.length();
 
-    // Olhar para o jogador
     z.mesh.lookAt(player.position.x, z.mesh.position.y, player.position.z);
 
-    // === CAMBALEIO (impacto) ===
     const staggering = z.hitReactEndTime > now;
     if (staggering) {
       const lean = (z.hitReactEndTime - now) / CONFIG.zombie.knockbackStagger;
-      // Inclina pra trás (sentido contrário ao hit)
       z.mesh.rotateX(-lean * 0.45);
-      // Empurra um pouco pra trás
       z.mesh.position.addScaledVector(z.hitDirection, -dt * 4 * lean);
-      // Braços pra trás (impacto)
       if (z.mesh.userData.armL) {
         z.mesh.userData.armL.rotation.x = -1.5 + lean * 0.8;
         z.mesh.userData.armR.rotation.x = -1.5 + lean * 0.8;
       }
     } else {
-      // Animação normal de andar
-      z.walkPhase += dt * 5;
-      const swing = Math.sin(z.walkPhase) * 0.55;
+      // Animação de andar
+      const walkSpeed = isWounded ? 3.2 : 5; // mais devagar se ferido
+      z.walkPhase += dt * walkSpeed;
+
+      let swing = Math.sin(z.walkPhase) * 0.55;
+
+      // Mancando: uma perna arrasta
+      let legLSwing = swing;
+      let legRSwing = -swing;
+      if (isWounded) {
+        // Perna esquerda (ou direita) arrasta mais, com amplitude menor
+        const dragAmount = 1 - woundedFactor; // 0..1
+        legLSwing = swing * (1 - dragAmount * 0.8);
+        legRSwing = -swing * (1 - dragAmount * 0.4);
+      }
+
       if (z.mesh.userData.legL) {
-        z.mesh.userData.legL.rotation.x = swing;
-        z.mesh.userData.legR.rotation.x = -swing;
+        z.mesh.userData.legL.rotation.x = legLSwing;
+        z.mesh.userData.legR.rotation.x = legRSwing;
       }
       if (z.mesh.userData.armL) {
         z.mesh.userData.armL.rotation.x = -1.5 + Math.sin(z.walkPhase) * 0.12;
         z.mesh.userData.armR.rotation.x = -1.5 + Math.cos(z.walkPhase) * 0.12;
       }
+
+      // Inclina o corpo quando mancando
+      if (isWounded) {
+        const tilt = (1 - woundedFactor) * 0.25;
+        z.mesh.rotation.z = Math.sin(z.walkPhase * 0.5) * tilt;
+      } else {
+        z.mesh.rotation.z = 0;
+      }
     }
 
     // Movimento
+    const zombieSpeed = CONFIG.zombie.speed * (isWounded ? 0.6 : 1);
     if (!staggering && dist > CONFIG.zombie.attackRange) {
       toP.normalize();
-      z.mesh.position.addScaledVector(toP, CONFIG.zombie.speed * dt);
+      z.mesh.position.addScaledVector(toP, zombieSpeed * dt);
     } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
       z.lastAttackTime = now;
       state.health -= CONFIG.zombie.damage;
@@ -971,6 +1196,17 @@ function updateZombies(dt) {
       showDamageFlash();
       updateHUD();
       if (state.health <= 0) gameOver();
+    }
+  });
+}
+
+function updateRagdolls(dt) {
+  for (let i = ragdolls.length - 1; i >= 0; i--) {
+    const r = ragdolls[i];
+    const removed = r.update(dt);
+    if (removed) {
+      r.dispose();
+      ragdolls.splice(i, 1);
     }
   }
 }
@@ -986,6 +1222,10 @@ function animate() {
     checkWaveComplete();
     updateWeaponViewModel(dt);
 
+    // Física dos ragdolls
+    world.step(1 / 60, dt, 3);
+    updateRagdolls(dt);
+
     const elapsed = Math.floor((performance.now() - state.startTime) / 1000);
     const min = Math.floor(elapsed / 60);
     const sec = (elapsed % 60).toString().padStart(2, '0');
@@ -993,6 +1233,8 @@ function animate() {
   } else {
     updateParticles(dt);
     updateBloodPools(dt);
+    world.step(1 / 60, dt, 3);
+    updateRagdolls(dt);
   }
   renderer.render(scene, camera);
 }
@@ -1028,21 +1270,16 @@ function startGame() {
   state.running = true; state.betweenWaves = false;
   state.startTime = performance.now();
 
-  // Limpa zumbis
-  zombies.forEach(z => {
-    scene.remove(z.mesh);
-    z.mesh.traverse(c => {
-      if (c.geometry) c.geometry.dispose();
-      if (c.material) c.material.dispose();
-    });
-  });
+  // Limpa zumbis vivos
+  zombies.forEach(z => scene.remove(z.mesh));
   zombies.length = 0;
 
-  // Limpa partículas
+  // Limpa ragdolls
+  ragdolls.forEach(r => r.dispose());
+  ragdolls.length = 0;
+
   particles.forEach(p => scene.remove(p.mesh));
   particles.length = 0;
-
-  // Limpa poças de sangue
   bloodPools.forEach(b => scene.remove(b.mesh));
   bloodPools.length = 0;
 
