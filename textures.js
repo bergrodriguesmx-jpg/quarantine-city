@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 // ============================================================
-// TEXTURAS SIMPLES — cores chapadas estilo Zumbi Blocks 2
+// TEXTURAS - estilo Zumbi Blocks 2
 // ============================================================
 
 function makeCanvas(size = 16) {
@@ -18,7 +18,6 @@ function makeTex(canvas) {
   return tex;
 }
 
-// Grama verde-limão vibrante (cor chapada com pequenas variações)
 export function grassTexture() {
   const c = makeCanvas(16);
   const ctx = c.getContext('2d');
@@ -34,7 +33,6 @@ export function grassTexture() {
   return makeTex(c);
 }
 
-// Asfalto cinza
 export function asphaltTexture() {
   const c = makeCanvas(16);
   const ctx = c.getContext('2d');
@@ -47,7 +45,6 @@ export function asphaltTexture() {
   return makeTex(c);
 }
 
-// Parede branca de casa
 export function houseWallTexture(color = '#ECF0F1') {
   const c = makeCanvas(16);
   const ctx = c.getContext('2d');
@@ -59,7 +56,6 @@ export function houseWallTexture(color = '#ECF0F1') {
   return makeTex(c);
 }
 
-// Telhado vermelho ou cinza
 export function roofTexture(color = '#C0392B') {
   const c = makeCanvas(16);
   const ctx = c.getContext('2d');
@@ -72,7 +68,6 @@ export function roofTexture(color = '#C0392B') {
   return makeTex(c);
 }
 
-// Tronco de árvore
 export function barkTexture() {
   const c = makeCanvas(16);
   const ctx = c.getContext('2d');
@@ -84,7 +79,6 @@ export function barkTexture() {
   return makeTex(c);
 }
 
-// Céu com gradiente azul e nuvens pixeladas
 export function skyTexture() {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 256;
@@ -97,7 +91,6 @@ export function skyTexture() {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 512, 256);
 
-  // Nuvens pixeladas (blocos)
   ctx.fillStyle = 'rgba(255,255,255,0.95)';
   function cloud(cx, cy, w, h) {
     ctx.fillRect(cx, cy, w, h);
@@ -117,95 +110,74 @@ export function skyTexture() {
   tex.minFilter = THREE.LinearFilter;
   return tex;
 }
+
 // ============================================================
-// ROSTO DO ZUMBI — textura com olhos e boca
-// isDead = true → olhos fechados, boca aberta (morrendo)
+// ROSTO DO ZUMBI - vivo ou morto
 // ============================================================
 export function zombieHeadTexture(skinColorHex, isDead = false) {
   const c = makeCanvas(32);
   const ctx = c.getContext('2d');
 
-  // Cor base (pele)
   ctx.fillStyle = skinColorHex;
   ctx.fillRect(0, 0, 32, 32);
 
-  // Sombra sutil nas bordas
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.fillRect(0, 30, 32, 2);
   ctx.fillRect(30, 0, 2, 32);
   ctx.fillRect(0, 0, 2, 32);
   ctx.fillRect(0, 0, 32, 2);
 
-  // Manchas de pele (dá textura)
   ctx.fillStyle = 'rgba(0,0,0,0.08)';
   ctx.fillRect(4, 6, 3, 2);
   ctx.fillRect(24, 20, 3, 2);
   ctx.fillRect(8, 24, 2, 3);
 
-  // Ferida na testa
   ctx.fillStyle = '#C0392B';
   ctx.fillRect(20, 4, 5, 3);
   ctx.fillStyle = '#8B0000';
   ctx.fillRect(22, 6, 2, 1);
 
-  // ================= OLHOS =================
   if (isDead) {
-    // Olhos FECHADOS (linhas horizontais finas, com cantos caídos)
     ctx.fillStyle = '#000';
-    // Olho esquerdo fechado
     ctx.fillRect(5, 13, 7, 1);
     ctx.fillRect(5, 14, 1, 1);
     ctx.fillRect(11, 14, 1, 1);
-    // Olho direito fechado
     ctx.fillRect(20, 13, 7, 1);
     ctx.fillRect(20, 14, 1, 1);
     ctx.fillRect(26, 14, 1, 1);
 
-    // Cílios/sombra por baixo (olheiras de morte)
     ctx.fillStyle = 'rgba(80,0,0,0.35)';
     ctx.fillRect(5, 15, 7, 1);
     ctx.fillRect(20, 15, 7, 1);
   } else {
-    // Olhos ABERTOS (retângulos escuros, olhar vazio)
     ctx.fillStyle = '#000';
-    // Olho esquerdo
     ctx.fillRect(5, 11, 7, 5);
-    // Olho direito
     ctx.fillRect(20, 11, 7, 5);
 
-    // Brilho/pupila (um pixel branco no canto)
     ctx.fillStyle = '#FFF';
     ctx.fillRect(6, 12, 1, 1);
     ctx.fillRect(21, 12, 1, 1);
 
-    // Contorno vermelho (sangue nos olhos)
     ctx.fillStyle = 'rgba(139,0,0,0.5)';
     ctx.fillRect(4, 10, 9, 1);
     ctx.fillRect(19, 10, 9, 1);
   }
 
-  // ================= BOCA =================
   if (isDead) {
-    // Boca ABERTA (mandíbula caída, grito silencioso)
     ctx.fillStyle = '#2B0000';
     ctx.fillRect(10, 21, 12, 6);
-    // Língua ou interior avermelhado
     ctx.fillStyle = '#7A0A0A';
     ctx.fillRect(11, 23, 10, 3);
-    // Dentes (traços brancos)
     ctx.fillStyle = '#E8E0D0';
     ctx.fillRect(11, 21, 1, 2);
     ctx.fillRect(14, 21, 1, 2);
     ctx.fillRect(17, 21, 1, 2);
     ctx.fillRect(20, 21, 1, 2);
-    // Sangue escorrendo pelo canto
     ctx.fillStyle = '#8B0000';
     ctx.fillRect(21, 27, 1, 3);
   } else {
-    // Boca normal (linha vermelha fina)
     ctx.fillStyle = '#5A0000';
     ctx.fillRect(11, 22, 10, 2);
-    // Sangue no canto da boca
     ctx.fillStyle = '#8B0000';
     ctx.fillRect(21, 23, 1, 1);
   }
