@@ -12,7 +12,6 @@ body {
 #game-container { position: fixed; inset: 0; }
 canvas { display: block; }
 
-/* ===== MENU ===== */
 .menu-overlay {
   position: fixed; inset: 0;
   background: #1a1a1a;
@@ -67,7 +66,6 @@ canvas { display: block; }
 }
 .menu-btn:active { transform: scale(0.98); }
 
-/* ===== HUD ===== */
 #hud {
   position: fixed; inset: 0;
   pointer-events: none;
@@ -237,7 +235,6 @@ canvas { display: block; }
   transform: translate(-50%, -50%) scale(1);
 }
 
-/* ===== MOBILE ===== */
 #mobile-controls {
   position: fixed; inset: 0;
   pointer-events: none;
