@@ -117,3 +117,101 @@ export function skyTexture() {
   tex.minFilter = THREE.LinearFilter;
   return tex;
 }
+// ============================================================
+// ROSTO DO ZUMBI — textura com olhos e boca
+// isDead = true → olhos fechados, boca aberta (morrendo)
+// ============================================================
+export function zombieHeadTexture(skinColorHex, isDead = false) {
+  const c = makeCanvas(32);
+  const ctx = c.getContext('2d');
+
+  // Cor base (pele)
+  ctx.fillStyle = skinColorHex;
+  ctx.fillRect(0, 0, 32, 32);
+
+  // Sombra sutil nas bordas
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillRect(0, 30, 32, 2);
+  ctx.fillRect(30, 0, 2, 32);
+  ctx.fillRect(0, 0, 2, 32);
+  ctx.fillRect(0, 0, 32, 2);
+
+  // Manchas de pele (dá textura)
+  ctx.fillStyle = 'rgba(0,0,0,0.08)';
+  ctx.fillRect(4, 6, 3, 2);
+  ctx.fillRect(24, 20, 3, 2);
+  ctx.fillRect(8, 24, 2, 3);
+
+  // Ferida na testa
+  ctx.fillStyle = '#C0392B';
+  ctx.fillRect(20, 4, 5, 3);
+  ctx.fillStyle = '#8B0000';
+  ctx.fillRect(22, 6, 2, 1);
+
+  // ================= OLHOS =================
+  if (isDead) {
+    // Olhos FECHADOS (linhas horizontais finas, com cantos caídos)
+    ctx.fillStyle = '#000';
+    // Olho esquerdo fechado
+    ctx.fillRect(5, 13, 7, 1);
+    ctx.fillRect(5, 14, 1, 1);
+    ctx.fillRect(11, 14, 1, 1);
+    // Olho direito fechado
+    ctx.fillRect(20, 13, 7, 1);
+    ctx.fillRect(20, 14, 1, 1);
+    ctx.fillRect(26, 14, 1, 1);
+
+    // Cílios/sombra por baixo (olheiras de morte)
+    ctx.fillStyle = 'rgba(80,0,0,0.35)';
+    ctx.fillRect(5, 15, 7, 1);
+    ctx.fillRect(20, 15, 7, 1);
+  } else {
+    // Olhos ABERTOS (retângulos escuros, olhar vazio)
+    ctx.fillStyle = '#000';
+    // Olho esquerdo
+    ctx.fillRect(5, 11, 7, 5);
+    // Olho direito
+    ctx.fillRect(20, 11, 7, 5);
+
+    // Brilho/pupila (um pixel branco no canto)
+    ctx.fillStyle = '#FFF';
+    ctx.fillRect(6, 12, 1, 1);
+    ctx.fillRect(21, 12, 1, 1);
+
+    // Contorno vermelho (sangue nos olhos)
+    ctx.fillStyle = 'rgba(139,0,0,0.5)';
+    ctx.fillRect(4, 10, 9, 1);
+    ctx.fillRect(19, 10, 9, 1);
+  }
+
+  // ================= BOCA =================
+  if (isDead) {
+    // Boca ABERTA (mandíbula caída, grito silencioso)
+    ctx.fillStyle = '#2B0000';
+    ctx.fillRect(10, 21, 12, 6);
+    // Língua ou interior avermelhado
+    ctx.fillStyle = '#7A0A0A';
+    ctx.fillRect(11, 23, 10, 3);
+    // Dentes (traços brancos)
+    ctx.fillStyle = '#E8E0D0';
+    ctx.fillRect(11, 21, 1, 2);
+    ctx.fillRect(14, 21, 1, 2);
+    ctx.fillRect(17, 21, 1, 2);
+    ctx.fillRect(20, 21, 1, 2);
+    // Sangue escorrendo pelo canto
+    ctx.fillStyle = '#8B0000';
+    ctx.fillRect(21, 27, 1, 3);
+  } else {
+    // Boca normal (linha vermelha fina)
+    ctx.fillStyle = '#5A0000';
+    ctx.fillRect(11, 22, 10, 2);
+    // Sangue no canto da boca
+    ctx.fillStyle = '#8B0000';
+    ctx.fillRect(21, 23, 1, 1);
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  return tex;
+}
