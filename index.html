@@ -2,13 +2,72 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Quarantine City</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>Quarantine City</h1>
-  <p>O jogo está sendo construído...</p>
-  <script src="game.js"></script>
+  <div id="game-container"></div>
+  <div id="crosshair"></div>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div id="hud-top">
+      <div class="hud-item">
+        <span class="hud-label">VIDA</span>
+        <div class="bar"><div id="health-bar" class="bar-fill health"></div></div>
+      </div>
+      <div class="hud-item">
+        <span class="hud-label">XP</span>
+        <div class="bar"><div id="xp-bar" class="bar-fill xp"></div></div>
+      </div>
+    </div>
+    <div id="hud-bottom">
+      <div class="hud-stat">💰 <span id="coins">0</span></div>
+      <div class="hud-stat">🌊 Horda <span id="wave">0</span></div>
+      <div class="hud-stat">⭐ Nível <span id="level">1</span></div>
+      <div class="hud-stat">🧟 <span id="zombies">0</span></div>
+    </div>
+  </div>
+
+  <!-- Menu inicial -->
+  <div id="menu" class="overlay">
+    <h1>QUARANTINE CITY</h1>
+    <p>Sobreviva às hordas de zumbis</p>
+    <button id="btn-start">JOGAR</button>
+    <div id="controls-info">
+      <p><strong>PC:</strong> WASD para andar · Mouse para mirar · Clique para atacar</p>
+      <p><strong>Mobile:</strong> Joystick esquerdo · Arraste na direita para olhar · Botão ⚔️</p>
+    </div>
+  </div>
+
+  <!-- Game Over -->
+  <div id="gameover" class="overlay hidden">
+    <h1>VOCÊ MORREU</h1>
+    <p>Horda alcançada: <span id="final-wave">0</span></p>
+    <p>Nível: <span id="final-level">1</span></p>
+    <p>Moedas: <span id="final-coins">0</span></p>
+    <button id="btn-restart">TENTAR DE NOVO</button>
+  </div>
+
+  <!-- Controles mobile -->
+  <div id="mobile-controls" class="hidden">
+    <div id="joystick-zone">
+      <div id="joystick-base">
+        <div id="joystick-stick"></div>
+      </div>
+    </div>
+    <div id="look-zone"></div>
+    <button id="btn-attack">⚔️</button>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script type="module" src="game.js"></script>
 </body>
 </html>
