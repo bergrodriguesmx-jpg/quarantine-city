@@ -1,9 +1,5 @@
 import * as THREE from 'three';
 
-// ============================================================
-// TEXTURAS - estilo Zumbi Blocks 2
-// ============================================================
-
 function makeCanvas(size = 16) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -111,9 +107,6 @@ export function skyTexture() {
   return tex;
 }
 
-// ============================================================
-// ROSTO DO ZUMBI - vivo ou morto
-// ============================================================
 export function zombieHeadTexture(skinColorHex, isDead = false) {
   const c = makeCanvas(32);
   const ctx = c.getContext('2d');
