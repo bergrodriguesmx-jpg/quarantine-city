@@ -12,9 +12,7 @@ body {
 #game-container { position: fixed; inset: 0; }
 canvas { display: block; }
 
-/* ============================================================
-   MENU ESTILO ZUMBI BLOCKS 2
-   ============================================================ */
+/* ===== MENU ===== */
 .menu-overlay {
   position: fixed; inset: 0;
   background: #1a1a1a;
@@ -69,9 +67,7 @@ canvas { display: block; }
 }
 .menu-btn:active { transform: scale(0.98); }
 
-/* ============================================================
-   HUD
-   ============================================================ */
+/* ===== HUD ===== */
 #hud {
   position: fixed; inset: 0;
   pointer-events: none;
@@ -80,7 +76,6 @@ canvas { display: block; }
 }
 #hud.hidden { display: none; }
 
-/* Timer no topo centro */
 #timer {
   position: absolute;
   top: 12px; left: 50%;
@@ -95,7 +90,6 @@ canvas { display: block; }
   border: 2px solid rgba(255, 255, 255, 0.3);
 }
 
-/* Vida embaixo esquerda */
 #hud-health {
   position: absolute;
   bottom: 20px; left: 20px;
@@ -123,7 +117,6 @@ canvas { display: block; }
   letter-spacing: 1px;
 }
 
-/* Munição embaixo direita */
 #hud-ammo {
   position: absolute;
   bottom: 20px; right: 20px;
@@ -137,10 +130,7 @@ canvas { display: block; }
 }
 #ammo-sep { font-size: 26px; color: #888; }
 #ammo-max { font-size: 26px; color: #888; }
-#ammo-current { color: #ffffff; }
-#ammo-current.reloading { color: #ffaa00; }
 
-/* Info topo esquerda */
 #hud-info {
   position: absolute;
   top: 12px; left: 20px;
@@ -158,7 +148,6 @@ canvas { display: block; }
   border-left: 3px solid #cc0000;
 }
 
-/* Barra de XP (rodapé) */
 #xp-bar {
   position: absolute;
   bottom: 0; left: 0;
@@ -172,7 +161,6 @@ canvas { display: block; }
   transition: width 0.2s;
 }
 
-/* Crosshair ZB2 (linhas em cruz com espaço no meio) */
 #crosshair {
   position: absolute;
   top: 50%; left: 50%;
@@ -189,7 +177,6 @@ canvas { display: block; }
 .ch-left   { left: 0; top: 50%; width: 8px; height: 2px; transform: translateY(-50%); }
 .ch-right  { right: 0; top: 50%; width: 8px; height: 2px; transform: translateY(-50%); }
 
-/* Hit marker */
 #hit-marker {
   position: absolute;
   top: 50%; left: 50%;
@@ -204,13 +191,17 @@ canvas { display: block; }
 #hit-marker.active {
   animation: hitPop 0.25s ease-out;
 }
+#hit-marker.critical {
+  color: #ff2200;
+  font-size: 44px;
+  text-shadow: 0 0 12px #ff0000, 0 0 6px #000;
+}
 @keyframes hitPop {
   0%   { opacity: 1; transform: translate(-50%, -50%) scale(0.5); }
   50%  { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
   100% { opacity: 0; transform: translate(-50%, -50%) scale(1); }
 }
 
-/* Flash de dano (borda vermelha) */
 #damage-flash {
   position: absolute; inset: 0;
   pointer-events: none;
@@ -222,7 +213,6 @@ canvas { display: block; }
   transition: box-shadow 0.04s;
 }
 
-/* Banner de horda */
 #wave-banner {
   position: fixed;
   top: 28%; left: 50%;
@@ -247,9 +237,7 @@ canvas { display: block; }
   transform: translate(-50%, -50%) scale(1);
 }
 
-/* ============================================================
-   MOBILE
-   ============================================================ */
+/* ===== MOBILE ===== */
 #mobile-controls {
   position: fixed; inset: 0;
   pointer-events: none;
@@ -295,7 +283,8 @@ canvas { display: block; }
   background: rgba(204, 0, 0, 0.75);
   border: 3px solid rgba(255, 255, 255, 0.6);
   color: #fff;
-  font-size: 38px;
+  font-size: 20px;
+  font-weight: bold;
   pointer-events: auto;
   cursor: pointer;
   touch-action: none;
@@ -304,10 +293,4 @@ canvas { display: block; }
 #btn-attack:active {
   background: rgba(255, 50, 50, 0.95);
   transform: scale(0.94);
-}
-/* Hit marker crítico — fica vermelho e maior */
-#hit-marker.critical {
-  color: #ff2200;
-  font-size: 44px;
-  text-shadow: 0 0 12px #ff0000, 0 0 6px #000;
 }
