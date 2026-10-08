@@ -93,10 +93,13 @@ const skyMat = new THREE.MeshBasicMaterial({
 });
 scene.add(new THREE.Mesh(skyGeo, skyMat));
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
 const sun = new THREE.DirectionalLight(0xffffff, 1.0);
 sun.position.set(50, 80, 40);
 scene.add(sun);
+const fillLight = new THREE.DirectionalLight(0xC5E0F5, 0.4);
+fillLight.position.set(-40, 30, -30);
+scene.add(fillLight);
 
 function createFloor() {
   const size = CONFIG.arena.size;
@@ -126,6 +129,9 @@ const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
   scene.add(wall);
 });
 
+// ============================================================
+// VIEWMODEL (faca)
+// ============================================================
 const weaponGroup = new THREE.Group();
 camera.add(weaponGroup);
 scene.add(camera);
@@ -133,16 +139,28 @@ scene.add(camera);
 function createKnifeViewModel() {
   const g = new THREE.Group();
   const handle = new THREE.Mesh(
-    new THREE.BoxGeometry(0.06, 0.22, 0.06),
+    new THREE.BoxGeometry(0.06, 0.22, 0.06, 2, 4, 2),
     new THREE.MeshLambertMaterial({ color: 0x2C3E50 })
   );
   g.add(handle);
+  const guard = new THREE.Mesh(
+    new THREE.BoxGeometry(0.16, 0.03, 0.08, 3, 1, 2),
+    new THREE.MeshLambertMaterial({ color: 0x7F8C8D })
+  );
+  guard.position.set(0, 0.13, 0);
+  g.add(guard);
   const blade = new THREE.Mesh(
-    new THREE.BoxGeometry(0.05, 0.42, 0.02),
+    new THREE.BoxGeometry(0.05, 0.42, 0.02, 2, 6, 1),
     new THREE.MeshLambertMaterial({ color: 0xBDC3C7 })
   );
-  blade.position.set(0, 0.32, 0);
+  blade.position.set(0, 0.34, 0);
   g.add(blade);
+  const tip = new THREE.Mesh(
+    new THREE.BoxGeometry(0.05, 0.08, 0.02, 2, 2, 1),
+    new THREE.MeshLambertMaterial({ color: 0xECF0F1 })
+  );
+  tip.position.set(0, 0.59, 0);
+  g.add(tip);
   return g;
 }
 
@@ -185,79 +203,357 @@ const player = {
 
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
+// ============================================================
+// HELPERS DE GEOMETRIA (para mais polígonos)
+// ============================================================
+// BoxGeometry com subdivisões = mais triângulos
+function makeBox(w, h, d, s = 3) {
+  return new THREE.BoxGeometry(w, h, d, s, s, s);
+}
+// Esfera de articulação
+function makeJoint(r, seg = 12) {
+  return new THREE.SphereGeometry(r, seg, Math.floor(seg * 0.75));
+}
+
+// ============================================================
+// ZUMBIS - VERSAO DETALHADA
+// ============================================================
 const zombies = [];
 
-const SHIRT_COLORS = [0x8E44AD, 0x2ECC71, 0xE74C3C, 0x3498DB, 0xF39C12];
-const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723];
-const SKIN_COLORS  = [0x7BC950, 0x6BB840, 0x8DD65A];
+// Paletas
+const SHIRT_COLORS = [0x8E44AD, 0x2ECC71, 0xE74C3C, 0x3498DB, 0xF39C12, 0xE67E22, 0x16A085, 0xC0392B];
+const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
+const SKIN_COLORS  = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
+const HAIR_COLORS  = [0x2C1810, 0x1A0F08, 0x4A2818, 0x6B3A1F, 0x3A2A1A];
 
-// ============================================================
-// ZUMBI - VERSAO SIMPLIFICADA (so caixas basicas, cor solida)
-// ============================================================
+// Tipos de corpo: [larguraTronco, larguraBraco, larguraPerna, escalaAltura]
+const BODY_TYPES = [
+  { name: 'magro',  torsoW: 0.55, torsoD: 0.30, arm: 0.18, leg: 0.22, heightScale: 1.05 },
+  { name: 'normal', torsoW: 0.70, torsoD: 0.35, arm: 0.22, leg: 0.26, heightScale: 1.00 },
+  { name: 'gordo',  torsoW: 0.85, torsoD: 0.45, arm: 0.26, leg: 0.30, heightScale: 0.95 },
+];
+
 function createZombieMesh() {
   const g = new THREE.Group();
 
+  // Sorteia aparência
   const skinColor  = rand(SKIN_COLORS);
   const shirtColor = rand(SHIRT_COLORS);
   const pantsColor = rand(PANTS_COLORS);
+  const hairColor  = rand(HAIR_COLORS);
+  const bodyType   = rand(BODY_TYPES);
+  const sleeveLong = Math.random() > 0.5; // manga comprida ou curta
+  const hasHat     = Math.random() > 0.7; // 30% chance de chapéu
+  const wounded    = Math.random() > 0.5; // tem feridas extras
 
-  // MATERIAIS BASICOS (nao dependem de luz nem textura)
-  const skinMat  = new THREE.MeshBasicMaterial({ color: skinColor });
-  const shirtMat = new THREE.MeshBasicMaterial({ color: shirtColor });
-  const pantsMat = new THREE.MeshBasicMaterial({ color: pantsColor });
-  const eyeMat   = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  const skinMat    = new THREE.MeshLambertMaterial({ color: skinColor });
+  const shirtMat   = new THREE.MeshLambertMaterial({ color: shirtColor });
+  const pantsMat   = new THREE.MeshLambertMaterial({ color: pantsColor });
+  const hairMat    = new THREE.MeshLambertMaterial({ color: hairColor });
+  const shoeMat    = new THREE.MeshLambertMaterial({ color: 0x1A1A1A });
+  const soleMat    = new THREE.MeshLambertMaterial({ color: 0xECF0F1 });
+  const eyeWhiteMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
+  const pupilMat   = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  const mouthMat   = new THREE.MeshBasicMaterial({ color: 0x2B0000 });
+  const woundMat   = new THREE.MeshBasicMaterial({ color: 0xC0392B });
+  const bloodMat   = new THREE.MeshBasicMaterial({ color: 0x8B0000 });
 
-  // CABECA (cubo simples)
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.55), skinMat);
-  head.position.y = 1.85;
-  g.add(head);
+  // ============================================================
+  // CABEÇA (grupo)
+  // ============================================================
+  const headGroup = new THREE.Group();
+  headGroup.position.y = 1.85;
 
-  // Olhos (2 cubinhos pretos)
-  const eyeGeo = new THREE.BoxGeometry(0.1, 0.1, 0.05);
-  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-  eyeL.position.set(-0.13, 1.92, 0.29);
-  g.add(eyeL);
-  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-  eyeR.position.set(0.13, 1.92, 0.29);
-  g.add(eyeR);
+  // Crânio
+  const head = new THREE.Mesh(makeBox(0.55, 0.55, 0.55, 3), skinMat);
+  head.castShadow = true;
+  headGroup.add(head);
 
-  // TRONCO
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.85, 0.35), shirtMat);
-  torso.position.y = 1.15;
-  g.add(torso);
+  // Cabelo (tampa)
+  const hair = new THREE.Mesh(makeBox(0.58, 0.10, 0.58, 3), hairMat);
+  hair.position.y = 0.30;
+  headGroup.add(hair);
 
-  // BRACOS (cada um = 1 caixa)
-  const armGeo = new THREE.BoxGeometry(0.22, 0.9, 0.22);
+  // Franja (parte da frente)
+  const fringe = new THREE.Mesh(makeBox(0.58, 0.14, 0.08, 3), hairMat);
+  fringe.position.set(0, 0.24, 0.28);
+  headGroup.add(fringe);
 
-  const armL = new THREE.Mesh(armGeo, shirtMat);
-  armL.position.set(-0.46, 1.05, 0);
+  // Orelhas
+  const earGeo = makeBox(0.06, 0.14, 0.10, 2);
+  const earL = new THREE.Mesh(earGeo, skinMat);
+  earL.position.set(-0.31, 0, 0);
+  headGroup.add(earL);
+  const earR = new THREE.Mesh(earGeo, skinMat);
+  earR.position.set(0.31, 0, 0);
+  headGroup.add(earR);
+
+  // Olho branco esquerdo + pupila
+  const eyeWhiteGeo = makeBox(0.13, 0.11, 0.02, 2);
+  const eyeWhiteL = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
+  eyeWhiteL.position.set(-0.13, 0.08, 0.285);
+  headGroup.add(eyeWhiteL);
+  const eyeWhiteR = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
+  eyeWhiteR.position.set(0.13, 0.08, 0.285);
+  headGroup.add(eyeWhiteR);
+
+  const pupilGeo = makeBox(0.05, 0.05, 0.02, 2);
+  const pupilL = new THREE.Mesh(pupilGeo, pupilMat);
+  pupilL.position.set(-0.13, 0.08, 0.295);
+  headGroup.add(pupilL);
+  const pupilR = new THREE.Mesh(pupilGeo, pupilMat);
+  pupilR.position.set(0.13, 0.08, 0.295);
+  headGroup.add(pupilR);
+
+  // Nariz
+  const nose = new THREE.Mesh(makeBox(0.08, 0.08, 0.06, 2), skinMat);
+  nose.position.set(0, -0.02, 0.30);
+  headGroup.add(nose);
+
+  // Boca (aberta)
+  const mouth = new THREE.Mesh(makeBox(0.20, 0.06, 0.02, 2), mouthMat);
+  mouth.position.set(0, -0.14, 0.285);
+  headGroup.add(mouth);
+  // Dentes
+  const teeth = new THREE.Mesh(makeBox(0.18, 0.02, 0.02, 2), eyeWhiteMat);
+  teeth.position.set(0, -0.11, 0.29);
+  headGroup.add(teeth);
+
+  // Ferida na testa
+  if (wounded) {
+    const woundHead = new THREE.Mesh(makeBox(0.12, 0.06, 0.02, 2), woundMat);
+    woundHead.position.set(-0.15, 0.16, 0.285);
+    headGroup.add(woundHead);
+    // Sangue escorrendo
+    const blood = new THREE.Mesh(makeBox(0.04, 0.10, 0.02, 2), bloodMat);
+    blood.position.set(-0.15, 0.07, 0.285);
+    headGroup.add(blood);
+  }
+
+  // Chapéu (opcional)
+  if (hasHat) {
+    const hatGroup = new THREE.Group();
+    const hatBase = new THREE.Mesh(
+      makeBox(0.65, 0.05, 0.65, 3),
+      new THREE.MeshLambertMaterial({ color: 0x2C3E50 })
+    );
+    hatGroup.add(hatBase);
+    const hatTop = new THREE.Mesh(
+      makeBox(0.45, 0.25, 0.45, 3),
+      new THREE.MeshLambertMaterial({ color: 0x34495E })
+    );
+    hatTop.position.y = 0.15;
+    hatGroup.add(hatTop);
+    hatGroup.position.y = 0.34;
+    headGroup.add(hatGroup);
+  }
+
+  g.add(headGroup);
+
+  // ============================================================
+  // TRONCO (grupo)
+  // ============================================================
+  const torsoGroup = new THREE.Group();
+  torsoGroup.position.y = 1.15;
+
+  const torso = new THREE.Mesh(
+    makeBox(bodyType.torsoW, 0.85, bodyType.torsoD, 3),
+    shirtMat
+  );
+  torso.castShadow = true;
+  torsoGroup.add(torso);
+
+  // Gola / decote
+  const collar = new THREE.Mesh(
+    makeBox(bodyType.torsoW * 0.85, 0.06, bodyType.torsoD * 0.9, 2),
+    new THREE.MeshLambertMaterial({ color: 0x000000 })
+  );
+  collar.position.y = 0.43;
+  torsoGroup.add(collar);
+
+  // Ombreiras (pequenas caixas arredondadas nos ombros)
+  const shoulderGeo = makeBox(0.20, 0.15, bodyType.torsoD * 0.9, 3);
+  const shoulderL = new THREE.Mesh(shoulderGeo, shirtMat);
+  shoulderL.position.set(-bodyType.torsoW / 2 + 0.02, 0.35, 0);
+  torsoGroup.add(shoulderL);
+  const shoulderR = new THREE.Mesh(shoulderGeo, shirtMat);
+  shoulderR.position.set(bodyType.torsoW / 2 - 0.02, 0.35, 0);
+  torsoGroup.add(shoulderR);
+
+  // Feridas no tronco
+  if (wounded) {
+    const w1 = new THREE.Mesh(makeBox(0.14, 0.10, 0.02, 2), woundMat);
+    w1.position.set(0.15, 0.05, bodyType.torsoD / 2 + 0.01);
+    torsoGroup.add(w1);
+    const w2 = new THREE.Mesh(makeBox(0.10, 0.14, 0.02, 2), woundMat);
+    w2.position.set(-0.18, -0.15, bodyType.torsoD / 2 + 0.01);
+    torsoGroup.add(w2);
+    // Sangue
+    const b1 = new THREE.Mesh(makeBox(0.04, 0.15, 0.02, 2), bloodMat);
+    b1.position.set(0.15, -0.05, bodyType.torsoD / 2 + 0.01);
+    torsoGroup.add(b1);
+  }
+
+  g.add(torsoGroup);
+
+  // ============================================================
+  // BRAÇOS (grupos)
+  // ============================================================
+  const armW = bodyType.arm;
+  const armPieces = [];
+
+  function makeArm(side) {
+    const arm = new THREE.Group();
+
+    // Ombro (esfera articulada)
+    const shoulder = new THREE.Mesh(makeJoint(armW * 0.55), shirtMat);
+    arm.add(shoulder);
+
+    // Braço superior
+    const upperMat = sleeveLong ? shirtMat : skinMat;
+    const upper = new THREE.Mesh(makeBox(armW, 0.42, armW, 3), upperMat);
+    upper.position.y = -0.22;
+    upper.castShadow = true;
+    arm.add(upper);
+
+    // Cotovelo (esfera)
+    const elbow = new THREE.Mesh(makeJoint(armW * 0.45), upperMat);
+    elbow.position.y = -0.46;
+    arm.add(elbow);
+
+    // Antebraço
+    const lowerMat = sleeveLong ? shirtMat : skinMat;
+    const lower = new THREE.Mesh(makeBox(armW * 0.92, 0.42, armW * 0.92, 3), lowerMat);
+    lower.position.y = -0.68;
+    lower.castShadow = true;
+    arm.add(lower);
+
+    // Pulso
+    const wrist = new THREE.Mesh(makeJoint(armW * 0.4), skinMat);
+    wrist.position.y = -0.90;
+    arm.add(wrist);
+
+    // Mão (palma)
+    const hand = new THREE.Mesh(makeBox(armW * 1.05, 0.14, armW * 1.15, 3), skinMat);
+    hand.position.y = -0.99;
+    hand.castShadow = true;
+    arm.add(hand);
+
+    // 4 dedos
+    const fingerGeo = makeBox(armW * 0.18, 0.13, armW * 0.18, 2);
+    for (let i = 0; i < 4; i++) {
+      const finger = new THREE.Mesh(fingerGeo, skinMat);
+      finger.position.set(
+        -armW * 0.36 + i * armW * 0.24,
+        -1.11,
+        armW * 0.28
+      );
+      arm.add(finger);
+    }
+
+    // Polegar
+    const thumb = new THREE.Mesh(makeBox(armW * 0.22, 0.11, armW * 0.22, 2), skinMat);
+    thumb.position.set(side * armW * 0.5, -1.02, armW * 0.38);
+    arm.add(thumb);
+
+    // Ferida no braço
+    if (wounded) {
+      const w = new THREE.Mesh(makeBox(0.08, 0.08, 0.02, 2), woundMat);
+      w.position.set(side * armW * 0.5, -0.55, 0);
+      w.rotation.y = side * Math.PI / 2;
+      arm.add(w);
+    }
+
+    return arm;
+  }
+
+  const armL = makeArm(-1);
+  armL.position.set(-bodyType.torsoW / 2 - armW / 2 + 0.05, 1.5, 0);
   g.add(armL);
+  armPieces.push(armL);
 
-  const armR = new THREE.Mesh(armGeo, shirtMat);
-  armR.position.set(0.46, 1.05, 0);
+  const armR = makeArm(1);
+  armR.position.set(bodyType.torsoW / 2 + armW / 2 - 0.05, 1.5, 0);
   g.add(armR);
+  armPieces.push(armR);
 
-  // PERNAS (cada uma = 1 caixa)
-  const legGeo = new THREE.BoxGeometry(0.26, 0.9, 0.26);
+  // ============================================================
+  // PERNAS (grupos)
+  // ============================================================
+  const legW = bodyType.leg;
 
-  const legL = new THREE.Mesh(legGeo, pantsMat);
-  legL.position.set(-0.18, 0.45, 0);
+  function makeLeg() {
+    const leg = new THREE.Group();
+
+    // Quadril (esfera)
+    const hip = new THREE.Mesh(makeJoint(legW * 0.58), pantsMat);
+    leg.add(hip);
+
+    // Coxa
+    const thigh = new THREE.Mesh(makeBox(legW, 0.55, legW, 3), pantsMat);
+    thigh.position.y = -0.30;
+    thigh.castShadow = true;
+    leg.add(thigh);
+
+    // Joelho
+    const knee = new THREE.Mesh(makeJoint(legW * 0.48), pantsMat);
+    knee.position.y = -0.60;
+    leg.add(knee);
+
+    // Canela
+    const shin = new THREE.Mesh(makeBox(legW * 0.9, 0.40, legW * 0.9, 3), pantsMat);
+    shin.position.y = -0.82;
+    shin.castShadow = true;
+    leg.add(shin);
+
+    // Tornozelo
+    const ankle = new THREE.Mesh(makeJoint(legW * 0.42), shoeMat);
+    ankle.position.y = -1.04;
+    leg.add(ankle);
+
+    // Tênis - base
+    const shoeBase = new THREE.Mesh(makeBox(legW * 1.15, 0.14, legW * 1.35, 3), shoeMat);
+    shoeBase.position.set(0, -1.12, 0.03);
+    shoeBase.castShadow = true;
+    leg.add(shoeBase);
+
+    // Tênis - bico
+    const shoeTip = new THREE.Mesh(makeBox(legW * 1.15, 0.08, legW * 0.45, 3), shoeMat);
+    shoeTip.position.set(0, -1.16, legW * 0.85);
+    leg.add(shoeTip);
+
+    // Sola branca
+    const sole = new THREE.Mesh(makeBox(legW * 1.18, 0.04, legW * 1.4, 3), soleMat);
+    sole.position.set(0, -1.20, 0.03);
+    leg.add(sole);
+
+    return leg;
+  }
+
+  const legL = makeLeg();
+  legL.position.set(-legW * 0.55, 0.72, 0);
   g.add(legL);
 
-  const legR = new THREE.Mesh(legGeo, pantsMat);
-  legR.position.set(0.18, 0.45, 0);
+  const legR = makeLeg();
+  legR.position.set(legW * 0.55, 0.72, 0);
   g.add(legR);
 
-  // Guarda referencia (pra animacao)
+  // Escala vertical pra variação de altura
+  g.scale.y = bodyType.heightScale;
+
+  // ============================================================
+  // USERDATA
+  // ============================================================
   g.userData.armL = armL;
   g.userData.armR = armR;
   g.userData.legL = legL;
   g.userData.legR = legR;
-  g.userData.head = head;
-  g.userData.torso = torso;
+  g.userData.head = headGroup;
+  g.userData.torso = torsoGroup;
   g.userData.skinColor = skinColor;
   g.userData.shirtColor = shirtColor;
   g.userData.pantsColor = pantsColor;
+  g.userData.bodyType = bodyType;
 
   return g;
 }
@@ -277,8 +573,6 @@ function spawnZombie() {
   mesh.position.set(x, 0, z);
   scene.add(mesh);
 
-  console.log('[SPAWN] Zumbi em', x.toFixed(1), z.toFixed(1));
-
   zombies.push({
     mesh,
     health: CONFIG.zombie.maxHealth,
@@ -293,6 +587,9 @@ function spawnZombie() {
   updateHUD();
 }
 
+// ============================================================
+// SANGUE E PARTÍCULAS
+// ============================================================
 const particles = [];
 
 function spawnBlood(position, direction = null, count = 16, big = false) {
@@ -393,6 +690,9 @@ function updateBloodPools(dt) {
   }
 }
 
+// ============================================================
+// DEBRIS
+// ============================================================
 class Debris {
   constructor(mesh, size, mass, life = 35) {
     this.mesh = mesh;
@@ -407,13 +707,8 @@ class Debris {
     this.key = 'piece';
   }
 
-  applyImpulse(impulse) {
-    this.velocity.addScaledVector(impulse, 1 / this.mass);
-  }
-
-  applyTorque(torque) {
-    this.angularVelocity.addScaledVector(torque, 1 / this.mass);
-  }
+  applyImpulse(impulse) { this.velocity.addScaledVector(impulse, 1 / this.mass); }
+  applyTorque(torque) { this.angularVelocity.addScaledVector(torque, 1 / this.mass); }
 
   update(dt) {
     this.life -= dt;
@@ -457,10 +752,7 @@ class Debris {
     if (this.life < 3) {
       const opacity = Math.max(0, this.life / 3);
       const mats = Array.isArray(this.mesh.material) ? this.mesh.material : [this.mesh.material];
-      mats.forEach(m => {
-        m.transparent = true;
-        m.opacity = opacity;
-      });
+      mats.forEach(m => { m.transparent = true; m.opacity = opacity; });
     }
 
     return false;
@@ -474,6 +766,9 @@ class Debris {
   }
 }
 
+// ============================================================
+// RAGDOLL
+// ============================================================
 const ragdolls = [];
 
 class Ragdoll {
@@ -490,18 +785,19 @@ class Ragdoll {
     const skin = zombieMesh.userData.skinColor;
     const shirt = zombieMesh.userData.shirtColor;
     const pants = zombieMesh.userData.pantsColor;
+    const bodyType = zombieMesh.userData.bodyType || BODY_TYPES[1];
 
     const hitDirN = hitDir.clone();
     hitDirN.y = 0;
     hitDirN.normalize();
 
     const defs = [
-      { key: 'torso', size: new THREE.Vector3(0.7, 0.85, 0.35), mass: 8, obj: zombieMesh.userData.torso, offsetY: 0, materialColor: shirt },
-      { key: 'head', size: new THREE.Vector3(0.55, 0.55, 0.55), mass: 2.5, obj: zombieMesh.userData.head, offsetY: 0, materialColor: skin },
-      { key: 'armL', size: new THREE.Vector3(0.22, 0.9, 0.22), mass: 0.8, obj: zombieMesh.userData.armL, offsetY: 0, materialColor: shirt },
-      { key: 'armR', size: new THREE.Vector3(0.22, 0.9, 0.22), mass: 0.8, obj: zombieMesh.userData.armR, offsetY: 0, materialColor: shirt },
-      { key: 'legL', size: new THREE.Vector3(0.26, 0.9, 0.26), mass: 1.2, obj: zombieMesh.userData.legL, offsetY: 0, materialColor: pants },
-      { key: 'legR', size: new THREE.Vector3(0.26, 0.9, 0.26), mass: 1.2, obj: zombieMesh.userData.legR, offsetY: 0, materialColor: pants },
+      { key: 'torso', size: new THREE.Vector3(bodyType.torsoW, 0.85, bodyType.torsoD), mass: 8, obj: zombieMesh.userData.torso, materialColor: shirt },
+      { key: 'head', size: new THREE.Vector3(0.55, 0.55, 0.55), mass: 2.5, obj: zombieMesh.userData.head, materialColor: skin },
+      { key: 'armL', size: new THREE.Vector3(bodyType.arm, 0.95, bodyType.arm), mass: 0.8, obj: zombieMesh.userData.armL, materialColor: shirt },
+      { key: 'armR', size: new THREE.Vector3(bodyType.arm, 0.95, bodyType.arm), mass: 0.8, obj: zombieMesh.userData.armR, materialColor: shirt },
+      { key: 'legL', size: new THREE.Vector3(bodyType.leg, 1.0, bodyType.leg), mass: 1.2, obj: zombieMesh.userData.legL, materialColor: pants },
+      { key: 'legR', size: new THREE.Vector3(bodyType.leg, 1.0, bodyType.leg), mass: 1.2, obj: zombieMesh.userData.legR, materialColor: pants },
     ];
 
     for (const def of defs) {
@@ -511,14 +807,13 @@ class Ragdoll {
       const worldQuat = new THREE.Quaternion();
       def.obj.getWorldPosition(worldPos);
       def.obj.getWorldQuaternion(worldQuat);
-      worldPos.y += def.offsetY;
 
-      const mat = new THREE.MeshBasicMaterial({ color: def.materialColor });
-      const geo = new THREE.BoxGeometry(def.size.x, def.size.y, def.size.z);
+      const mat = new THREE.MeshLambertMaterial({ color: def.materialColor });
+      const geo = makeBox(def.size.x, def.size.y, def.size.z, 3);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.copy(worldPos);
       mesh.quaternion.copy(worldQuat);
-      mesh.frustumCulled = false;
+      mesh.castShadow = true;
       scene.add(mesh);
 
       const piece = new Debris(mesh, def.size, def.mass, 9999);
@@ -678,23 +973,24 @@ function detachLimb(z, limbKey, hitDir) {
   limbObj.visible = false;
   z.dismembered[limbKey] = true;
 
+  const bodyType = ud.bodyType || BODY_TYPES[1];
   let size, color;
   if (limbKey === 'head') {
     size = new THREE.Vector3(0.55, 0.55, 0.55);
     color = ud.skinColor;
   } else if (limbKey === 'armL' || limbKey === 'armR') {
-    size = new THREE.Vector3(0.22, 0.9, 0.22);
+    size = new THREE.Vector3(bodyType.arm, 0.95, bodyType.arm);
     color = ud.shirtColor;
   } else {
-    size = new THREE.Vector3(0.26, 0.9, 0.26);
+    size = new THREE.Vector3(bodyType.leg, 1.0, bodyType.leg);
     color = ud.pantsColor;
   }
 
-  const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
-  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color }));
+  const geo = makeBox(size.x, size.y, size.z, 3);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color }));
   mesh.position.copy(worldPos);
   mesh.quaternion.copy(worldQuat);
-  mesh.frustumCulled = false;
+  mesh.castShadow = true;
   scene.add(mesh);
 
   const piece = new Debris(mesh, size, 1.2, CONFIG.dismember.limbLife);
