@@ -1,10 +1,6 @@
 import * as THREE from 'three';
 import * as Textures from './textures.js';
 
-// ============================================================
-// CENARIO - bairro low-poly estilo Zumbi Blocks 2
-// ============================================================
-
 export function createTree(x, z) {
   const g = new THREE.Group();
   const barkTex = Textures.barkTexture();
@@ -143,7 +139,6 @@ export function createRoad(x, z, width, length, horizontal = true) {
 export function populateScene(scene, arenaSize) {
   const half = arenaSize / 2;
 
-  // Ruas
   scene.add(createRoad(0, 0, 6, arenaSize, true));
   scene.add(createRoad(0, 0, 6, arenaSize, false));
   scene.add(createRoad(0, -20, 4, arenaSize, true));
@@ -151,7 +146,6 @@ export function populateScene(scene, arenaSize) {
   scene.add(createRoad(-20, 0, 4, arenaSize, false));
   scene.add(createRoad(20, 0, 4, arenaSize, false));
 
-  // Casas
   const housePositions = [
     [-12, -12, '#ECF0F1', '#C0392B'],
     [12, -12, '#F5DEB3', '#7F8C8D'],
@@ -170,7 +164,6 @@ export function populateScene(scene, arenaSize) {
     scene.add(createHouse(x, z, wc, rc));
   });
 
-  // Arvores
   const treePositions = [
     [-18, -18], [-22, -22], [-18, 18], [-22, 22],
     [18, -18], [22, -22], [18, 18], [22, 22],
@@ -185,7 +178,6 @@ export function populateScene(scene, arenaSize) {
     }
   });
 
-  // Cercas
   const fenceData = [
     [-8, -8, 6, true], [8, -8, 6, true], [-8, 8, 6, true], [8, 8, 6, true],
   ];
