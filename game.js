@@ -3,9 +3,6 @@ import * as Textures from './textures.js';
 import * as Scenery from './scenery.js';
 import * as Sfx from './audio.js';
 
-// ============================================================
-// CONFIG
-// ============================================================
 const CONFIG = {
   player: {
     speed: 5.5,
@@ -53,9 +50,6 @@ const CONFIG = {
   },
 };
 
-// ============================================================
-// ESTADO
-// ============================================================
 const state = {
   waveIntervalId: null,
   health: CONFIG.player.maxHealth,
@@ -77,9 +71,6 @@ const state = {
   critChance: CONFIG.crit.baseChance,
 };
 
-// ============================================================
-// THREE.JS SETUP
-// ============================================================
 const container = document.getElementById('game-container');
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xC5E0F5, 60, 160);
@@ -119,9 +110,6 @@ const fillLight = new THREE.DirectionalLight(0xC5E0F5, 0.35);
 fillLight.position.set(-40, 30, -30);
 scene.add(fillLight);
 
-// ============================================================
-// CHAO / CENARIO
-// ============================================================
 function createFloor() {
   const size = CONFIG.arena.size;
   const tex = Textures.grassTexture();
@@ -150,9 +138,6 @@ const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
   scene.add(wall);
 });
 
-// ============================================================
-// VIEWMODEL (faca)
-// ============================================================
 const weaponGroup = new THREE.Group();
 camera.add(weaponGroup);
 scene.add(camera);
@@ -216,9 +201,6 @@ function updateWeaponViewModel(dt) {
   }
 }
 
-// ============================================================
-// JOGADOR / HELPERS
-// ============================================================
 const player = {
   position: new THREE.Vector3(0, CONFIG.player.height, 0),
   yaw: 0,
@@ -230,9 +212,6 @@ function hexToCss(hex) { return '#' + hex.toString(16).padStart(6, '0'); }
 function makeBox(w, h, d) { return new THREE.BoxGeometry(w, h, d, 4, 4, 4); }
 function makeJoint(size) { return new THREE.SphereGeometry(size, 8, 6); }
 
-// ============================================================
-// ZUMBIS
-// ============================================================
 const zombies = [];
 
 const SHIRT_COLORS = [0x8E44AD, 0x2ECC71, 0xE74C3C, 0x3498DB, 0xF39C12];
@@ -251,13 +230,11 @@ function createZombieMesh() {
   const pantsMat = new THREE.MeshLambertMaterial({ color: pantsColor });
   const woundMat = new THREE.MeshBasicMaterial({ color: 0xC0392B });
 
+  // CABECA com material unico (textura em tudo)
   const faceTex = Textures.zombieHeadTexture(hexToCss(skinColor), false);
   const faceMat = new THREE.MeshLambertMaterial({ map: faceTex });
-  const headSideMat = new THREE.MeshLambertMaterial({ color: skinColor });
   const headGeo = makeBox(0.55, 0.55, 0.55);
-  const head = new THREE.Mesh(headGeo, [
-    headSideMat, headSideMat, headSideMat, headSideMat, faceMat, headSideMat,
-  ]);
+  const head = new THREE.Mesh(headGeo, faceMat);
   head.position.y = 1.85;
   head.castShadow = true;
   g.add(head);
@@ -407,6 +384,11 @@ function spawnZombie() {
   mesh.position.set(x, 0, z);
   scene.add(mesh);
 
+  // FIX: desabilita frustum culling
+  mesh.traverse(c => { c.frustumCulled = false; });
+
+  console.log('[SPAWN] Zumbi em', x.toFixed(1), z.toFixed(1));
+
   zombies.push({
     mesh,
     health: CONFIG.zombie.maxHealth,
@@ -421,9 +403,6 @@ function spawnZombie() {
   updateHUD();
 }
 
-// ============================================================
-// PARTICULAS DE SANGUE
-// ============================================================
 const particles = [];
 
 function spawnBlood(position, direction = null, count = 16, big = false) {
@@ -524,9 +503,6 @@ function updateBloodPools(dt) {
   }
 }
 
-// ============================================================
-// DEBRIS - fisica manual 100% estavel
-// ============================================================
 class Debris {
   constructor(mesh, size, mass, life = 35) {
     this.mesh = mesh;
@@ -628,9 +604,6 @@ class Debris {
   }
 }
 
-// ============================================================
-// RAGDOLL - conjunto de pecas com fisica manual
-// ============================================================
 const ragdolls = [];
 
 class Ragdoll {
@@ -653,54 +626,12 @@ class Ragdoll {
     hitDirN.normalize();
 
     const defs = [
-      {
-        key: 'torso',
-        size: new THREE.Vector3(0.7, 0.85, 0.35),
-        mass: 8,
-        obj: zombieMesh.userData.torso,
-        offsetY: 0,
-        materialColor: shirt,
-      },
-      {
-        key: 'head',
-        size: new THREE.Vector3(0.55, 0.55, 0.55),
-        mass: 2.5,
-        obj: zombieMesh.userData.head,
-        offsetY: 0,
-        isHead: true,
-      },
-      {
-        key: 'armL',
-        size: new THREE.Vector3(0.22, 0.9, 0.22),
-        mass: 0.8,
-        obj: zombieMesh.userData.armL,
-        offsetY: -0.45,
-        materialColor: shirt,
-      },
-      {
-        key: 'armR',
-        size: new THREE.Vector3(0.22, 0.9, 0.22),
-        mass: 0.8,
-        obj: zombieMesh.userData.armR,
-        offsetY: -0.45,
-        materialColor: shirt,
-      },
-      {
-        key: 'legL',
-        size: new THREE.Vector3(0.26, 0.75, 0.26),
-        mass: 1.2,
-        obj: zombieMesh.userData.legL,
-        offsetY: -0.35,
-        materialColor: pants,
-      },
-      {
-        key: 'legR',
-        size: new THREE.Vector3(0.26, 0.75, 0.26),
-        mass: 1.2,
-        obj: zombieMesh.userData.legR,
-        offsetY: -0.35,
-        materialColor: pants,
-      },
+      { key: 'torso', size: new THREE.Vector3(0.7, 0.85, 0.35), mass: 8, obj: zombieMesh.userData.torso, offsetY: 0, materialColor: shirt },
+      { key: 'head', size: new THREE.Vector3(0.55, 0.55, 0.55), mass: 2.5, obj: zombieMesh.userData.head, offsetY: 0, isHead: true },
+      { key: 'armL', size: new THREE.Vector3(0.22, 0.9, 0.22), mass: 0.8, obj: zombieMesh.userData.armL, offsetY: -0.45, materialColor: shirt },
+      { key: 'armR', size: new THREE.Vector3(0.22, 0.9, 0.22), mass: 0.8, obj: zombieMesh.userData.armR, offsetY: -0.45, materialColor: shirt },
+      { key: 'legL', size: new THREE.Vector3(0.26, 0.75, 0.26), mass: 1.2, obj: zombieMesh.userData.legL, offsetY: -0.35, materialColor: pants },
+      { key: 'legR', size: new THREE.Vector3(0.26, 0.75, 0.26), mass: 1.2, obj: zombieMesh.userData.legR, offsetY: -0.35, materialColor: pants },
     ];
 
     for (const def of defs) {
@@ -712,27 +643,21 @@ class Ragdoll {
       def.obj.getWorldQuaternion(worldQuat);
       worldPos.y += def.offsetY;
 
-      let materials;
+      let mat;
       if (def.isHead) {
         const deadFaceTex = Textures.zombieHeadTexture(hexToCss(skin), true);
-        const deadFaceMat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
-        const headSideMat = new THREE.MeshLambertMaterial({ color: skin });
-        materials = [
-          headSideMat, headSideMat, headSideMat, headSideMat,
-          deadFaceMat, headSideMat,
-        ];
+        mat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
       } else {
-        materials = new THREE.MeshLambertMaterial({ color: def.materialColor });
+        mat = new THREE.MeshLambertMaterial({ color: def.materialColor });
       }
 
-      const geo = new THREE.BoxGeometry(
-        def.size.x, def.size.y, def.size.z, 2, 2, 2
-      );
-      const mesh = new THREE.Mesh(geo, materials);
+      const geo = new THREE.BoxGeometry(def.size.x, def.size.y, def.size.z, 2, 2, 2);
+      const mesh = new THREE.Mesh(geo, mat);
       mesh.position.copy(worldPos);
       mesh.quaternion.copy(worldQuat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
       scene.add(mesh);
 
       const piece = new Debris(mesh, def.size, def.mass, 9999);
@@ -770,14 +695,12 @@ class Ragdoll {
 
     for (let i = 0; i < this.pieces.length; i++) {
       const p = this.pieces[i];
-
       const toPiece = new THREE.Vector3().subVectors(p.mesh.position, cameraPos);
       const dist = toPiece.length();
       if (dist > range) continue;
       toPiece.normalize();
       const dot = forward3D.dot(toPiece);
       if (dot < CONFIG.ragdoll.sliceDotMin) continue;
-
       const score = dot - dist * 0.05;
       if (score > bestScore) {
         bestScore = score;
@@ -832,12 +755,10 @@ class Ragdoll {
     }
 
     for (let i = this.pieces.length - 1; i >= 0; i--) {
-      const p = this.pieces[i];
-      p.update(dt);
+      this.pieces[i].update(dt);
     }
 
-    const allSettled = this.pieces.length === 0 ||
-      this.pieces.every(p => p.settled);
+    const allSettled = this.pieces.length === 0 || this.pieces.every(p => p.settled);
 
     if (this.state === 'falling') {
       if (allSettled) {
@@ -875,9 +796,6 @@ function startRagdoll(zombieMesh, hitDir, hitStrength, missingParts) {
   ragdolls.push(ragdoll);
 }
 
-// ============================================================
-// DESMEMBRAMENTO (em vida)
-// ============================================================
 function detachLimb(z, limbKey, hitDir) {
   const ud = z.mesh.userData;
   const worldPos = new THREE.Vector3();
@@ -902,27 +820,26 @@ function detachLimb(z, limbKey, hitDir) {
   if (limbKey === 'armL' || limbKey === 'armR') worldPos.y -= 0.45;
   else if (limbKey === 'legL' || limbKey === 'legR') worldPos.y -= 0.35;
 
-  let size, materials;
+  let size, mat;
   if (limbKey === 'head') {
     size = new THREE.Vector3(0.55, 0.55, 0.55);
     const deadFaceTex = Textures.zombieHeadTexture(hexToCss(ud.skinColor), true);
-    const deadFaceMat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
-    const headSideMat = new THREE.MeshLambertMaterial({ color: ud.skinColor });
-    materials = [headSideMat, headSideMat, headSideMat, headSideMat, deadFaceMat, headSideMat];
+    mat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
   } else if (limbKey === 'armL' || limbKey === 'armR') {
     size = new THREE.Vector3(0.24, 0.95, 0.24);
-    materials = new THREE.MeshLambertMaterial({ color: ud.shirtColor });
+    mat = new THREE.MeshLambertMaterial({ color: ud.shirtColor });
   } else {
     size = new THREE.Vector3(0.28, 0.8, 0.28);
-    materials = new THREE.MeshLambertMaterial({ color: ud.pantsColor });
+    mat = new THREE.MeshLambertMaterial({ color: ud.pantsColor });
   }
 
   const geo = new THREE.BoxGeometry(size.x, size.y, size.z, 2, 2, 2);
-  const mesh = new THREE.Mesh(geo, materials);
+  const mesh = new THREE.Mesh(geo, mat);
   mesh.position.copy(worldPos);
   mesh.quaternion.copy(worldQuat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
+  mesh.frustumCulled = false;
   scene.add(mesh);
 
   const piece = new Debris(mesh, size, 1.2, CONFIG.dismember.limbLife);
@@ -946,9 +863,6 @@ function detachLimb(z, limbKey, hitDir) {
   spawnBlood(worldPos, null, 10, true);
 }
 
-// ============================================================
-// AIM / CRIT
-// ============================================================
 function getAimRegion() {
   const pitch = player.pitch;
   if (pitch > 0.15) return 'head';
@@ -957,9 +871,6 @@ function getAimRegion() {
 }
 function rollCrit() { return Math.random() < state.critChance; }
 
-// ============================================================
-// HIT MARKER / DAMAGE FLASH / MUZZLE FLASH
-// ============================================================
 const hitMarker  = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
 
@@ -991,9 +902,6 @@ function spawnMuzzleFlash() {
   })();
 }
 
-// ============================================================
-// ATAQUE
-// ============================================================
 function attack() {
   const now = performance.now() / 1000;
   if (now - state.lastAttackTime < CONFIG.player.attackCooldown) return;
@@ -1119,9 +1027,6 @@ function attack() {
   }
 }
 
-// ============================================================
-// LEVEL UP / HORDAS
-// ============================================================
 function checkLevelUp() {
   let leveled = false;
   while (state.xp >= state.xpToNextLevel) {
@@ -1161,7 +1066,7 @@ function startWave() {
     CONFIG.wave.maxZombies
   );
   state.zombiesRemainingInWave = count;
-  showWaveBanner(`HORDA ${state.wave}`);
+  showWaveBanner('HORDA ' + state.wave);
 
   let spawned = 0;
   state.waveIntervalId = setInterval(() => {
@@ -1185,9 +1090,6 @@ function checkWaveComplete() {
   }
 }
 
-// ============================================================
-// CONTROLES
-// ============================================================
 document.addEventListener('keydown', e => { state.keys[e.code] = true; });
 document.addEventListener('keyup', e => { state.keys[e.code] = false; });
 
@@ -1280,9 +1182,6 @@ function setupMobile() {
 }
 setupMobile();
 
-// ============================================================
-// LOOP
-// ============================================================
 const clock = new THREE.Clock();
 
 function updatePlayer(dt) {
@@ -1452,9 +1351,6 @@ function animate() {
 }
 animate();
 
-// ============================================================
-// HUD
-// ============================================================
 function updateHUD() {
   const hp = Math.max(0, state.health);
   document.getElementById('hp-fill').style.width = `${(hp / state.maxHealth) * 100}%`;
@@ -1468,9 +1364,6 @@ function updateHUD() {
   document.getElementById('ammo-max').textContent = 'INF';
 }
 
-// ============================================================
-// START / GAME OVER
-// ============================================================
 function startGame() {
   if (state.waveIntervalId !== null) {
     clearInterval(state.waveIntervalId);
