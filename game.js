@@ -1260,4 +1260,304 @@ function setupMobile() {
 
   document.addEventListener('touchmove', e => {
     if (!touchingStick || !baseRect) return;
-    for (const t
+    for (const t of e.changedTouches) {
+      const cx = baseRect.left + baseRect.width / 2;
+      const cy = baseRect.top + baseRect.height / 2;
+      let dx = t.clientX - cx, dy = t.clientY - cy;
+      const maxD = baseRect.width / 2;
+      const d = Math.hypot(dx, dy);
+      if (d > maxD) { dx = dx / d * maxD; dy = dy / d * maxD; }
+      stick.style.transform = `translate(${dx}px, ${dy}px)`;
+      mobile.moveX = dx / maxD;
+      mobile.moveY = dy / maxD;
+    }
+  }, { passive: false });
+
+  document.addEventListener('touchend', () => {
+    touchingStick = false;
+    stick.style.transform = 'translate(0,0)';
+    mobile.moveX = 0; mobile.moveY = 0;
+  });
+
+  look.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    mobile.looking = true;
+    mobile.lastX = t.clientX; mobile.lastY = t.clientY;
+  }, { passive: false });
+
+  look.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (!mobile.looking) return;
+    const t = e.touches[0];
+    const dx = t.clientX - mobile.lastX;
+    const dy = t.clientY - mobile.lastY;
+    mobile.lastX = t.clientX; mobile.lastY = t.clientY;
+    player.yaw -= dx * 0.005;
+    player.pitch -= dy * 0.005;
+    player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
+  }, { passive: false });
+
+  look.addEventListener('touchend', () => { mobile.looking = false; });
+  atk.addEventListener('touchstart', e => { e.preventDefault(); attack(); }, { passive: false });
+}
+setupMobile();
+
+// ============================================================
+// LOOP
+// ============================================================
+const clock = new THREE.Clock();
+
+function updatePlayer(dt) {
+  const speed = CONFIG.player.speed;
+  const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+
+  let mx = 0, mz = 0;
+  if (isMobile()) { mx = mobile.moveX; mz = mobile.moveY; }
+  else {
+    if (state.keys['KeyW']) mz -= 1;
+    if (state.keys['KeyS']) mz += 1;
+    if (state.keys['KeyA']) mx -= 1;
+    if (state.keys['KeyD']) mx += 1;
+  }
+
+  const v = new THREE.Vector3();
+  v.addScaledVector(fwd, -mz);
+  v.addScaledVector(right, mx);
+  state.isMoving = v.length() > 0.05;
+  if (v.length() > 0) v.normalize();
+  player.position.addScaledVector(v, speed * dt);
+
+  const lim = CONFIG.arena.size / 2 - 1;
+  player.position.x = Math.max(-lim, Math.min(lim, player.position.x));
+  player.position.z = Math.max(-lim, Math.min(lim, player.position.z));
+
+  if (state.isMoving) state.bobTime += dt * 9;
+  else state.bobTime *= 0.9;
+  const bobY = Math.sin(state.bobTime) * 0.055;
+
+  camera.position.copy(player.position);
+  camera.position.y += bobY;
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = player.yaw;
+  camera.rotation.x = player.pitch;
+}
+
+function updateZombies(dt) {
+  const now = performance.now() / 1000;
+
+  groanTimer -= dt;
+  if (groanTimer <= 0 && zombies.length > 0) {
+    groanTimer = 1.5 + Math.random() * 3;
+    Sfx.playGroan();
+  }
+
+  zombies.forEach(z => {
+    if (z.health <= 0) return;
+
+    const hpPercent = z.health / z.maxHealth;
+    const isWounded = hpPercent < 0.5;
+    const woundedFactor = isWounded ? hpPercent / 0.5 : 1;
+
+    const toP = new THREE.Vector3().subVectors(player.position, z.mesh.position);
+    toP.y = 0;
+    const dist = toP.length();
+
+    z.mesh.lookAt(player.position.x, z.mesh.position.y, player.position.z);
+
+    const staggering = z.hitReactEndTime > now;
+    if (staggering) {
+      const lean = (z.hitReactEndTime - now) / CONFIG.zombie.knockbackStagger;
+      z.mesh.rotateX(-lean * 0.45);
+      z.mesh.position.addScaledVector(z.hitDirection, -dt * 4 * lean);
+      if (!z.dismembered.armL && z.mesh.userData.armL) {
+        z.mesh.userData.armL.rotation.x = -1.5 + lean * 0.8;
+      }
+      if (!z.dismembered.armR && z.mesh.userData.armR) {
+        z.mesh.userData.armR.rotation.x = -1.5 + lean * 0.8;
+      }
+    } else {
+      let speedMod = 1;
+      if (z.dismembered.legL || z.dismembered.legR) speedMod *= 0.55;
+      if (z.dismembered.legL && z.dismembered.legR) speedMod *= 0.3;
+
+      const walkSpeed = (isWounded ? 3.2 : 5) * speedMod;
+      z.walkPhase += dt * walkSpeed;
+
+      let swing = Math.sin(z.walkPhase) * 0.55;
+      let legLSwing = swing;
+      let legRSwing = -swing;
+
+      if (!z.dismembered.legL && !z.dismembered.legR && isWounded) {
+        const dragAmount = 1 - woundedFactor;
+        legLSwing = swing * (1 - dragAmount * 0.8);
+        legRSwing = -swing * (1 - dragAmount * 0.4);
+      }
+
+      if (z.mesh.userData.legL && !z.dismembered.legL) z.mesh.userData.legL.rotation.x = legLSwing;
+      if (z.mesh.userData.legR && !z.dismembered.legR) z.mesh.userData.legR.rotation.x = legRSwing;
+
+      const armLAvailable = !z.dismembered.armL && z.mesh.userData.armL;
+      const armRAvailable = !z.dismembered.armR && z.mesh.userData.armR;
+      if (armLAvailable) z.mesh.userData.armL.rotation.x = -1.5 + Math.sin(z.walkPhase) * 0.12;
+      if (armRAvailable) z.mesh.userData.armR.rotation.x = -1.5 + Math.cos(z.walkPhase) * 0.12;
+
+      if (isWounded) {
+        const tilt = (1 - woundedFactor) * 0.25;
+        z.mesh.rotation.z = Math.sin(z.walkPhase * 0.5) * tilt;
+      } else {
+        z.mesh.rotation.z = 0;
+      }
+    }
+
+    if (z.dismembered.head) { z.health = 0; return; }
+
+    const zombieSpeed = CONFIG.zombie.speed * (isWounded ? 0.6 : 1);
+    if (!staggering && dist > CONFIG.zombie.attackRange) {
+      toP.normalize();
+      z.mesh.position.addScaledVector(toP, zombieSpeed * dt);
+    } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
+      z.lastAttackTime = now;
+      state.health -= CONFIG.zombie.damage;
+      Sfx.playPlayerHurt();
+      showDamageFlash();
+      updateHUD();
+      if (state.health <= 0) gameOver();
+    }
+  });
+}
+
+function updateRagdolls(dt) {
+  for (let i = ragdolls.length - 1; i >= 0; i--) {
+    const r = ragdolls[i];
+    if (r.update(dt)) {
+      r.dispose();
+      ragdolls.splice(i, 1);
+    }
+  }
+}
+
+function updateFlyingLimbs(dt) {
+  for (let i = flyingLimbs.length - 1; i >= 0; i--) {
+    const l = flyingLimbs[i];
+    if (l.update(dt)) {
+      l.dispose();
+      flyingLimbs.splice(i, 1);
+    }
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.1);
+  if (state.running) {
+    updatePlayer(dt);
+    updateZombies(dt);
+    updateParticles(dt);
+    updateBloodPools(dt);
+    checkWaveComplete();
+    updateWeaponViewModel(dt);
+    updateRagdolls(dt);
+    updateFlyingLimbs(dt);
+
+    const elapsed = Math.floor((performance.now() - state.startTime) / 1000);
+    const min = Math.floor(elapsed / 60);
+    const sec = (elapsed % 60).toString().padStart(2, '0');
+    document.getElementById('timer').textContent = `${min}:${sec}`;
+  } else {
+    updateParticles(dt);
+    updateBloodPools(dt);
+    updateRagdolls(dt);
+    updateFlyingLimbs(dt);
+  }
+  renderer.render(scene, camera);
+}
+animate();
+
+// ============================================================
+// HUD
+// ============================================================
+function updateHUD() {
+  const hp = Math.max(0, state.health);
+  document.getElementById('hp-fill').style.width = `${(hp / state.maxHealth) * 100}%`;
+  document.getElementById('hp-text').textContent = `${Math.ceil(hp)} / ${state.maxHealth}`;
+  document.getElementById('xp-fill').style.width = `${(state.xp / state.xpToNextLevel) * 100}%`;
+  document.getElementById('coins').textContent = state.coins;
+  document.getElementById('wave').textContent = state.wave;
+  document.getElementById('level').textContent = state.level;
+  document.getElementById('zombies').textContent = state.zombiesAlive;
+  document.getElementById('ammo-current').textContent = '⚔';
+  document.getElementById('ammo-max').textContent = '∞';
+}
+
+// ============================================================
+// START / GAME OVER
+// ============================================================
+function startGame() {
+  if (state.waveIntervalId !== null) {
+    clearInterval(state.waveIntervalId);
+    state.waveIntervalId = null;
+  }
+
+  Sfx.initAudio(); Sfx.resumeAudio();
+
+  state.health = state.maxHealth;
+  state.coins = 0; state.xp = 0;
+  state.level = 1; state.xpToNextLevel = 50;
+  state.wave = 0; state.zombiesAlive = 0;
+  state.zombiesRemainingInWave = 0;
+  state.running = true; state.betweenWaves = false;
+  state.startTime = performance.now();
+  state.critChance = CONFIG.crit.baseChance;
+
+  zombies.forEach(z => scene.remove(z.mesh));
+  zombies.length = 0;
+  ragdolls.forEach(r => r.dispose());
+  ragdolls.length = 0;
+  flyingLimbs.forEach(l => l.dispose());
+  flyingLimbs.length = 0;
+  particles.forEach(p => scene.remove(p.mesh));
+  particles.length = 0;
+  bloodPools.forEach(b => scene.remove(b.mesh));
+  bloodPools.length = 0;
+
+  player.position.set(0, CONFIG.player.height, 0);
+  player.yaw = 0; player.pitch = 0;
+
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('gameover').classList.add('hidden');
+  document.getElementById('hud').classList.remove('hidden');
+
+  updateHUD();
+  startWave();
+}
+
+function gameOver() {
+  state.running = false;
+  if (state.waveIntervalId !== null) {
+    clearInterval(state.waveIntervalId);
+    state.waveIntervalId = null;
+  }
+  document.getElementById('final-wave').textContent = state.wave;
+  document.getElementById('final-level').textContent = state.level;
+  document.getElementById('final-coins').textContent = state.coins;
+  document.getElementById('gameover').classList.remove('hidden');
+  document.getElementById('hud').classList.add('hidden');
+  if (document.exitPointerLock) document.exitPointerLock();
+}
+
+document.getElementById('btn-start').addEventListener('click', startGame);
+document.getElementById('btn-restart').addEventListener('click', startGame);
+document.getElementById('btn-multiplayer').addEventListener('click', () => {
+  alert('Multijogador em breve!');
+});
+document.getElementById('btn-wiki').addEventListener('click', () => {
+  window.open('https://zumbiblocks2.wiki.gg/', '_blank');
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
