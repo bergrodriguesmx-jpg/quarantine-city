@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as Textures from './textures.js';
+import * as Scenery from './scenery.js';
 import * as Sfx from './audio.js';
 
 // ============================================================
@@ -30,6 +31,7 @@ const CONFIG = {
     breakTime: 5,
   },
   arena: { size: 60 },
+  renderScale: 0.35, // Pixelização (0.35 = 35% da resolução)
 };
 
 // ============================================================
@@ -54,44 +56,70 @@ const state = {
 };
 
 // ============================================================
-// THREE.JS — SETUP
+// THREE.JS — SETUP COM PIXELIZAÇÃO
 // ============================================================
 const container = document.getElementById('game-container');
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x6a7a8a, 30, 100);
+scene.fog = new THREE.Fog(0x87CEEB, 40, 120);
 
 const camera = new THREE.PerspectiveCamera(
   75, window.innerWidth / window.innerHeight, 0.1, 400
 );
 camera.position.set(0, CONFIG.player.height, 0);
 
+// Renderer principal (tela cheia, suave)
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(1);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 container.appendChild(renderer.domElement);
 
-// Skybox (esfera com textura de céu)
-const skyGeo = new THREE.SphereGeometry(200, 32, 16);
+// Render target em baixa resolução (para pixelização)
+let renderTarget = new THREE.WebGLRenderTarget(
+  Math.floor(window.innerWidth * CONFIG.renderScale),
+  Math.floor(window.innerHeight * CONFIG.renderScale),
+  {
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    format: THREE.RGBAFormat,
+  }
+);
+
+// Cena 2D para exibir o render target pixelizado
+const pixelScene = new THREE.Scene();
+const pixelCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const pixelMaterial = new THREE.MeshBasicMaterial({
+  map: renderTarget.texture,
+});
+const pixelQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), pixelMaterial);
+pixelScene.add(pixelQuad);
+
+// Skybox
+const skyGeo = new THREE.SphereGeometry(200, 16, 8);
 const skyMat = new THREE.MeshBasicMaterial({
   map: Textures.skyTexture(),
   side: THREE.BackSide,
 });
 scene.add(new THREE.Mesh(skyGeo, skyMat));
 
-// Luzes
-scene.add(new THREE.AmbientLight(0x8899aa, 0.7));
-const sun = new THREE.DirectionalLight(0xffddaa, 1.2);
+// Iluminação clara e colorida (estilo Zumbi Blocks 2)
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+const sun = new THREE.DirectionalLight(0xFFF5E6, 1.0);
 sun.position.set(40, 60, 30);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(1024, 1024);
 sun.shadow.camera.left = -50;
 sun.shadow.camera.right = 50;
 sun.shadow.camera.top = 50;
 sun.shadow.camera.bottom = -50;
 sun.shadow.bias = -0.0005;
 scene.add(sun);
+
+// Luz de preenchimento (fill light) azulada
+const fillLight = new THREE.DirectionalLight(0xAED6F1, 0.3);
+fillLight.position.set(-30, 20, -20);
+scene.add(fillLight);
 
 // ============================================================
 // CHÃO
@@ -111,7 +139,7 @@ function createFloor() {
 createFloor();
 
 // ============================================================
-// CERCA (paredes)
+// CERCA
 // ============================================================
 function createWalls() {
   const size = CONFIG.arena.size;
@@ -141,7 +169,6 @@ createWalls();
 function createHouse(x, z, baseColor) {
   const g = new THREE.Group();
 
-  // Parede
   const wallTex = Textures.houseWallTexture(baseColor);
   wallTex.repeat.set(2, 1.5);
   const wallMat = new THREE.MeshLambertMaterial({ map: wallTex });
@@ -151,23 +178,16 @@ function createHouse(x, z, baseColor) {
   g.add(body);
 
   // Porta
-  const doorMat = new THREE.MeshLambertMaterial({ color: 0x2a1a0a });
+  const doorMat = new THREE.MeshLambertMaterial({ color: 0x2C3E50 });
   const door = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.2, 0.15), doorMat);
   door.position.set(0, 1.1, 3.02);
   g.add(door);
-  // Maçaneta
-  const knob = new THREE.Mesh(
-    new THREE.SphereGeometry(0.08, 8, 8),
-    new THREE.MeshLambertMaterial({ color: 0xffcc33 })
-  );
-  knob.position.set(0.4, 1.1, 3.12);
-  g.add(knob);
 
-  // Janelas (brilham no escuro)
+  // Janelas
   const winMat = new THREE.MeshLambertMaterial({
-    color: 0x88ccee,
-    emissive: 0x334455,
-    emissiveIntensity: 0.8,
+    color: 0x85C1E9,
+    emissive: 0x1A5276,
+    emissiveIntensity: 0.5,
   });
   const winGeo = new THREE.BoxGeometry(1, 1, 0.15);
   const windowPositions = [
@@ -179,9 +199,7 @@ function createHouse(x, z, baseColor) {
   windowPositions.forEach(([wx, wy, wz]) => {
     const w = new THREE.Mesh(winGeo, winMat);
     w.position.set(wx, wy, wz);
-    if (Math.abs(wx) > 2.9) {
-      w.rotation.y = Math.PI / 2;
-    }
+    if (Math.abs(wx) > 2.9) w.rotation.y = Math.PI / 2;
     g.add(w);
   });
 
@@ -198,12 +216,17 @@ function createHouse(x, z, baseColor) {
   g.position.set(x, 0, z);
   scene.add(g);
 }
-createHouse(-15, -15, '#a08060');
-createHouse(15, -15, '#907050');
-createHouse(-15, 15, '#b09070');
-createHouse(15, 15, '#806040');
-createHouse(0, -20, '#a08060');
-createHouse(0, 20, '#907050');
+createHouse(-15, -15, '#D35400');
+createHouse(15, -15, '#E67E22');
+createHouse(-15, 15, '#F39C12');
+createHouse(15, 15, '#D35400');
+createHouse(0, -20, '#E67E22');
+createHouse(0, 20, '#F39C12');
+
+// ============================================================
+// CENÁRIO (árvores, carros, etc.)
+// ============================================================
+Scenery.populateScene(scene, CONFIG.arena.size);
 
 // ============================================================
 // JOGADOR
@@ -221,8 +244,7 @@ const zombies = [];
 
 function createZombieMesh() {
   const g = new THREE.Group();
-  // Cores de zumbi mais variadas
-  const bodyColors = [0x4a7c3a, 0x5a7a3a, 0x3a6a2a, 0x507040];
+  const bodyColors = [0x27AE60, 0x2ECC71, 0x1E8449, 0x229954];
   const bodyColor = bodyColors[Math.floor(Math.random() * bodyColors.length)];
   const bodyMat = new THREE.MeshLambertMaterial({ color: bodyColor });
 
@@ -231,12 +253,12 @@ function createZombieMesh() {
 
   const head = new THREE.Mesh(
     new THREE.BoxGeometry(0.6, 0.6, 0.6),
-    new THREE.MeshLambertMaterial({ color: bodyColor + 0x101010 })
+    new THREE.MeshLambertMaterial({ color: 0x58D68D })
   );
   head.position.y = 1.9; head.castShadow = true; g.add(head);
 
-  // Olhos brilhantes
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff2200 });
+  // Olhos vermelhos brilhantes
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xFF0000 });
   const eyeGeo = new THREE.BoxGeometry(0.1, 0.1, 0.05);
   const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
   eyeL.position.set(-0.15, 1.95, 0.32); g.add(eyeL);
@@ -249,14 +271,13 @@ function createZombieMesh() {
   const armR = new THREE.Mesh(armGeo, bodyMat);
   armR.position.set(0.55, 1.2, 0); armR.castShadow = true; g.add(armR);
 
-  const legMat = new THREE.MeshLambertMaterial({ color: 0x2a3a5a });
+  const legMat = new THREE.MeshLambertMaterial({ color: 0x2C3E50 });
   const legGeo = new THREE.BoxGeometry(0.3, 1, 0.3);
   const legL = new THREE.Mesh(legGeo, legMat);
   legL.position.set(-0.2, 0.5, 0); legL.castShadow = true; g.add(legL);
   const legR = new THREE.Mesh(legGeo, legMat);
   legR.position.set(0.2, 0.5, 0); legR.castShadow = true; g.add(legR);
 
-  // Guardar referências para animação
   g.userData.armL = armL;
   g.userData.armR = armR;
   g.userData.legL = legL;
@@ -297,10 +318,10 @@ const particles = [];
 function spawnBlood(position) {
   const count = 14;
   for (let i = 0; i < count; i++) {
-    const size = 0.08 + Math.random() * 0.1;
+    const size = 0.1 + Math.random() * 0.12;
     const geo = new THREE.BoxGeometry(size, size, size);
     const mat = new THREE.MeshBasicMaterial({
-      color: Math.random() > 0.4 ? 0x990000 : 0x660000,
+      color: Math.random() > 0.4 ? 0xCC0000 : 0x990000,
       transparent: true,
       opacity: 1,
     });
@@ -364,10 +385,10 @@ function showDamageFlash() {
 }
 
 // ============================================================
-// MUZZLE FLASH (flash de luz no ataque)
+// MUZZLE FLASH
 // ============================================================
 function spawnMuzzleFlash() {
-  const flash = new THREE.PointLight(0xffaa33, 3, 6, 2);
+  const flash = new THREE.PointLight(0xFFAA33, 3, 6, 2);
   const dir = new THREE.Vector3();
   camera.getWorldDirection(dir);
   flash.position.copy(camera.position).addScaledVector(dir, 1.2);
@@ -397,7 +418,6 @@ function attack() {
   Sfx.playKnife();
   spawnMuzzleFlash();
 
-  // Swing da câmera (faca cortando)
   const startSwing = performance.now() / 1000;
   function swingAnim() {
     const t = performance.now() / 1000 - startSwing;
@@ -423,16 +443,14 @@ function attack() {
     Sfx.playHit();
     showHitMarker();
 
-    // Partículas de sangue na posição do zumbi
     const bloodPos = z.mesh.position.clone();
     bloodPos.y += 1;
     spawnBlood(bloodPos);
 
-    // Flash vermelho no zumbi
     z.mesh.children.forEach(c => {
       if (c.material && c.material.color && !c.material.emissive) {
         const orig = c.material.color.getHex();
-        c.material.color.setHex(0xff0000);
+        c.material.color.setHex(0xFF0000);
         setTimeout(() => {
           if (c.material) c.material.color.setHex(orig);
         }, 100);
@@ -446,7 +464,6 @@ function attack() {
       state.xp += CONFIG.zombie.xpReward;
       checkLevelUp();
 
-      // Explosão de sangue na morte
       const deathPos = z.mesh.position.clone();
       deathPos.y += 1;
       spawnBlood(deathPos);
@@ -666,7 +683,6 @@ function updatePlayer(dt) {
   player.position.x = Math.max(-limit, Math.min(limit, player.position.x));
   player.position.z = Math.max(-limit, Math.min(limit, player.position.z));
 
-  // Camera bob (balanço ao andar)
   if (state.isMoving) {
     state.bobTime += dt * 8;
   } else {
@@ -687,7 +703,6 @@ function updatePlayer(dt) {
 function updateZombies(dt) {
   const now = performance.now() / 1000;
 
-  // Gemidos periódicos (som ambiente)
   groanTimer -= dt;
   if (groanTimer <= 0 && zombies.length > 0) {
     groanTimer = 1.5 + Math.random() * 3;
@@ -701,7 +716,6 @@ function updateZombies(dt) {
     const dist = toP.length();
     z.mesh.lookAt(player.position.x, z.mesh.position.y, player.position.z);
 
-    // Animação de andar
     z.walkPhase += dt * 6;
     const swing = Math.sin(z.walkPhase) * 0.5;
     if (z.mesh.userData.legL) {
@@ -709,7 +723,6 @@ function updateZombies(dt) {
       z.mesh.userData.legR.rotation.x = -swing;
     }
     if (z.mesh.userData.armL) {
-      // Braços levantados na direção do jogador (zumbi clássico)
       z.mesh.userData.armL.rotation.x = -1.4 + Math.sin(z.walkPhase) * 0.1;
       z.mesh.userData.armR.rotation.x = -1.4 + Math.cos(z.walkPhase) * 0.1;
     }
@@ -739,7 +752,12 @@ function animate() {
   } else {
     updateParticles(dt);
   }
+
+  // RENDER PIXELIZADO
+  renderer.setRenderTarget(renderTarget);
   renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  renderer.render(pixelScene, pixelCamera);
 }
 animate();
 
@@ -809,4 +827,18 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+
+  // Recriar render target em baixa resolução
+  renderTarget.dispose();
+  renderTarget = new THREE.WebGLRenderTarget(
+    Math.floor(window.innerWidth * CONFIG.renderScale),
+    Math.floor(window.innerHeight * CONFIG.renderScale),
+    {
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      format: THREE.RGBAFormat,
+    }
+  );
+  pixelMaterial.map = renderTarget.texture;
+  pixelMaterial.needsUpdate = true;
 });
