@@ -1,75 +1,100 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Quarantine City</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Quarantine Blocks</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="game-container"></div>
-  <div id="crosshair"></div>
-  <div id="hit-marker"></div>
+
+<!-- MENU INICIAL ESTILO ZB2 -->
+<div id="menu" class="menu-overlay">
+  <div class="menu-container">
+    <h1>QUARANTINE BLOCKS</h1>
+    <p class="menu-subtitle">OPEN ALPHA — SOBREVIVA ÀS HORDAS</p>
+    <button class="menu-btn" id="btn-start">JOGAR SOLO</button>
+    <button class="menu-btn" id="btn-multiplayer">MULTIJOGADOR</button>
+    <button class="menu-btn" id="btn-wiki">WIKI DO JOGO</button>
+  </div>
+</div>
+
+<!-- JOGO -->
+<div id="game-container"></div>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <!-- Timer no topo -->
+  <div id="timer">0:00</div>
+
+  <!-- Vida embaixo esquerda -->
+  <div id="hud-health">
+    <div class="hp-bar"><div id="hp-fill" class="hp-fill"></div></div>
+    <span id="hp-text">100 / 100</span>
+  </div>
+
+  <!-- Munição embaixo direita -->
+  <div id="hud-ammo">
+    <span id="ammo-current">—</span>
+    <span id="ammo-sep">/</span>
+    <span id="ammo-max">—</span>
+  </div>
+
+  <!-- Info topo esquerda -->
+  <div id="hud-info">
+    <div>🌊 HORDA <span id="wave">0</span></div>
+    <div>⭐ LVL <span id="level">1</span></div>
+    <div>💰 <span id="coins">0</span></div>
+    <div>🧟 <span id="zombies">0</span></div>
+  </div>
+
+  <!-- Barra de XP fininha no rodapé -->
+  <div id="xp-bar"><div id="xp-fill"></div></div>
+
+  <!-- Crosshair -->
+  <div id="crosshair">
+    <div class="ch-line ch-top"></div>
+    <div class="ch-line ch-bottom"></div>
+    <div class="ch-line ch-left"></div>
+    <div class="ch-line ch-right"></div>
+  </div>
+
+  <!-- Hit marker -->
+  <div id="hit-marker">✕</div>
+
+  <!-- Flash de dano -->
   <div id="damage-flash"></div>
+</div>
 
-  <div id="hud">
-    <div id="hud-top">
-      <div class="hud-item">
-        <span class="hud-label">VIDA</span>
-        <div class="bar"><div id="health-bar" class="bar-fill health"></div></div>
-      </div>
-      <div class="hud-item">
-        <span class="hud-label">XP</span>
-        <div class="bar"><div id="xp-bar" class="bar-fill xp"></div></div>
-      </div>
-    </div>
-    <div id="hud-bottom">
-      <div class="hud-stat">💰 <span id="coins">0</span></div>
-      <div class="hud-stat">🌊 Horda <span id="wave">0</span></div>
-      <div class="hud-stat">⭐ Nível <span id="level">1</span></div>
-      <div class="hud-stat">🧟 <span id="zombies">0</span></div>
-    </div>
-  </div>
+<!-- Banner de horda -->
+<div id="wave-banner" class="hidden">HORDA 1</div>
 
-  <div id="wave-banner" class="hidden">
-    <span id="wave-banner-text">HORDA 1</span>
-  </div>
-
-  <div id="menu" class="overlay">
-    <h1>QUARANTINE CITY</h1>
-    <p>Sobreviva às hordas de zumbis</p>
-    <button id="btn-start">JOGAR</button>
-    <div id="controls-info">
-      <p><strong>PC:</strong> WASD · Mouse para mirar · Clique para atacar</p>
-      <p><strong>Mobile:</strong> Joystick esquerdo · Arraste na direita · Botão ⚔️</p>
-    </div>
-  </div>
-
-  <div id="gameover" class="overlay hidden">
+<!-- Game Over -->
+<div id="gameover" class="menu-overlay hidden">
+  <div class="menu-container">
     <h1>VOCÊ MORREU</h1>
-    <p>Horda alcançada: <span id="final-wave">0</span></p>
-    <p>Nível: <span id="final-level">1</span></p>
-    <p>Moedas: <span id="final-coins">0</span></p>
-    <button id="btn-restart">TENTAR DE NOVO</button>
+    <p class="menu-subtitle">Horda <span id="final-wave">0</span> · Nível <span id="final-level">1</span></p>
+    <p class="menu-subtitle">Moedas coletadas: <span id="final-coins">0</span></p>
+    <button class="menu-btn" id="btn-restart">TENTAR DE NOVO</button>
   </div>
+</div>
 
-  <div id="mobile-controls" class="hidden">
-    <div id="joystick-zone">
-      <div id="joystick-base">
-        <div id="joystick-stick"></div>
-      </div>
-    </div>
-    <div id="look-zone"></div>
-    <button id="btn-attack">⚔️</button>
+<!-- Controles mobile -->
+<div id="mobile-controls" class="hidden">
+  <div id="joystick-zone">
+    <div id="joystick-base"><div id="joystick-stick"></div></div>
   </div>
+  <div id="look-zone"></div>
+  <button id="btn-attack">⚔</button>
+</div>
 
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
-    }
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
   }
-  </script>
-  <script type="module" src="game.js"></script>
+}
+</script>
+<script type="module" src="game.js"></script>
 </body>
 </html>
