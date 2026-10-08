@@ -12,7 +12,7 @@ body {
 #game-container { position: fixed; inset: 0; }
 canvas { display: block; }
 
-/* Mira */
+/* ===== MIRA ===== */
 #crosshair {
   position: fixed;
   top: 50%; left: 50%;
@@ -23,12 +23,53 @@ canvas { display: block; }
 }
 #crosshair::before, #crosshair::after {
   content: ''; position: absolute;
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 4px rgba(0,0,0,0.8);
 }
 #crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
 #crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
 
-/* HUD */
+/* ===== HIT MARKER (X vermelho ao acertar) ===== */
+#hit-marker {
+  position: fixed;
+  top: 50%; left: 50%;
+  width: 40px; height: 40px;
+  transform: translate(-50%, -50%) rotate(45deg) scale(0);
+  pointer-events: none;
+  z-index: 11;
+  opacity: 0;
+  transition: none;
+}
+#hit-marker::before, #hit-marker::after {
+  content: ''; position: absolute;
+  background: #ff2020;
+  box-shadow: 0 0 6px rgba(255, 0, 0, 0.9);
+}
+#hit-marker::before { top: 19px; left: 0; width: 40px; height: 2px; }
+#hit-marker::after { top: 0; left: 19px; width: 2px; height: 40px; }
+#hit-marker.active {
+  animation: hitPop 0.22s ease-out;
+}
+@keyframes hitPop {
+  0% { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(0.4); }
+  50% { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(1.1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(45deg) scale(0.9); }
+}
+
+/* ===== FLASH DE DANO (borda vermelha ao tomar hit) ===== */
+#damage-flash {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 9;
+  box-shadow: inset 0 0 120px rgba(255, 0, 0, 0);
+  transition: box-shadow 0.4s ease-out;
+}
+#damage-flash.active {
+  box-shadow: inset 0 0 180px rgba(255, 0, 0, 0.85);
+  transition: box-shadow 0.05s;
+}
+
+/* ===== HUD ===== */
 #hud {
   position: fixed; inset: 0;
   pointer-events: none;
@@ -66,7 +107,31 @@ canvas { display: block; }
   text-shadow: 0 0 4px #000;
 }
 
-/* Menus */
+/* ===== BANNER DE HORDA ===== */
+#wave-banner {
+  position: fixed;
+  top: 30%; left: 50%;
+  transform: translate(-50%, -50%) scale(0.8);
+  padding: 20px 60px;
+  background: rgba(0, 0, 0, 0.85);
+  border: 3px solid #00ff00;
+  color: #00ff00;
+  font-size: 42px;
+  font-weight: bold;
+  letter-spacing: 8px;
+  text-shadow: 0 0 20px #00ff00;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0;
+  transition: all 0.4s ease-out;
+}
+#wave-banner.hidden { display: none; }
+#wave-banner.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* ===== MENUS ===== */
 .overlay {
   position: fixed; inset: 0;
   background: rgba(0, 0, 0, 0.88);
@@ -104,7 +169,7 @@ canvas { display: block; }
 }
 #controls-info strong { color: #00ff00; }
 
-/* Mobile */
+/* ===== MOBILE ===== */
 #mobile-controls {
   position: fixed; inset: 0;
   pointer-events: none;
