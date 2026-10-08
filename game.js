@@ -1,15 +1,7 @@
 import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
 import * as Textures from './textures.js';
 import * as Scenery from './scenery.js';
 import * as Sfx from './audio.js';
-
-// ============================================================
-// GRUPOS DE COLISÃO (evita ragdolls se empurrando)
-// ============================================================
-const GROUP_WORLD   = 1;
-const GROUP_RAGDOLL = 2;
-const GROUP_LIMB    = 4;
 
 // ============================================================
 // CONFIG
@@ -42,8 +34,7 @@ const CONFIG = {
   arena: { size: 80 },
   ragdoll: {
     maxActive: 8,
-    settleTime: 25,
-    forceSettleTime: 10,
+    settleTime: 25,       // tempo parado antes de fade (com interação reseta)
     fadeDuration: 1.5,
     impactImpulse: 9,
     sliceRange: 3.5,
@@ -66,7 +57,7 @@ const CONFIG = {
 // ESTADO
 // ============================================================
 const state = {
-  waveIntervalId: null,   // ✅ FIX: controla setInterval de spawn
+  waveIntervalId: null,
   health: CONFIG.player.maxHealth,
   maxHealth: CONFIG.player.maxHealth,
   coins: 0,
@@ -129,27 +120,6 @@ fillLight.position.set(-40, 30, -30);
 scene.add(fillLight);
 
 // ============================================================
-// FÍSICA
-// ============================================================
-const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -22, 0) });
-world.broadphase = new CANNON.SAPBroadphase(world);
-world.allowSleep = true;
-world.defaultContactMaterial.friction = 0.6;
-world.defaultContactMaterial.restitution = 0.15;
-world.solver.iterations = 20;
-world.solver.tolerance = 0.0005;
-
-// ✅ FIX: chão com filtro de colisão
-const groundBody = new CANNON.Body({
-  mass: 0,
-  shape: new CANNON.Plane(),
-  collisionFilterGroup: GROUP_WORLD,
-  collisionFilterMask: GROUP_WORLD | GROUP_RAGDOLL | GROUP_LIMB,
-});
-groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-world.addBody(groundBody);
-
-// ============================================================
 // CHÃO / CENÁRIO
 // ============================================================
 function createFloor() {
@@ -181,7 +151,7 @@ const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
 });
 
 // ============================================================
-// VIEWMODEL (faca)
+// VIEWMODEL
 // ============================================================
 const weaponGroup = new THREE.Group();
 camera.add(weaponGroup);
@@ -281,7 +251,6 @@ function createZombieMesh() {
   const pantsMat = new THREE.MeshLambertMaterial({ color: pantsColor });
   const woundMat = new THREE.MeshBasicMaterial({ color: 0xC0392B });
 
-  // Cabeça
   const faceTex = Textures.zombieHeadTexture(hexToCss(skinColor), false);
   const faceMat = new THREE.MeshLambertMaterial({ map: faceTex });
   const headSideMat = new THREE.MeshLambertMaterial({ color: skinColor });
@@ -309,7 +278,6 @@ function createZombieMesh() {
   earR.position.set(0.31, 1.85, 0);
   g.add(earR);
 
-  // Tronco
   const torso = new THREE.Mesh(makeBox(0.7, 0.85, 0.35), shirtMat);
   torso.position.y = 1.15;
   torso.castShadow = true;
@@ -329,7 +297,6 @@ function createZombieMesh() {
   collar.position.y = 1.58;
   g.add(collar);
 
-  // Braços
   function makeArm(side) {
     const arm = new THREE.Group();
     const shoulder = new THREE.Mesh(makeJoint(0.13), shirtMat);
@@ -373,7 +340,6 @@ function createZombieMesh() {
   armR.position.set(0.46, 1.5, 0);
   g.add(armR);
 
-  // Pernas
   function makeLeg() {
     const leg = new THREE.Group();
     const hip = new THREE.Mesh(makeJoint(0.14), pantsMat);
@@ -559,131 +525,107 @@ function updateBloodPools(dt) {
 }
 
 // ============================================================
-// MEMBROS VOADORES
+// DEBRIS — física manual, 100% estável (substitui cannon-es)
 // ============================================================
-const flyingLimbs = [];
+class Debris {
+  constructor(mesh, size, mass, life = 35) {
+    this.mesh = mesh;
+    this.size = size;
+    this.mass = mass;
+    this.velocity = new THREE.Vector3();
+    this.angularVelocity = new THREE.Vector3();
+    this.settled = false;
+    this.settleTimer = 0;
+    this.life = life;
+    this.maxLife = life;
+    this.key = 'piece';
+  }
 
-class FlyingLimb {
-  constructor(type, position, quaternion, impulseDir, colorInfo, sizeOverride = null, speedMult = 1) {
-    this.type = type;
-    this.startTime = performance.now() / 1000;
-    this.state = 'flying';
-    this.settleStart = 0;
-    this.fadeProgress = 0;
+  applyImpulse(impulse) {
+    this.velocity.addScaledVector(impulse, 1 / this.mass);
+  }
 
-    const skinMat  = new THREE.MeshLambertMaterial({ color: colorInfo.skin });
-    const shirtMat = new THREE.MeshLambertMaterial({ color: colorInfo.shirt });
-    const pantsMat = new THREE.MeshLambertMaterial({ color: colorInfo.pants });
-
-    let size, material;
-
-    if (sizeOverride) {
-      size = sizeOverride;
-      if (type === 'head') {
-        const deadFaceTex = Textures.zombieHeadTexture(hexToCss(colorInfo.skin), true);
-        const deadFaceMat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
-        const headSideMat = new THREE.MeshLambertMaterial({ color: colorInfo.skin });
-        material = [
-          headSideMat, headSideMat, headSideMat, headSideMat,
-          deadFaceMat, headSideMat,
-        ];
-      } else if (type === 'torso') material = shirtMat;
-      else if (type === 'armL' || type === 'armR') material = shirtMat;
-      else if (type === 'legL' || type === 'legR') material = pantsMat;
-      else material = shirtMat;
-    } else {
-      if (type === 'head') {
-        size = new THREE.Vector3(0.55, 0.55, 0.55);
-        const deadFaceTex = Textures.zombieHeadTexture(hexToCss(colorInfo.skin), true);
-        const deadFaceMat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
-        const headSideMat = new THREE.MeshLambertMaterial({ color: colorInfo.skin });
-        material = [
-          headSideMat, headSideMat, headSideMat, headSideMat,
-          deadFaceMat, headSideMat,
-        ];
-      } else if (type === 'torso') {
-        size = new THREE.Vector3(0.7, 0.85, 0.35);
-        material = shirtMat;
-      } else if (type === 'armL' || type === 'armR') {
-        size = new THREE.Vector3(0.24, 0.95, 0.24);
-        material = shirtMat;
-      } else if (type === 'legL' || type === 'legR') {
-        size = new THREE.Vector3(0.28, 0.8, 0.28);
-        material = pantsMat;
-      } else {
-        size = new THREE.Vector3(0.3, 0.3, 0.3);
-        material = shirtMat;
-      }
-    }
-
-    const geo = makeBox(size.x, size.y, size.z);
-    this.mesh = new THREE.Mesh(geo, material);
-    this.mesh.position.copy(position);
-    this.mesh.quaternion.copy(quaternion);
-    this.mesh.castShadow = true;
-    this.mesh.receiveShadow = true;
-    scene.add(this.mesh);
-
-    const shape = new CANNON.Box(new CANNON.Vec3(
-      size.x / 2, size.y / 2, size.z / 2
-    ));
-    // ✅ FIX: filtro de colisão (só colide com o chão)
-    this.body = new CANNON.Body({
-      mass: 1.5,
-      shape,
-      position: new CANNON.Vec3(position.x, position.y, position.z),
-      quaternion: new CANNON.Quaternion(quaternion.x, quaternion.y, quaternion.z, quaternion.w),
-      linearDamping: 0.05,
-      angularDamping: 0.12,
-      sleepSpeedLimit: 0.4,
-      sleepTimeLimit: 0.8,
-      collisionFilterGroup: GROUP_LIMB,
-      collisionFilterMask: GROUP_WORLD,
-    });
-    world.addBody(this.body);
-
-    const dir = impulseDir.clone().normalize();
-    const speed = CONFIG.dismember.limbSpeed * speedMult;
-    this.body.applyImpulse(
-      new CANNON.Vec3(
-        dir.x * speed + (Math.random() - 0.5) * 4,
-        speed * 0.6 + Math.random() * 3,
-        dir.z * speed + (Math.random() - 0.5) * 4
-      ),
-      new CANNON.Vec3(0, 0, 0)
-    );
-    this.body.angularVelocity.set(
-      (Math.random() - 0.5) * 20,
-      (Math.random() - 0.5) * 20,
-      (Math.random() - 0.5) * 20
-    );
+  applyTorque(torque) {
+    this.angularVelocity.addScaledVector(torque, 1 / this.mass);
   }
 
   update(dt) {
-    if (this.state === 'fading') {
-      this.fadeProgress += dt / 1.5;
-      const opacity = Math.max(0, 1 - this.fadeProgress);
-      const mats = Array.isArray(this.mesh.material) ? this.mesh.material : [this.mesh.material];
-      mats.forEach(m => { m.transparent = true; m.opacity = opacity; });
-      return this.fadeProgress >= 1;
-    }
-    this.mesh.position.copy(this.body.position);
-    this.mesh.quaternion.copy(this.body.quaternion);
+    this.life -= dt;
+    if (this.life <= 0) return true;
 
-    if (this.state === 'flying') {
-      const now = performance.now() / 1000;
-      const timeSince = now - this.startTime;
-      if (this.body.sleepState === CANNON.Body.SLEEPING && timeSince > 0.8) {
-        if (this.settleStart === 0) this.settleStart = now;
-      }
-      if (this.settleStart > 0) {
-        const dur = now - this.settleStart;
-        if (dur > CONFIG.dismember.limbLife) {
-          this.state = 'fading';
-          this.fadeProgress = 0;
+    if (!this.settled) {
+      // Gravidade
+      this.velocity.y -= 22 * dt;
+
+      // Atrito do ar
+      this.velocity.multiplyScalar(0.995);
+      this.angularVelocity.multiplyScalar(0.99);
+
+      // Integrar posição
+      this.mesh.position.addScaledVector(this.velocity, dt);
+
+      // Integrar rotação (Euler — simples mas funciona)
+      this.mesh.rotation.x += this.angularVelocity.x * dt;
+      this.mesh.rotation.y += this.angularVelocity.y * dt;
+      this.mesh.rotation.z += this.angularVelocity.z * dt;
+
+      // Colisão com o chão — usa a MENOR dimensão como raio de apoio
+      const minDim = Math.min(this.size.x, this.size.y, this.size.z);
+      const groundY = minDim * 0.5;
+
+      if (this.mesh.position.y <= groundY) {
+        this.mesh.position.y = groundY;
+
+        if (this.velocity.y < 0) this.velocity.y = -this.velocity.y * 0.3;
+        this.velocity.x *= 0.65;
+        this.velocity.z *= 0.65;
+        this.angularVelocity.multiplyScalar(0.7);
+
+        // Se está lento o bastante → settle
+        const speedSq = this.velocity.lengthSq();
+        const angSq = this.angularVelocity.lengthSq();
+        if (speedSq < 0.5 && angSq < 1.0) {
+          this.settleTimer += dt;
+          if (this.settleTimer > 0.4) {
+            this.settled = true;
+            this.velocity.set(0, 0, 0);
+            this.angularVelocity.set(0, 0, 0);
+          }
+        } else {
+          this.settleTimer = 0;
         }
       }
+
+      // Bate nas paredes invisíveis do mapa
+      const lim = CONFIG.arena.size / 2 - 1;
+      if (this.mesh.position.x < -lim) {
+        this.mesh.position.x = -lim;
+        this.velocity.x = Math.abs(this.velocity.x) * 0.5;
+      }
+      if (this.mesh.position.x > lim) {
+        this.mesh.position.x = lim;
+        this.velocity.x = -Math.abs(this.velocity.x) * 0.5;
+      }
+      if (this.mesh.position.z < -lim) {
+        this.mesh.position.z = -lim;
+        this.velocity.z = Math.abs(this.velocity.z) * 0.5;
+      }
+      if (this.mesh.position.z > lim) {
+        this.mesh.position.z = lim;
+        this.velocity.z = -Math.abs(this.velocity.z) * 0.5;
+      }
     }
+
+    // Fade quando a vida acaba
+    if (this.life < 3) {
+      const opacity = Math.max(0, this.life / 3);
+      const mats = Array.isArray(this.mesh.material) ? this.mesh.material : [this.mesh.material];
+      mats.forEach(m => {
+        m.transparent = true;
+        m.opacity = opacity;
+      });
+    }
+
     return false;
   }
 
@@ -692,357 +634,202 @@ class FlyingLimb {
     this.mesh.geometry.dispose();
     const mats = Array.isArray(this.mesh.material) ? this.mesh.material : [this.mesh.material];
     mats.forEach(m => m.dispose());
-    world.removeBody(this.body);
   }
 }
 
 // ============================================================
-// RAGDOLL
+// RAGDOLL — conjunto de peças com física manual
 // ============================================================
 const ragdolls = [];
 
 class Ragdoll {
   constructor(zombieMesh, hitDir, hitStrength, missingParts) {
-    this.parts = [];
-    this.constraints = [];
-    this.meshes = [];
+    zombieMesh.updateMatrixWorld(true);
+
+    this.pieces = [];
     this.startTime = performance.now() / 1000;
     this.lastHitTime = this.startTime;
     this.settleStart = 0;
     this.state = 'falling';
     this.fadeProgress = 0;
 
-    zombieMesh.updateMatrixWorld(true);
-
     const skin = zombieMesh.userData.skinColor;
     const shirt = zombieMesh.userData.shirtColor;
     const pants = zombieMesh.userData.pantsColor;
 
-    this.skinColor = skin;
-    this.shirtColor = shirt;
-    this.pantsColor = pants;
+    const hitDirN = hitDir.clone();
+    hitDirN.y = 0;
+    hitDirN.normalize();
 
-    const skinMat  = new THREE.MeshLambertMaterial({ color: skin });
-    const shirtMat = new THREE.MeshLambertMaterial({ color: shirt });
-    const pantsMat = new THREE.MeshLambertMaterial({ color: pants });
-
-    const deadFaceTex = Textures.zombieHeadTexture(hexToCss(skin), true);
-    const deadFaceMat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
-    const headSideMat = new THREE.MeshLambertMaterial({ color: skin });
-    const headMaterials = [
-      headSideMat, headSideMat, headSideMat, headSideMat,
-      deadFaceMat, headSideMat,
-    ];
-
-    const getWorld = (obj) => {
-      const p = new THREE.Vector3();
-      const q = new THREE.Quaternion();
-      obj.getWorldPosition(p);
-      obj.getWorldQuaternion(q);
-      return { p, q };
-    };
-
-    const allDefs = [
+    const defs = [
       {
         key: 'torso',
         size: new THREE.Vector3(0.7, 0.85, 0.35),
-        mass: 10,
-        materials: [shirtMat, shirtMat, shirtMat, shirtMat, shirtMat, shirtMat],
-        getWorld: () => getWorld(zombieMesh.userData.torso),
+        mass: 8,
+        obj: zombieMesh.userData.torso,
+        offsetY: 0,
+        materialColor: shirt,
       },
       {
         key: 'head',
         size: new THREE.Vector3(0.55, 0.55, 0.55),
-        mass: 3,
-        materials: headMaterials,
-        getWorld: () => getWorld(zombieMesh.userData.head),
+        mass: 2.5,
+        obj: zombieMesh.userData.head,
+        offsetY: 0,
+        isHead: true,
       },
       {
         key: 'armL',
         size: new THREE.Vector3(0.22, 0.9, 0.22),
         mass: 0.8,
-        materials: [shirtMat, shirtMat, shirtMat, shirtMat, shirtMat, shirtMat],
-        getWorld: () => {
-          const p = new THREE.Vector3();
-          const q = new THREE.Quaternion();
-          zombieMesh.userData.armL.getWorldPosition(p);
-          zombieMesh.userData.armL.getWorldQuaternion(q);
-          p.y -= 0.45;
-          return { p, q };
-        },
+        obj: zombieMesh.userData.armL,
+        offsetY: -0.45,
+        materialColor: shirt,
       },
       {
         key: 'armR',
         size: new THREE.Vector3(0.22, 0.9, 0.22),
         mass: 0.8,
-        materials: [shirtMat, shirtMat, shirtMat, shirtMat, shirtMat, shirtMat],
-        getWorld: () => {
-          const p = new THREE.Vector3();
-          const q = new THREE.Quaternion();
-          zombieMesh.userData.armR.getWorldPosition(p);
-          zombieMesh.userData.armR.getWorldQuaternion(q);
-          p.y -= 0.45;
-          return { p, q };
-        },
+        obj: zombieMesh.userData.armR,
+        offsetY: -0.45,
+        materialColor: shirt,
       },
       {
         key: 'legL',
         size: new THREE.Vector3(0.26, 0.75, 0.26),
         mass: 1.2,
-        materials: [pantsMat, pantsMat, pantsMat, pantsMat, pantsMat, pantsMat],
-        getWorld: () => {
-          const p = new THREE.Vector3();
-          const q = new THREE.Quaternion();
-          zombieMesh.userData.legL.getWorldPosition(p);
-          zombieMesh.userData.legL.getWorldQuaternion(q);
-          p.y -= 0.35;
-          return { p, q };
-        },
+        obj: zombieMesh.userData.legL,
+        offsetY: -0.35,
+        materialColor: pants,
       },
       {
         key: 'legR',
         size: new THREE.Vector3(0.26, 0.75, 0.26),
         mass: 1.2,
-        materials: [pantsMat, pantsMat, pantsMat, pantsMat, pantsMat, pantsMat],
-        getWorld: () => {
-          const p = new THREE.Vector3();
-          const q = new THREE.Quaternion();
-          zombieMesh.userData.legR.getWorldPosition(p);
-          zombieMesh.userData.legR.getWorldQuaternion(q);
-          p.y -= 0.35;
-          return { p, q };
-        },
+        obj: zombieMesh.userData.legR,
+        offsetY: -0.35,
+        materialColor: pants,
       },
     ];
 
-    const partDefs = allDefs.filter(def => !missingParts[def.key]);
-    const partsByKey = {};
+    for (const def of defs) {
+      if (missingParts[def.key]) continue;
 
-    for (const def of partDefs) {
-      const { p, q } = def.getWorld();
-      const geo = makeBox(def.size.x, def.size.y, def.size.z);
-      const mesh = new THREE.Mesh(geo, def.materials);
-      mesh.position.copy(p);
-      mesh.quaternion.copy(q);
+      const worldPos = new THREE.Vector3();
+      const worldQuat = new THREE.Quaternion();
+      def.obj.getWorldPosition(worldPos);
+      def.obj.getWorldQuaternion(worldQuat);
+      worldPos.y += def.offsetY;
+
+      // Cria material
+      let materials;
+      if (def.isHead) {
+        const deadFaceTex = Textures.zombieHeadTexture(hexToCss(skin), true);
+        const deadFaceMat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
+        const headSideMat = new THREE.MeshLambertMaterial({ color: skin });
+        materials = [
+          headSideMat, headSideMat, headSideMat, headSideMat,
+          deadFaceMat, headSideMat,
+        ];
+      } else {
+        materials = new THREE.MeshLambertMaterial({ color: def.materialColor });
+      }
+
+      const geo = new THREE.BoxGeometry(
+        def.size.x, def.size.y, def.size.z, 2, 2, 2
+      );
+      const mesh = new THREE.Mesh(geo, materials);
+      mesh.position.copy(worldPos);
+      mesh.quaternion.copy(worldQuat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       scene.add(mesh);
-      this.meshes.push(mesh);
 
-      const shape = new CANNON.Box(new CANNON.Vec3(
-        def.size.x / 2, def.size.y / 2, def.size.z / 2
+      const piece = new Debris(mesh, def.size, def.mass, 9999);
+      piece.key = def.key;
+
+      // Impulso na direção do golpe
+      const baseImpulse = CONFIG.ragdoll.impactImpulse * hitStrength;
+      const spreadX = (Math.random() - 0.5) * 2;
+      const spreadZ = (Math.random() - 0.5) * 2;
+
+      piece.applyImpulse(new THREE.Vector3(
+        hitDirN.x * baseImpulse + spreadX,
+        baseImpulse * 0.5 + Math.random() * 1.5,
+        hitDirN.z * baseImpulse + spreadZ
       ));
-      // ✅ FIX: filtro de colisão (só colide com o chão)
-      const body = new CANNON.Body({
-        mass: def.mass,
-        shape,
-        position: new CANNON.Vec3(p.x, p.y, p.z),
-        quaternion: new CANNON.Quaternion(q.x, q.y, q.z, q.w),
-        linearDamping: 0.01,
-        angularDamping: 0.05,
-        sleepSpeedLimit: 0.25,
-        sleepTimeLimit: 1.2,
-        fixedRotation: false,
-        collisionFilterGroup: GROUP_RAGDOLL,
-        collisionFilterMask: GROUP_WORLD,
-      });
-      world.addBody(body);
-      const part = { mesh, body, key: def.key, size: def.size };
-      this.parts.push(part);
-      partsByKey[def.key] = part;
-    }
 
-    const torso = partsByKey.torso;
-    const head  = partsByKey.head;
-    const armL  = partsByKey.armL;
-    const armR  = partsByKey.armR;
-    const legL  = partsByKey.legL;
-    const legR  = partsByKey.legR;
-
-    const LOOSE = 2;
-    const VERY_LOOSE = 1.5;
-
-    if (torso && head) {
-      this.constraints.push(new CANNON.PointToPointConstraint(
-        torso.body,
-        new CANNON.Vec3(0, torso.size.y / 2, 0),
-        head.body,
-        new CANNON.Vec3(0, -head.size.y / 2, 0),
-        LOOSE
-      ));
-    }
-    if (torso && armL) {
-      this.constraints.push(new CANNON.PointToPointConstraint(
-        torso.body,
-        new CANNON.Vec3(-torso.size.x / 2 + 0.05, torso.size.y / 2 - 0.1, 0),
-        armL.body,
-        new CANNON.Vec3(0, armL.size.y / 2, 0),
-        VERY_LOOSE
-      ));
-    }
-    if (torso && armR) {
-      this.constraints.push(new CANNON.PointToPointConstraint(
-        torso.body,
-        new CANNON.Vec3(torso.size.x / 2 - 0.05, torso.size.y / 2 - 0.1, 0),
-        armR.body,
-        new CANNON.Vec3(0, armR.size.y / 2, 0),
-        VERY_LOOSE
-      ));
-    }
-    if (torso && legL) {
-      this.constraints.push(new CANNON.PointToPointConstraint(
-        torso.body,
-        new CANNON.Vec3(-0.18, -torso.size.y / 2 + 0.05, 0),
-        legL.body,
-        new CANNON.Vec3(0, legL.size.y / 2, 0),
-        VERY_LOOSE
-      ));
-    }
-    if (torso && legR) {
-      this.constraints.push(new CANNON.PointToPointConstraint(
-        torso.body,
-        new CANNON.Vec3(0.18, -torso.size.y / 2 + 0.05, 0),
-        legR.body,
-        new CANNON.Vec3(0, legR.size.y / 2, 0),
-        VERY_LOOSE
-      ));
-    }
-
-    this.constraints.forEach(c => world.addConstraint(c));
-
-    if (torso) {
-      const impulseStrength = CONFIG.ragdoll.impactImpulse * hitStrength;
-      const impulseDir = hitDir.clone().normalize();
-      torso.body.applyImpulse(
-        new CANNON.Vec3(
-          impulseDir.x * impulseStrength,
-          impulseStrength * 0.5,
-          impulseDir.z * impulseStrength
-        ),
-        new CANNON.Vec3(
-          (Math.random() - 0.5) * 0.3, 0.3, (Math.random() - 0.5) * 0.3
-        )
-      );
-      torso.body.angularVelocity.set(
-        (Math.random() - 0.5) * 8,
-        (Math.random() - 0.5) * 6,
-        (Math.random() - 0.5) * 8
-      );
-    }
-
-    [armL, armR, legL, legR].forEach(part => {
-      if (!part) return;
-      part.body.applyImpulse(
-        new CANNON.Vec3(
-          hitDir.x * 5 + (Math.random() - 0.5) * 6,
-          (Math.random() - 0.5) * 4,
-          hitDir.z * 5 + (Math.random() - 0.5) * 6
-        ),
-        new CANNON.Vec3(0, 0, 0)
-      );
-      part.body.angularVelocity.set(
+      // Giro dramático
+      piece.applyTorque(new THREE.Vector3(
         (Math.random() - 0.5) * 25,
         (Math.random() - 0.5) * 25,
         (Math.random() - 0.5) * 25
-      );
-    });
+      ));
 
-    if (head) {
-      head.body.angularVelocity.set(
-        (Math.random() - 0.5) * 20,
-        (Math.random() - 0.5) * 20,
-        (Math.random() - 0.5) * 20
-      );
+      this.pieces.push(piece);
     }
-
-    [head, armL, armR, legL, legR].forEach(part => {
-      if (!part) return;
-      const e = new CANNON.Vec3(
-        (Math.random() - 0.5) * 0.5,
-        (Math.random() - 0.5) * 0.5,
-        (Math.random() - 0.5) * 0.5
-      );
-      const q = part.body.quaternion;
-      const dq = new CANNON.Quaternion();
-      dq.setFromEuler(e.x, e.y, e.z);
-      q.mult(dq, q);
-    });
 
     scene.remove(zombieMesh);
   }
 
   sliceAt(cameraPos, forward3D, range) {
     if (this.state === 'fading') return false;
-    if (this.parts.length <= 1) return false;
+    if (this.pieces.length <= 1) return false;
 
-    let bestPart = null;
+    let bestPiece = null;
     let bestIndex = -1;
     let bestScore = -Infinity;
 
-    for (let i = 0; i < this.parts.length; i++) {
-      const p = this.parts[i];
-      const toPart = new THREE.Vector3().subVectors(p.mesh.position, cameraPos);
-      const dist = toPart.length();
+    for (let i = 0; i < this.pieces.length; i++) {
+      const p = this.pieces[i];
+
+      const toPiece = new THREE.Vector3().subVectors(p.mesh.position, cameraPos);
+      const dist = toPiece.length();
       if (dist > range) continue;
-      toPart.normalize();
-      const dot = forward3D.dot(toPart);
+      toPiece.normalize();
+      const dot = forward3D.dot(toPiece);
       if (dot < CONFIG.ragdoll.sliceDotMin) continue;
+
       const score = dot - dist * 0.05;
       if (score > bestScore) {
         bestScore = score;
-        bestPart = p;
+        bestPiece = p;
         bestIndex = i;
       }
     }
 
-    if (!bestPart) return false;
+    if (!bestPiece) return false;
 
-    const bodyToRemove = bestPart.body;
-    this.constraints = this.constraints.filter(c => {
-      if (c.bodyA === bodyToRemove || c.bodyB === bodyToRemove) {
-        world.removeConstraint(c);
-        return false;
-      }
-      return true;
-    });
-
-    world.removeBody(bodyToRemove);
-
-    const worldPos = bestPart.mesh.position.clone();
-    const worldQuat = bestPart.mesh.quaternion.clone();
-    const limbType = bestPart.key;
-    const limbSize = bestPart.size.clone();
-
-    const sliceDir = new THREE.Vector3().subVectors(worldPos, cameraPos);
+    const sliceDir = new THREE.Vector3().subVectors(bestPiece.mesh.position, cameraPos);
     sliceDir.y = 0;
     sliceDir.normalize();
 
-    scene.remove(bestPart.mesh);
-    bestPart.mesh.geometry.dispose();
-    const mats = Array.isArray(bestPart.mesh.material) ? bestPart.mesh.material : [bestPart.mesh.material];
-    mats.forEach(m => m.dispose());
+    // Vira membro voador: sai do ragdoll e vai pra lista flyingLimbs
+    bestPiece.settled = false;
+    bestPiece.settleTimer = 0;
+    bestPiece.life = CONFIG.dismember.limbLife;
+    bestPiece.maxLife = CONFIG.dismember.limbLife;
 
-    this.parts.splice(bestIndex, 1);
-    const mi = this.meshes.indexOf(bestPart.mesh);
-    if (mi >= 0) this.meshes.splice(mi, 1);
-
-    const limb = new FlyingLimb(
-      limbType,
-      worldPos,
-      worldQuat,
-      sliceDir,
-      { skin: this.skinColor, shirt: this.shirtColor, pants: this.pantsColor },
-      limbSize,
-      0.5
+    // Impulso de fatiamento
+    bestPiece.velocity.set(
+      sliceDir.x * 10 + (Math.random() - 0.5) * 5,
+      5 + Math.random() * 4,
+      sliceDir.z * 10 + (Math.random() - 0.5) * 5
     );
-    flyingLimbs.push(limb);
+    bestPiece.angularVelocity.set(
+      (Math.random() - 0.5) * 30,
+      (Math.random() - 0.5) * 30,
+      (Math.random() - 0.5) * 30
+    );
 
-    spawnBlood(worldPos, sliceDir, 18, true);
-    spawnBlood(worldPos, null, 6, true);
+    // Sangue
+    spawnBlood(bestPiece.mesh.position.clone(), sliceDir, 18, true);
 
-    // ✅ FIX: reset TUDO (dá 35s NOVOS pra fatiar de novo)
-    this.startTime = performance.now() / 1000;
-    this.lastHitTime = this.startTime;
+    this.pieces.splice(bestIndex, 1);
+    flyingLimbs.push(bestPiece);
+
+    // Reseta timer de interação (dá mais tempo de fatiar)
+    this.lastHitTime = performance.now() / 1000;
     this.settleStart = 0;
     this.state = 'falling';
 
@@ -1053,52 +840,52 @@ class Ragdoll {
     if (this.state === 'fading') {
       this.fadeProgress += dt / CONFIG.ragdoll.fadeDuration;
       const opacity = Math.max(0, 1 - this.fadeProgress);
-      this.meshes.forEach(m => {
-        const mats = Array.isArray(m.material) ? m.material : [m.material];
-        mats.forEach(mat => { mat.transparent = true; mat.opacity = opacity; });
+      this.pieces.forEach(p => {
+        const mats = Array.isArray(p.mesh.material) ? p.mesh.material : [p.mesh.material];
+        mats.forEach(m => { m.transparent = true; m.opacity = opacity; });
       });
       return this.fadeProgress >= 1;
     }
 
-    this.parts.forEach(p => {
-      p.mesh.position.copy(p.body.position);
-      p.mesh.quaternion.copy(p.body.quaternion);
-    });
+    // Atualiza peças
+    for (let i = this.pieces.length - 1; i >= 0; i--) {
+      const p = this.pieces[i];
+      // Peças do ragdoll não morrem por vida (life = 9999)
+      p.update(dt);
+    }
+
+    // Verifica se todas pararam
+    const allSettled = this.pieces.length === 0 ||
+      this.pieces.every(p => p.settled);
 
     if (this.state === 'falling') {
-      const allSleeping = this.parts.every(p => p.body.sleepState === CANNON.Body.SLEEPING);
-      // ✅ FIX: usa o tempo mais recente (spawn OU último slice)
-      const referenceTime = Math.max(this.startTime, this.lastHitTime);
-      const timeSinceSpawn = performance.now() / 1000 - referenceTime;
-      if ((allSleeping && timeSinceSpawn > 1.2) || timeSinceSpawn > CONFIG.ragdoll.forceSettleTime) {
-        if (this.settleStart === 0) this.settleStart = performance.now() / 1000;
-      } else {
-        this.settleStart = 0;
+      if (allSettled) {
+        this.state = 'settled';
+        this.settleStart = performance.now() / 1000;
       }
-      if (this.settleStart > 0) {
-        const settleDur = performance.now() / 1000 - this.settleStart;
-        if (settleDur > CONFIG.ragdoll.settleTime) {
-          this.state = 'fading';
-          this.fadeProgress = 0;
-          const torso = this.parts.find(p => p.key === 'torso');
-          if (torso) spawnBloodPool(torso.mesh.position);
-        }
+    } else if (this.state === 'settled') {
+      const elapsed = performance.now() / 1000 - this.settleStart;
+      const sinceHit = performance.now() / 1000 - this.lastHitTime;
+      // Só começa a fade se passou tempo desde a ÚLTIMA interação
+      if (elapsed > CONFIG.ragdoll.settleTime && sinceHit > CONFIG.ragdoll.settleTime) {
+        this.state = 'fading';
+        this.fadeProgress = 0;
+        const torso = this.pieces.find(p => p.key === 'torso');
+        if (torso) spawnBloodPool(torso.mesh.position);
       }
     }
+
     return false;
   }
 
   dispose() {
-    this.parts.forEach(p => {
-      scene.remove(p.mesh);
-      p.mesh.geometry.dispose();
-      const mats = Array.isArray(p.mesh.material) ? p.mesh.material : [p.mesh.material];
-      mats.forEach(m => m.dispose());
-      world.removeBody(p.body);
-    });
-    this.constraints.forEach(c => world.removeConstraint(c));
+    this.pieces.forEach(p => p.dispose());
+    this.pieces = [];
   }
 }
+
+// Lista de membros voadores (também usa Debris)
+const flyingLimbs = [];
 
 function startRagdoll(zombieMesh, hitDir, hitStrength, missingParts) {
   if (ragdolls.length >= CONFIG.ragdoll.maxActive) {
@@ -1136,12 +923,48 @@ function detachLimb(z, limbKey, hitDir) {
   if (limbKey === 'armL' || limbKey === 'armR') worldPos.y -= 0.45;
   else if (limbKey === 'legL' || limbKey === 'legR') worldPos.y -= 0.35;
 
-  const limb = new FlyingLimb(limbKey, worldPos, worldQuat, hitDir, {
-    skin: ud.skinColor, shirt: ud.shirtColor, pants: ud.pantsColor,
-  });
-  flyingLimbs.push(limb);
+  // Cria o membro voador
+  let size, materials;
+  if (limbKey === 'head') {
+    size = new THREE.Vector3(0.55, 0.55, 0.55);
+    const deadFaceTex = Textures.zombieHeadTexture(hexToCss(ud.skinColor), true);
+    const deadFaceMat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
+    const headSideMat = new THREE.MeshLambertMaterial({ color: ud.skinColor });
+    materials = [headSideMat, headSideMat, headSideMat, headSideMat, deadFaceMat, headSideMat];
+  } else if (limbKey === 'armL' || limbKey === 'armR') {
+    size = new THREE.Vector3(0.24, 0.95, 0.24);
+    materials = new THREE.MeshLambertMaterial({ color: ud.shirtColor });
+  } else {
+    size = new THREE.Vector3(0.28, 0.8, 0.28);
+    materials = new THREE.MeshLambertMaterial({ color: ud.pantsColor });
+  }
 
-  spawnBlood(worldPos, hitDir, 25, true);
+  const geo = new THREE.BoxGeometry(size.x, size.y, size.z, 2, 2, 2);
+  const mesh = new THREE.Mesh(geo, materials);
+  mesh.position.copy(worldPos);
+  mesh.quaternion.copy(worldQuat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+
+  const piece = new Debris(mesh, size, 1.2, CONFIG.dismember.limbLife);
+  piece.key = limbKey;
+
+  const dir = hitDir.clone().normalize();
+  piece.velocity.set(
+    dir.x * CONFIG.dismember.limbSpeed + (Math.random() - 0.5) * 4,
+    CONFIG.dismember.limbSpeed * 0.6 + Math.random() * 3,
+    dir.z * CONFIG.dismember.limbSpeed + (Math.random() - 0.5) * 4
+  );
+  piece.angularVelocity.set(
+    (Math.random() - 0.5) * 20,
+    (Math.random() - 0.5) * 20,
+    (Math.random() - 0.5) * 20
+  );
+
+  flyingLimbs.push(piece);
+
+  spawnBlood(worldPos, dir, 25, true);
   spawnBlood(worldPos, null, 10, true);
 }
 
@@ -1209,8 +1032,6 @@ function attack() {
 
   const aimRegion = getAimRegion();
 
-  // ========== ZUMBIS VIVOS ==========
-  // ✅ FIX: usa cópia da array (evita pular zumbis com splice)
   const zombiesSnapshot = [...zombies];
   zombiesSnapshot.forEach(z => {
     if (z.health <= 0) return;
@@ -1308,7 +1129,7 @@ function attack() {
     }
   });
 
-  // ========== FATIAR CADÁVERES ==========
+  // Fatiar cadáveres
   const camPos = camera.position.clone();
   let sliced = false;
   for (const ragdoll of ragdolls) {
@@ -1350,7 +1171,6 @@ function showWaveBanner(text) {
   }, 1400);
 }
 
-// ✅ FIX: limpa interval anterior antes de criar novo
 function startWave() {
   if (state.waveIntervalId !== null) {
     clearInterval(state.waveIntervalId);
@@ -1440,307 +1260,4 @@ function setupMobile() {
 
   document.addEventListener('touchmove', e => {
     if (!touchingStick || !baseRect) return;
-    for (const t of e.changedTouches) {
-      const cx = baseRect.left + baseRect.width / 2;
-      const cy = baseRect.top + baseRect.height / 2;
-      let dx = t.clientX - cx, dy = t.clientY - cy;
-      const maxD = baseRect.width / 2;
-      const d = Math.hypot(dx, dy);
-      if (d > maxD) { dx = dx / d * maxD; dy = dy / d * maxD; }
-      stick.style.transform = `translate(${dx}px, ${dy}px)`;
-      mobile.moveX = dx / maxD;
-      mobile.moveY = dy / maxD;
-    }
-  }, { passive: false });
-
-  document.addEventListener('touchend', () => {
-    touchingStick = false;
-    stick.style.transform = 'translate(0,0)';
-    mobile.moveX = 0; mobile.moveY = 0;
-  });
-
-  look.addEventListener('touchstart', e => {
-    e.preventDefault();
-    const t = e.touches[0];
-    mobile.looking = true;
-    mobile.lastX = t.clientX; mobile.lastY = t.clientY;
-  }, { passive: false });
-
-  look.addEventListener('touchmove', e => {
-    e.preventDefault();
-    if (!mobile.looking) return;
-    const t = e.touches[0];
-    const dx = t.clientX - mobile.lastX;
-    const dy = t.clientY - mobile.lastY;
-    mobile.lastX = t.clientX; mobile.lastY = t.clientY;
-    player.yaw -= dx * 0.005;
-    player.pitch -= dy * 0.005;
-    player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
-  }, { passive: false });
-
-  look.addEventListener('touchend', () => { mobile.looking = false; });
-  atk.addEventListener('touchstart', e => { e.preventDefault(); attack(); }, { passive: false });
-}
-setupMobile();
-
-// ============================================================
-// LOOP
-// ============================================================
-const clock = new THREE.Clock();
-
-function updatePlayer(dt) {
-  const speed = CONFIG.player.speed;
-  const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-  const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
-
-  let mx = 0, mz = 0;
-  if (isMobile()) { mx = mobile.moveX; mz = mobile.moveY; }
-  else {
-    if (state.keys['KeyW']) mz -= 1;
-    if (state.keys['KeyS']) mz += 1;
-    if (state.keys['KeyA']) mx -= 1;
-    if (state.keys['KeyD']) mx += 1;
-  }
-
-  const v = new THREE.Vector3();
-  v.addScaledVector(fwd, -mz);
-  v.addScaledVector(right, mx);
-  state.isMoving = v.length() > 0.05;
-  if (v.length() > 0) v.normalize();
-  player.position.addScaledVector(v, speed * dt);
-
-  const lim = CONFIG.arena.size / 2 - 1;
-  player.position.x = Math.max(-lim, Math.min(lim, player.position.x));
-  player.position.z = Math.max(-lim, Math.min(lim, player.position.z));
-
-  if (state.isMoving) state.bobTime += dt * 9;
-  else state.bobTime *= 0.9;
-  const bobY = Math.sin(state.bobTime) * 0.055;
-
-  camera.position.copy(player.position);
-  camera.position.y += bobY;
-  camera.rotation.order = 'YXZ';
-  camera.rotation.y = player.yaw;
-  camera.rotation.x = player.pitch;
-}
-
-function updateZombies(dt) {
-  const now = performance.now() / 1000;
-
-  groanTimer -= dt;
-  if (groanTimer <= 0 && zombies.length > 0) {
-    groanTimer = 1.5 + Math.random() * 3;
-    Sfx.playGroan();
-  }
-
-  zombies.forEach(z => {
-    if (z.health <= 0) return;
-
-    const hpPercent = z.health / z.maxHealth;
-    const isWounded = hpPercent < 0.5;
-    const woundedFactor = isWounded ? hpPercent / 0.5 : 1;
-
-    const toP = new THREE.Vector3().subVectors(player.position, z.mesh.position);
-    toP.y = 0;
-    const dist = toP.length();
-
-    z.mesh.lookAt(player.position.x, z.mesh.position.y, player.position.z);
-
-    const staggering = z.hitReactEndTime > now;
-    if (staggering) {
-      const lean = (z.hitReactEndTime - now) / CONFIG.zombie.knockbackStagger;
-      z.mesh.rotateX(-lean * 0.45);
-      z.mesh.position.addScaledVector(z.hitDirection, -dt * 4 * lean);
-      if (!z.dismembered.armL && z.mesh.userData.armL) {
-        z.mesh.userData.armL.rotation.x = -1.5 + lean * 0.8;
-      }
-      if (!z.dismembered.armR && z.mesh.userData.armR) {
-        z.mesh.userData.armR.rotation.x = -1.5 + lean * 0.8;
-      }
-    } else {
-      let speedMod = 1;
-      if (z.dismembered.legL || z.dismembered.legR) speedMod *= 0.55;
-      if (z.dismembered.legL && z.dismembered.legR) speedMod *= 0.3;
-
-      const walkSpeed = (isWounded ? 3.2 : 5) * speedMod;
-      z.walkPhase += dt * walkSpeed;
-
-      let swing = Math.sin(z.walkPhase) * 0.55;
-      let legLSwing = swing;
-      let legRSwing = -swing;
-
-      if (!z.dismembered.legL && !z.dismembered.legR && isWounded) {
-        const dragAmount = 1 - woundedFactor;
-        legLSwing = swing * (1 - dragAmount * 0.8);
-        legRSwing = -swing * (1 - dragAmount * 0.4);
-      }
-
-      if (z.mesh.userData.legL && !z.dismembered.legL) z.mesh.userData.legL.rotation.x = legLSwing;
-      if (z.mesh.userData.legR && !z.dismembered.legR) z.mesh.userData.legR.rotation.x = legRSwing;
-
-      const armLAvailable = !z.dismembered.armL && z.mesh.userData.armL;
-      const armRAvailable = !z.dismembered.armR && z.mesh.userData.armR;
-      if (armLAvailable) z.mesh.userData.armL.rotation.x = -1.5 + Math.sin(z.walkPhase) * 0.12;
-      if (armRAvailable) z.mesh.userData.armR.rotation.x = -1.5 + Math.cos(z.walkPhase) * 0.12;
-
-      if (isWounded) {
-        const tilt = (1 - woundedFactor) * 0.25;
-        z.mesh.rotation.z = Math.sin(z.walkPhase * 0.5) * tilt;
-      } else {
-        z.mesh.rotation.z = 0;
-      }
-    }
-
-    if (z.dismembered.head) { z.health = 0; return; }
-
-    const zombieSpeed = CONFIG.zombie.speed * (isWounded ? 0.6 : 1);
-    if (!staggering && dist > CONFIG.zombie.attackRange) {
-      toP.normalize();
-      z.mesh.position.addScaledVector(toP, zombieSpeed * dt);
-    } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
-      z.lastAttackTime = now;
-      state.health -= CONFIG.zombie.damage;
-      Sfx.playPlayerHurt();
-      showDamageFlash();
-      updateHUD();
-      if (state.health <= 0) gameOver();
-    }
-  });
-}
-
-function updateRagdolls(dt) {
-  for (let i = ragdolls.length - 1; i >= 0; i--) {
-    const r = ragdolls[i];
-    if (r.update(dt)) {
-      r.dispose();
-      ragdolls.splice(i, 1);
-    }
-  }
-}
-
-function updateFlyingLimbs(dt) {
-  for (let i = flyingLimbs.length - 1; i >= 0; i--) {
-    const l = flyingLimbs[i];
-    if (l.update(dt)) {
-      l.dispose();
-      flyingLimbs.splice(i, 1);
-    }
-  }
-}
-
-function animate() {
-  requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.1);
-  if (state.running) {
-    updatePlayer(dt);
-    updateZombies(dt);
-    updateParticles(dt);
-    updateBloodPools(dt);
-    checkWaveComplete();
-    updateWeaponViewModel(dt);
-    world.step(1 / 60, dt, 5);
-    updateRagdolls(dt);
-    updateFlyingLimbs(dt);
-
-    const elapsed = Math.floor((performance.now() - state.startTime) / 1000);
-    const min = Math.floor(elapsed / 60);
-    const sec = (elapsed % 60).toString().padStart(2, '0');
-    document.getElementById('timer').textContent = `${min}:${sec}`;
-  } else {
-    updateParticles(dt);
-    updateBloodPools(dt);
-    world.step(1 / 60, dt, 5);
-    updateRagdolls(dt);
-    updateFlyingLimbs(dt);
-  }
-  renderer.render(scene, camera);
-}
-animate();
-
-// ============================================================
-// HUD
-// ============================================================
-function updateHUD() {
-  const hp = Math.max(0, state.health);
-  document.getElementById('hp-fill').style.width = `${(hp / state.maxHealth) * 100}%`;
-  document.getElementById('hp-text').textContent = `${Math.ceil(hp)} / ${state.maxHealth}`;
-  document.getElementById('xp-fill').style.width = `${(state.xp / state.xpToNextLevel) * 100}%`;
-  document.getElementById('coins').textContent = state.coins;
-  document.getElementById('wave').textContent = state.wave;
-  document.getElementById('level').textContent = state.level;
-  document.getElementById('zombies').textContent = state.zombiesAlive;
-  document.getElementById('ammo-current').textContent = '⚔';
-  document.getElementById('ammo-max').textContent = '∞';
-}
-
-// ============================================================
-// START / GAME OVER
-// ============================================================
-function startGame() {
-  // ✅ FIX: limpa interval da run anterior
-  if (state.waveIntervalId !== null) {
-    clearInterval(state.waveIntervalId);
-    state.waveIntervalId = null;
-  }
-
-  Sfx.initAudio(); Sfx.resumeAudio();
-
-  state.health = state.maxHealth;
-  state.coins = 0; state.xp = 0;
-  state.level = 1; state.xpToNextLevel = 50;
-  state.wave = 0; state.zombiesAlive = 0;
-  state.zombiesRemainingInWave = 0;
-  state.running = true; state.betweenWaves = false;
-  state.startTime = performance.now();
-  state.critChance = CONFIG.crit.baseChance;
-
-  zombies.forEach(z => scene.remove(z.mesh));
-  zombies.length = 0;
-  ragdolls.forEach(r => r.dispose());
-  ragdolls.length = 0;
-  flyingLimbs.forEach(l => l.dispose());
-  flyingLimbs.length = 0;
-  particles.forEach(p => scene.remove(p.mesh));
-  particles.length = 0;
-  bloodPools.forEach(b => scene.remove(b.mesh));
-  bloodPools.length = 0;
-
-  player.position.set(0, CONFIG.player.height, 0);
-  player.yaw = 0; player.pitch = 0;
-
-  document.getElementById('menu').classList.add('hidden');
-  document.getElementById('gameover').classList.add('hidden');
-  document.getElementById('hud').classList.remove('hidden');
-
-  updateHUD();
-  startWave();
-}
-
-function gameOver() {
-  state.running = false;
-  if (state.waveIntervalId !== null) {
-    clearInterval(state.waveIntervalId);
-    state.waveIntervalId = null;
-  }
-  document.getElementById('final-wave').textContent = state.wave;
-  document.getElementById('final-level').textContent = state.level;
-  document.getElementById('final-coins').textContent = state.coins;
-  document.getElementById('gameover').classList.remove('hidden');
-  document.getElementById('hud').classList.add('hidden');
-  if (document.exitPointerLock) document.exitPointerLock();
-}
-
-document.getElementById('btn-start').addEventListener('click', startGame);
-document.getElementById('btn-restart').addEventListener('click', startGame);
-document.getElementById('btn-multiplayer').addEventListener('click', () => {
-  alert('Multijogador em breve!');
-});
-document.getElementById('btn-wiki').addEventListener('click', () => {
-  window.open('https://zumbiblocks2.wiki.gg/', '_blank');
-});
-
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
+    for (const t
