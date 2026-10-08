@@ -85,7 +85,6 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
 container.appendChild(renderer.domElement);
 
 const skyGeo = new THREE.SphereGeometry(200, 32, 16);
@@ -94,21 +93,10 @@ const skyMat = new THREE.MeshBasicMaterial({
 });
 scene.add(new THREE.Mesh(skyGeo, skyMat));
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
 sun.position.set(50, 80, 40);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -60;
-sun.shadow.camera.right = 60;
-sun.shadow.camera.top = 60;
-sun.shadow.camera.bottom = -60;
-sun.shadow.bias = -0.0004;
 scene.add(sun);
-
-const fillLight = new THREE.DirectionalLight(0xC5E0F5, 0.35);
-fillLight.position.set(-40, 30, -30);
-scene.add(fillLight);
 
 function createFloor() {
   const size = CONFIG.arena.size;
@@ -145,28 +133,16 @@ scene.add(camera);
 function createKnifeViewModel() {
   const g = new THREE.Group();
   const handle = new THREE.Mesh(
-    new THREE.BoxGeometry(0.06, 0.22, 0.06, 2, 4, 2),
+    new THREE.BoxGeometry(0.06, 0.22, 0.06),
     new THREE.MeshLambertMaterial({ color: 0x2C3E50 })
   );
   g.add(handle);
-  const guard = new THREE.Mesh(
-    new THREE.BoxGeometry(0.16, 0.03, 0.08, 3, 1, 2),
-    new THREE.MeshLambertMaterial({ color: 0x7F8C8D })
-  );
-  guard.position.set(0, 0.13, 0);
-  g.add(guard);
   const blade = new THREE.Mesh(
-    new THREE.BoxGeometry(0.05, 0.35, 0.02, 2, 5, 1),
+    new THREE.BoxGeometry(0.05, 0.42, 0.02),
     new THREE.MeshLambertMaterial({ color: 0xBDC3C7 })
   );
   blade.position.set(0, 0.32, 0);
   g.add(blade);
-  const tip = new THREE.Mesh(
-    new THREE.BoxGeometry(0.05, 0.08, 0.02, 2, 2, 1),
-    new THREE.MeshLambertMaterial({ color: 0xECF0F1 })
-  );
-  tip.position.set(0, 0.53, 0);
-  g.add(tip);
   return g;
 }
 
@@ -208,9 +184,6 @@ const player = {
 };
 
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-function hexToCss(hex) { return '#' + hex.toString(16).padStart(6, '0'); }
-function makeBox(w, h, d) { return new THREE.BoxGeometry(w, h, d, 4, 4, 4); }
-function makeJoint(size) { return new THREE.SphereGeometry(size, 8, 6); }
 
 const zombies = [];
 
@@ -218,6 +191,9 @@ const SHIRT_COLORS = [0x8E44AD, 0x2ECC71, 0xE74C3C, 0x3498DB, 0xF39C12];
 const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723];
 const SKIN_COLORS  = [0x7BC950, 0x6BB840, 0x8DD65A];
 
+// ============================================================
+// ZUMBI - VERSAO SIMPLIFICADA (so caixas basicas, cor solida)
+// ============================================================
 function createZombieMesh() {
   const g = new THREE.Group();
 
@@ -225,137 +201,54 @@ function createZombieMesh() {
   const shirtColor = rand(SHIRT_COLORS);
   const pantsColor = rand(PANTS_COLORS);
 
-  const skinMat  = new THREE.MeshLambertMaterial({ color: skinColor });
-  const shirtMat = new THREE.MeshLambertMaterial({ color: shirtColor });
-  const pantsMat = new THREE.MeshLambertMaterial({ color: pantsColor });
-  const woundMat = new THREE.MeshBasicMaterial({ color: 0xC0392B });
+  // MATERIAIS BASICOS (nao dependem de luz nem textura)
+  const skinMat  = new THREE.MeshBasicMaterial({ color: skinColor });
+  const shirtMat = new THREE.MeshBasicMaterial({ color: shirtColor });
+  const pantsMat = new THREE.MeshBasicMaterial({ color: pantsColor });
+  const eyeMat   = new THREE.MeshBasicMaterial({ color: 0x000000 });
 
-  // CABECA com material unico (textura em tudo)
-  const faceTex = Textures.zombieHeadTexture(hexToCss(skinColor), false);
-  const faceMat = new THREE.MeshLambertMaterial({ map: faceTex });
-  const headGeo = makeBox(0.55, 0.55, 0.55);
-  const head = new THREE.Mesh(headGeo, faceMat);
+  // CABECA (cubo simples)
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.55), skinMat);
   head.position.y = 1.85;
-  head.castShadow = true;
   g.add(head);
 
-  const hairMat = new THREE.MeshLambertMaterial({ color: 0x2C1810 });
-  const hair = new THREE.Mesh(makeBox(0.58, 0.08, 0.58), hairMat);
-  hair.position.y = 2.13;
-  g.add(hair);
-  const fringe = new THREE.Mesh(makeBox(0.58, 0.12, 0.1), hairMat);
-  fringe.position.set(0, 2.05, 0.26);
-  g.add(fringe);
+  // Olhos (2 cubinhos pretos)
+  const eyeGeo = new THREE.BoxGeometry(0.1, 0.1, 0.05);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.13, 1.92, 0.29);
+  g.add(eyeL);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeR.position.set(0.13, 1.92, 0.29);
+  g.add(eyeR);
 
-  const earGeo = makeBox(0.06, 0.14, 0.1);
-  const earL = new THREE.Mesh(earGeo, skinMat);
-  earL.position.set(-0.31, 1.85, 0);
-  g.add(earL);
-  const earR = new THREE.Mesh(earGeo, skinMat);
-  earR.position.set(0.31, 1.85, 0);
-  g.add(earR);
-
-  const torso = new THREE.Mesh(makeBox(0.7, 0.85, 0.35), shirtMat);
+  // TRONCO
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.85, 0.35), shirtMat);
   torso.position.y = 1.15;
-  torso.castShadow = true;
   g.add(torso);
 
-  const woundTorso1 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.02), woundMat);
-  woundTorso1.position.set(0.15, 1.2, 0.18);
-  g.add(woundTorso1);
-  const woundTorso2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.02), woundMat);
-  woundTorso2.position.set(-0.2, 1.05, 0.18);
-  g.add(woundTorso2);
+  // BRACOS (cada um = 1 caixa)
+  const armGeo = new THREE.BoxGeometry(0.22, 0.9, 0.22);
 
-  const collar = new THREE.Mesh(
-    makeBox(0.55, 0.06, 0.3),
-    new THREE.MeshLambertMaterial({ color: 0x000000 })
-  );
-  collar.position.y = 1.58;
-  g.add(collar);
-
-  function makeArm(side) {
-    const arm = new THREE.Group();
-    const shoulder = new THREE.Mesh(makeJoint(0.13), shirtMat);
-    shoulder.position.y = -0.05;
-    arm.add(shoulder);
-    const upper = new THREE.Mesh(makeBox(0.22, 0.4, 0.22), shirtMat);
-    upper.position.y = -0.22;
-    upper.castShadow = true;
-    arm.add(upper);
-    const elbow = new THREE.Mesh(makeJoint(0.1), skinMat);
-    elbow.position.y = -0.44;
-    arm.add(elbow);
-    const lower = new THREE.Mesh(makeBox(0.2, 0.4, 0.2), skinMat);
-    lower.position.y = -0.62;
-    lower.castShadow = true;
-    arm.add(lower);
-    const hand = new THREE.Mesh(makeBox(0.22, 0.14, 0.24), skinMat);
-    hand.position.y = -0.87;
-    hand.castShadow = true;
-    arm.add(hand);
-    for (let i = 0; i < 4; i++) {
-      const finger = new THREE.Mesh(makeBox(0.04, 0.12, 0.04), skinMat);
-      finger.position.set(-0.075 + i * 0.05, -0.99, 0.06);
-      finger.castShadow = true;
-      arm.add(finger);
-    }
-    const thumb = new THREE.Mesh(makeBox(0.05, 0.09, 0.05), skinMat);
-    thumb.position.set(side * 0.1, -0.92, 0.1);
-    arm.add(thumb);
-    const wound = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.02), woundMat);
-    wound.position.set(side * 0.11, -0.55, 0);
-    wound.rotation.y = side * Math.PI / 2;
-    arm.add(wound);
-    return arm;
-  }
-
-  const armL = makeArm(-1);
-  armL.position.set(-0.46, 1.5, 0);
+  const armL = new THREE.Mesh(armGeo, shirtMat);
+  armL.position.set(-0.46, 1.05, 0);
   g.add(armL);
-  const armR = makeArm(1);
-  armR.position.set(0.46, 1.5, 0);
+
+  const armR = new THREE.Mesh(armGeo, shirtMat);
+  armR.position.set(0.46, 1.05, 0);
   g.add(armR);
 
-  function makeLeg() {
-    const leg = new THREE.Group();
-    const hip = new THREE.Mesh(makeJoint(0.14), pantsMat);
-    hip.position.y = 0;
-    leg.add(hip);
-    const upper = new THREE.Mesh(makeBox(0.26, 0.55, 0.26), pantsMat);
-    upper.position.y = -0.28;
-    upper.castShadow = true;
-    leg.add(upper);
-    const knee = new THREE.Mesh(makeJoint(0.11), pantsMat);
-    knee.position.y = -0.56;
-    leg.add(knee);
-    const lower = new THREE.Mesh(makeBox(0.24, 0.4, 0.24), pantsMat);
-    lower.position.y = -0.78;
-    lower.castShadow = true;
-    leg.add(lower);
-    const shoeBase = new THREE.Mesh(makeBox(0.3, 0.14, 0.36), pantsMat);
-    shoeBase.position.set(0, -1.02, 0.03);
-    shoeBase.castShadow = true;
-    leg.add(shoeBase);
-    const shoeTip = new THREE.Mesh(makeBox(0.3, 0.08, 0.12), pantsMat);
-    shoeTip.position.set(0, -1.05, 0.24);
-    leg.add(shoeTip);
-    const sole = new THREE.Mesh(
-      makeBox(0.31, 0.03, 0.37),
-      new THREE.MeshLambertMaterial({ color: 0xF0F0F0 })
-    );
-    sole.position.set(0, -1.1, 0.03);
-    leg.add(sole);
-    return leg;
-  }
+  // PERNAS (cada uma = 1 caixa)
+  const legGeo = new THREE.BoxGeometry(0.26, 0.9, 0.26);
 
-  const legL = makeLeg();
-  legL.position.set(-0.18, 0.72, 0);
+  const legL = new THREE.Mesh(legGeo, pantsMat);
+  legL.position.set(-0.18, 0.45, 0);
   g.add(legL);
-  const legR = makeLeg();
-  legR.position.set(0.18, 0.72, 0);
+
+  const legR = new THREE.Mesh(legGeo, pantsMat);
+  legR.position.set(0.18, 0.45, 0);
   g.add(legR);
 
+  // Guarda referencia (pra animacao)
   g.userData.armL = armL;
   g.userData.armR = armR;
   g.userData.legL = legL;
@@ -383,9 +276,6 @@ function spawnZombie() {
   const mesh = createZombieMesh();
   mesh.position.set(x, 0, z);
   scene.add(mesh);
-
-  // FIX: desabilita frustum culling
-  mesh.traverse(c => { c.frustumCulled = false; });
 
   console.log('[SPAWN] Zumbi em', x.toFixed(1), z.toFixed(1));
 
@@ -535,7 +425,6 @@ class Debris {
       this.angularVelocity.multiplyScalar(0.99);
 
       this.mesh.position.addScaledVector(this.velocity, dt);
-
       this.mesh.rotation.x += this.angularVelocity.x * dt;
       this.mesh.rotation.y += this.angularVelocity.y * dt;
       this.mesh.rotation.z += this.angularVelocity.z * dt;
@@ -545,7 +434,6 @@ class Debris {
 
       if (this.mesh.position.y <= groundY) {
         this.mesh.position.y = groundY;
-
         if (this.velocity.y < 0) this.velocity.y = -this.velocity.y * 0.3;
         this.velocity.x *= 0.65;
         this.velocity.z *= 0.65;
@@ -563,24 +451,6 @@ class Debris {
         } else {
           this.settleTimer = 0;
         }
-      }
-
-      const lim = CONFIG.arena.size / 2 - 1;
-      if (this.mesh.position.x < -lim) {
-        this.mesh.position.x = -lim;
-        this.velocity.x = Math.abs(this.velocity.x) * 0.5;
-      }
-      if (this.mesh.position.x > lim) {
-        this.mesh.position.x = lim;
-        this.velocity.x = -Math.abs(this.velocity.x) * 0.5;
-      }
-      if (this.mesh.position.z < -lim) {
-        this.mesh.position.z = -lim;
-        this.velocity.z = Math.abs(this.velocity.z) * 0.5;
-      }
-      if (this.mesh.position.z > lim) {
-        this.mesh.position.z = lim;
-        this.velocity.z = -Math.abs(this.velocity.z) * 0.5;
       }
     }
 
@@ -627,11 +497,11 @@ class Ragdoll {
 
     const defs = [
       { key: 'torso', size: new THREE.Vector3(0.7, 0.85, 0.35), mass: 8, obj: zombieMesh.userData.torso, offsetY: 0, materialColor: shirt },
-      { key: 'head', size: new THREE.Vector3(0.55, 0.55, 0.55), mass: 2.5, obj: zombieMesh.userData.head, offsetY: 0, isHead: true },
-      { key: 'armL', size: new THREE.Vector3(0.22, 0.9, 0.22), mass: 0.8, obj: zombieMesh.userData.armL, offsetY: -0.45, materialColor: shirt },
-      { key: 'armR', size: new THREE.Vector3(0.22, 0.9, 0.22), mass: 0.8, obj: zombieMesh.userData.armR, offsetY: -0.45, materialColor: shirt },
-      { key: 'legL', size: new THREE.Vector3(0.26, 0.75, 0.26), mass: 1.2, obj: zombieMesh.userData.legL, offsetY: -0.35, materialColor: pants },
-      { key: 'legR', size: new THREE.Vector3(0.26, 0.75, 0.26), mass: 1.2, obj: zombieMesh.userData.legR, offsetY: -0.35, materialColor: pants },
+      { key: 'head', size: new THREE.Vector3(0.55, 0.55, 0.55), mass: 2.5, obj: zombieMesh.userData.head, offsetY: 0, materialColor: skin },
+      { key: 'armL', size: new THREE.Vector3(0.22, 0.9, 0.22), mass: 0.8, obj: zombieMesh.userData.armL, offsetY: 0, materialColor: shirt },
+      { key: 'armR', size: new THREE.Vector3(0.22, 0.9, 0.22), mass: 0.8, obj: zombieMesh.userData.armR, offsetY: 0, materialColor: shirt },
+      { key: 'legL', size: new THREE.Vector3(0.26, 0.9, 0.26), mass: 1.2, obj: zombieMesh.userData.legL, offsetY: 0, materialColor: pants },
+      { key: 'legR', size: new THREE.Vector3(0.26, 0.9, 0.26), mass: 1.2, obj: zombieMesh.userData.legR, offsetY: 0, materialColor: pants },
     ];
 
     for (const def of defs) {
@@ -643,20 +513,11 @@ class Ragdoll {
       def.obj.getWorldQuaternion(worldQuat);
       worldPos.y += def.offsetY;
 
-      let mat;
-      if (def.isHead) {
-        const deadFaceTex = Textures.zombieHeadTexture(hexToCss(skin), true);
-        mat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
-      } else {
-        mat = new THREE.MeshLambertMaterial({ color: def.materialColor });
-      }
-
-      const geo = new THREE.BoxGeometry(def.size.x, def.size.y, def.size.z, 2, 2, 2);
+      const mat = new THREE.MeshBasicMaterial({ color: def.materialColor });
+      const geo = new THREE.BoxGeometry(def.size.x, def.size.y, def.size.z);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.copy(worldPos);
       mesh.quaternion.copy(worldQuat);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
       mesh.frustumCulled = false;
       scene.add(mesh);
 
@@ -817,28 +678,22 @@ function detachLimb(z, limbKey, hitDir) {
   limbObj.visible = false;
   z.dismembered[limbKey] = true;
 
-  if (limbKey === 'armL' || limbKey === 'armR') worldPos.y -= 0.45;
-  else if (limbKey === 'legL' || limbKey === 'legR') worldPos.y -= 0.35;
-
-  let size, mat;
+  let size, color;
   if (limbKey === 'head') {
     size = new THREE.Vector3(0.55, 0.55, 0.55);
-    const deadFaceTex = Textures.zombieHeadTexture(hexToCss(ud.skinColor), true);
-    mat = new THREE.MeshLambertMaterial({ map: deadFaceTex });
+    color = ud.skinColor;
   } else if (limbKey === 'armL' || limbKey === 'armR') {
-    size = new THREE.Vector3(0.24, 0.95, 0.24);
-    mat = new THREE.MeshLambertMaterial({ color: ud.shirtColor });
+    size = new THREE.Vector3(0.22, 0.9, 0.22);
+    color = ud.shirtColor;
   } else {
-    size = new THREE.Vector3(0.28, 0.8, 0.28);
-    mat = new THREE.MeshLambertMaterial({ color: ud.pantsColor });
+    size = new THREE.Vector3(0.26, 0.9, 0.26);
+    color = ud.pantsColor;
   }
 
-  const geo = new THREE.BoxGeometry(size.x, size.y, size.z, 2, 2, 2);
-  const mesh = new THREE.Mesh(geo, mat);
+  const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color }));
   mesh.position.copy(worldPos);
   mesh.quaternion.copy(worldQuat);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
   mesh.frustumCulled = false;
   scene.add(mesh);
 
@@ -891,7 +746,6 @@ function spawnMuzzleFlash() {
   const dir = new THREE.Vector3();
   camera.getWorldDirection(dir);
   flash.position.copy(camera.position).addScaledVector(dir, 1.4);
-  flash.position.y -= 0.3;
   scene.add(flash);
   const start = performance.now() / 1000;
   (function fade() {
@@ -952,20 +806,7 @@ function attack() {
     }
 
     Sfx.playHit();
-    if (isCrit) Sfx.playHit();
     showHitMarker(isCrit);
-
-    z.mesh.traverse(c => {
-      if (c.material && c.material.color && !c.material.emissive && c.material.visible !== false) {
-        if (!c.userData._origColor) c.userData._origColor = c.material.color.getHex();
-        c.material.color.setHex(isCrit ? 0xFFFF00 : 0xFFFFFF);
-        setTimeout(() => {
-          if (c.material && c.userData._origColor !== undefined) {
-            c.material.color.setHex(c.userData._origColor);
-          }
-        }, isCrit ? 130 : 70);
-      }
-    });
 
     if (isCrit) {
       let limbToDetach = null;
@@ -1234,7 +1075,6 @@ function updateZombies(dt) {
 
     const hpPercent = z.health / z.maxHealth;
     const isWounded = hpPercent < 0.5;
-    const woundedFactor = isWounded ? hpPercent / 0.5 : 1;
 
     const toP = new THREE.Vector3().subVectors(player.position, z.mesh.position);
     toP.y = 0;
@@ -1247,12 +1087,6 @@ function updateZombies(dt) {
       const lean = (z.hitReactEndTime - now) / CONFIG.zombie.knockbackStagger;
       z.mesh.rotateX(-lean * 0.45);
       z.mesh.position.addScaledVector(z.hitDirection, -dt * 4 * lean);
-      if (!z.dismembered.armL && z.mesh.userData.armL) {
-        z.mesh.userData.armL.rotation.x = -1.5 + lean * 0.8;
-      }
-      if (!z.dismembered.armR && z.mesh.userData.armR) {
-        z.mesh.userData.armR.rotation.x = -1.5 + lean * 0.8;
-      }
     } else {
       let speedMod = 1;
       if (z.dismembered.legL || z.dismembered.legR) speedMod *= 0.55;
@@ -1261,30 +1095,15 @@ function updateZombies(dt) {
       const walkSpeed = (isWounded ? 3.2 : 5) * speedMod;
       z.walkPhase += dt * walkSpeed;
 
-      let swing = Math.sin(z.walkPhase) * 0.55;
-      let legLSwing = swing;
-      let legRSwing = -swing;
+      const swing = Math.sin(z.walkPhase) * 0.55;
 
-      if (!z.dismembered.legL && !z.dismembered.legR && isWounded) {
-        const dragAmount = 1 - woundedFactor;
-        legLSwing = swing * (1 - dragAmount * 0.8);
-        legRSwing = -swing * (1 - dragAmount * 0.4);
-      }
-
-      if (z.mesh.userData.legL && !z.dismembered.legL) z.mesh.userData.legL.rotation.x = legLSwing;
-      if (z.mesh.userData.legR && !z.dismembered.legR) z.mesh.userData.legR.rotation.x = legRSwing;
+      if (z.mesh.userData.legL && !z.dismembered.legL) z.mesh.userData.legL.rotation.x = swing;
+      if (z.mesh.userData.legR && !z.dismembered.legR) z.mesh.userData.legR.rotation.x = -swing;
 
       const armLAvailable = !z.dismembered.armL && z.mesh.userData.armL;
       const armRAvailable = !z.dismembered.armR && z.mesh.userData.armR;
       if (armLAvailable) z.mesh.userData.armL.rotation.x = -1.5 + Math.sin(z.walkPhase) * 0.12;
       if (armRAvailable) z.mesh.userData.armR.rotation.x = -1.5 + Math.cos(z.walkPhase) * 0.12;
-
-      if (isWounded) {
-        const tilt = (1 - woundedFactor) * 0.25;
-        z.mesh.rotation.z = Math.sin(z.walkPhase * 0.5) * tilt;
-      } else {
-        z.mesh.rotation.z = 0;
-      }
     }
 
     if (z.dismembered.head) { z.health = 0; return; }
