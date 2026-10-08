@@ -1,5 +1,5 @@
 // ============================================================
-// SONS PROCEDURAIS — gerados via Web Audio API
+// SONS PROCEDURAIS - Web Audio API
 // ============================================================
 let ctx = null;
 
@@ -8,7 +8,7 @@ export function initAudio() {
   try {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
   } catch (e) {
-    console.warn('Web Audio não suportado');
+    console.warn('Web Audio nao suportado');
   }
 }
 
@@ -16,7 +16,6 @@ export function resumeAudio() {
   if (ctx && ctx.state === 'suspended') ctx.resume();
 }
 
-// Faca — "swish" agudo
 export function playKnife() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -37,7 +36,6 @@ export function playKnife() {
   src.start(t);
 }
 
-// Acerto — thud grave
 export function playHit() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -52,7 +50,6 @@ export function playHit() {
   o.start(t); o.stop(t + 0.15);
 }
 
-// Morte de zumbi — descida grave
 export function playZombieDeath() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -67,7 +64,6 @@ export function playZombieDeath() {
   o.start(t); o.stop(t + 0.5);
 }
 
-// Gemido de zumbi — filtrado, modulado
 export function playGroan() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -93,7 +89,6 @@ export function playGroan() {
   o.stop(t + 0.8); lfo.stop(t + 0.8);
 }
 
-// Moeda — dois tons cristalinos
 export function playCoin() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -111,7 +106,6 @@ export function playCoin() {
   });
 }
 
-// Level up — arpejo subindo
 export function playLevelUp() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -129,7 +123,6 @@ export function playLevelUp() {
   });
 }
 
-// Jogador toma dano — grunhido grave
 export function playPlayerHurt() {
   if (!ctx) return;
   const t = ctx.currentTime;
