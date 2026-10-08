@@ -2,16 +2,14 @@ import * as THREE from 'three';
 import * as Textures from './textures.js';
 
 // ============================================================
-// CENÁRIO — estilo Zumbi Blocks 2 (bairro low-poly)
+// CENARIO - bairro low-poly estilo Zumbi Blocks 2
 // ============================================================
 
-// Árvore com copa arredondada (low-poly)
 export function createTree(x, z) {
   const g = new THREE.Group();
   const barkTex = Textures.barkTexture();
   const barkMat = new THREE.MeshLambertMaterial({ map: barkTex });
 
-  // Tronco (cilindro curto)
   const trunk = new THREE.Mesh(
     new THREE.CylinderGeometry(0.35, 0.45, 2.5, 6),
     barkMat
@@ -20,7 +18,6 @@ export function createTree(x, z) {
   trunk.castShadow = true; trunk.receiveShadow = true;
   g.add(trunk);
 
-  // Copa low-poly (icosaedro achatado — visual "blob" arredondado)
   const leafMat = new THREE.MeshLambertMaterial({ color: 0x2E8B3E, flatShading: true });
   const leafMat2 = new THREE.MeshLambertMaterial({ color: 0x3AA850, flatShading: true });
 
@@ -45,12 +42,10 @@ export function createTree(x, z) {
   return g;
 }
 
-// Casa branca com telhado vermelho (estilo do print)
 export function createHouse(x, z, wallColor = '#ECF0F1', roofColor = '#C0392B') {
   const g = new THREE.Group();
   const w = 6, h = 3.5, d = 5;
 
-  // Corpo
   const wallTex = Textures.houseWallTexture(wallColor);
   wallTex.repeat.set(2, 1);
   const wallMat = new THREE.MeshLambertMaterial({ map: wallTex });
@@ -59,7 +54,6 @@ export function createHouse(x, z, wallColor = '#ECF0F1', roofColor = '#C0392B') 
   body.castShadow = true; body.receiveShadow = true;
   g.add(body);
 
-  // Telhado (pirâmide baixa — 4 lados)
   const roofTex = Textures.roofTexture(roofColor);
   roofTex.repeat.set(3, 3);
   const roofMat = new THREE.MeshLambertMaterial({ map: roofTex, flatShading: true });
@@ -69,13 +63,11 @@ export function createHouse(x, z, wallColor = '#ECF0F1', roofColor = '#C0392B') 
   roof.castShadow = true;
   g.add(roof);
 
-  // Porta marrom
   const doorMat = new THREE.MeshLambertMaterial({ color: 0x5D4030 });
   const door = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 0.12), doorMat);
   door.position.set(0, 1, d / 2 + 0.05);
   g.add(door);
 
-  // Janelas (vidros azuis)
   const glassMat = new THREE.MeshLambertMaterial({
     color: 0x7FB8E8,
     emissive: 0x3D5A8C,
@@ -99,7 +91,6 @@ export function createHouse(x, z, wallColor = '#ECF0F1', roofColor = '#C0392B') 
   return g;
 }
 
-// Cerca baixinha (para delimitar quintais)
 export function createFence(x, z, length = 8, horizontal = true) {
   const g = new THREE.Group();
   const mat = new THREE.MeshLambertMaterial({ color: 0xECF0F1 });
@@ -131,7 +122,6 @@ export function createFence(x, z, length = 8, horizontal = true) {
   return g;
 }
 
-// Rua (asfalto) com faixa
 export function createRoad(x, z, width, length, horizontal = true) {
   const tex = Textures.asphaltTexture();
   tex.repeat.set(
@@ -150,24 +140,18 @@ export function createRoad(x, z, width, length, horizontal = true) {
   return road;
 }
 
-// ============================================================
-// POPULAR CENA COMPLETA
-// ============================================================
 export function populateScene(scene, arenaSize) {
   const half = arenaSize / 2;
 
-  // ---- RUAS ----
-  // Rua horizontal central
+  // Ruas
   scene.add(createRoad(0, 0, 6, arenaSize, true));
-  // Rua vertical central
   scene.add(createRoad(0, 0, 6, arenaSize, false));
-  // Ruas secundárias
   scene.add(createRoad(0, -20, 4, arenaSize, true));
   scene.add(createRoad(0, 20, 4, arenaSize, true));
   scene.add(createRoad(-20, 0, 4, arenaSize, false));
   scene.add(createRoad(20, 0, 4, arenaSize, false));
 
-  // ---- CASAS (evitando ruas) ----
+  // Casas
   const housePositions = [
     [-12, -12, '#ECF0F1', '#C0392B'],
     [12, -12, '#F5DEB3', '#7F8C8D'],
@@ -186,7 +170,7 @@ export function populateScene(scene, arenaSize) {
     scene.add(createHouse(x, z, wc, rc));
   });
 
-  // ---- ÁRVORES ----
+  // Arvores
   const treePositions = [
     [-18, -18], [-22, -22], [-18, 18], [-22, 22],
     [18, -18], [22, -22], [18, 18], [22, 22],
@@ -201,7 +185,7 @@ export function populateScene(scene, arenaSize) {
     }
   });
 
-  // ---- CERCAS DELIMITANDO QUINTAIS ----
+  // Cercas
   const fenceData = [
     [-8, -8, 6, true], [8, -8, 6, true], [-8, 8, 6, true], [8, 8, 6, true],
   ];
