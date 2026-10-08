@@ -5,6 +5,13 @@ import * as Scenery from './scenery.js';
 import * as Sfx from './audio.js';
 
 // ============================================================
+// GRUPOS DE COLISÃO (evita ragdolls se empurrando)
+// ============================================================
+const GROUP_WORLD   = 1;
+const GROUP_RAGDOLL = 2;
+const GROUP_LIMB    = 4;
+
+// ============================================================
 // CONFIG
 // ============================================================
 const CONFIG = {
@@ -35,15 +42,12 @@ const CONFIG = {
   arena: { size: 80 },
   ragdoll: {
     maxActive: 8,
-    settleTime: 25,       // ⬆️ MUITO mais tempo no chão (era 6)
-    forceSettleTime: 10,  // fallback se nunca dormir
+    settleTime: 25,
+    forceSettleTime: 10,
     fadeDuration: 1.5,
     impactImpulse: 9,
-    // Fatiamento de cadáver
     sliceRange: 3.5,
     sliceDotMin: 0.25,
-    sliceImpulse: 6,      // impulso menor que o crítico (é só "pop")
-    sliceSpin: 12,
   },
   crit: {
     baseChance: 0.15,
@@ -62,6 +66,7 @@ const CONFIG = {
 // ESTADO
 // ============================================================
 const state = {
+  waveIntervalId: null,   // ✅ FIX: controla setInterval de spawn
   health: CONFIG.player.maxHealth,
   maxHealth: CONFIG.player.maxHealth,
   coins: 0,
@@ -133,10 +138,14 @@ world.defaultContactMaterial.friction = 0.6;
 world.defaultContactMaterial.restitution = 0.15;
 world.solver.iterations = 20;
 world.solver.tolerance = 0.0005;
-world.defaultContactMaterial.contactEquationStiffness = 1e6;
-world.defaultContactMaterial.contactEquationRelaxation = 4;
 
-const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
+// ✅ FIX: chão com filtro de colisão
+const groundBody = new CANNON.Body({
+  mass: 0,
+  shape: new CANNON.Plane(),
+  collisionFilterGroup: GROUP_WORLD,
+  collisionFilterMask: GROUP_WORLD | GROUP_RAGDOLL | GROUP_LIMB,
+});
 groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
 world.addBody(groundBody);
 
@@ -172,7 +181,7 @@ const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
 });
 
 // ============================================================
-// VIEWMODEL
+// VIEWMODEL (faca)
 // ============================================================
 const weaponGroup = new THREE.Group();
 camera.add(weaponGroup);
@@ -248,13 +257,8 @@ const player = {
 
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function hexToCss(hex) { return '#' + hex.toString(16).padStart(6, '0'); }
-
-function makeBox(w, h, d) {
-  return new THREE.BoxGeometry(w, h, d, 4, 4, 4);
-}
-function makeJoint(size) {
-  return new THREE.SphereGeometry(size, 8, 6);
-}
+function makeBox(w, h, d) { return new THREE.BoxGeometry(w, h, d, 4, 4, 4); }
+function makeJoint(size) { return new THREE.SphereGeometry(size, 8, 6); }
 
 // ============================================================
 // ZUMBIS
@@ -555,7 +559,7 @@ function updateBloodPools(dt) {
 }
 
 // ============================================================
-// MEMBROS VOADORES (aceita qualquer tipo: head, arm, leg, torso)
+// MEMBROS VOADORES
 // ============================================================
 const flyingLimbs = [];
 
@@ -588,7 +592,6 @@ class FlyingLimb {
       else if (type === 'legL' || type === 'legR') material = pantsMat;
       else material = shirtMat;
     } else {
-      // Fallback (chamadas do crítico)
       if (type === 'head') {
         size = new THREE.Vector3(0.55, 0.55, 0.55);
         const deadFaceTex = Textures.zombieHeadTexture(hexToCss(colorInfo.skin), true);
@@ -624,6 +627,7 @@ class FlyingLimb {
     const shape = new CANNON.Box(new CANNON.Vec3(
       size.x / 2, size.y / 2, size.z / 2
     ));
+    // ✅ FIX: filtro de colisão (só colide com o chão)
     this.body = new CANNON.Body({
       mass: 1.5,
       shape,
@@ -633,6 +637,8 @@ class FlyingLimb {
       angularDamping: 0.12,
       sleepSpeedLimit: 0.4,
       sleepTimeLimit: 0.8,
+      collisionFilterGroup: GROUP_LIMB,
+      collisionFilterMask: GROUP_WORLD,
     });
     world.addBody(this.body);
 
@@ -691,7 +697,7 @@ class FlyingLimb {
 }
 
 // ============================================================
-// RAGDOLL (agora FATIÁVEL)
+// RAGDOLL
 // ============================================================
 const ragdolls = [];
 
@@ -701,10 +707,10 @@ class Ragdoll {
     this.constraints = [];
     this.meshes = [];
     this.startTime = performance.now() / 1000;
+    this.lastHitTime = this.startTime;
     this.settleStart = 0;
     this.state = 'falling';
     this.fadeProgress = 0;
-    this.lastHitTime = 0;
 
     zombieMesh.updateMatrixWorld(true);
 
@@ -712,7 +718,6 @@ class Ragdoll {
     const shirt = zombieMesh.userData.shirtColor;
     const pants = zombieMesh.userData.pantsColor;
 
-    // Guarda para uso posterior (slice)
     this.skinColor = skin;
     this.shirtColor = shirt;
     this.pantsColor = pants;
@@ -827,6 +832,7 @@ class Ragdoll {
       const shape = new CANNON.Box(new CANNON.Vec3(
         def.size.x / 2, def.size.y / 2, def.size.z / 2
       ));
+      // ✅ FIX: filtro de colisão (só colide com o chão)
       const body = new CANNON.Body({
         mass: def.mass,
         shape,
@@ -837,6 +843,8 @@ class Ragdoll {
         sleepSpeedLimit: 0.25,
         sleepTimeLimit: 1.2,
         fixedRotation: false,
+        collisionFilterGroup: GROUP_RAGDOLL,
+        collisionFilterMask: GROUP_WORLD,
       });
       world.addBody(body);
       const part = { mesh, body, key: def.key, size: def.size };
@@ -902,7 +910,6 @@ class Ragdoll {
 
     this.constraints.forEach(c => world.addConstraint(c));
 
-    // Impulso
     if (torso) {
       const impulseStrength = CONFIG.ragdoll.impactImpulse * hitStrength;
       const impulseDir = hitDir.clone().normalize();
@@ -964,12 +971,9 @@ class Ragdoll {
     scene.remove(zombieMesh);
   }
 
-  // ============================================================
-  // FATIAR: remove um membro do ragdoll e cria FlyingLimb
-  // ============================================================
   sliceAt(cameraPos, forward3D, range) {
     if (this.state === 'fading') return false;
-    if (this.parts.length <= 1) return false; // não fatia o último pedaço
+    if (this.parts.length <= 1) return false;
 
     let bestPart = null;
     let bestIndex = -1;
@@ -981,12 +985,8 @@ class Ragdoll {
       const dist = toPart.length();
       if (dist > range) continue;
       toPart.normalize();
-
-      // Precisa estar na frente da câmera (usa direção 3D — permite olhar pra baixo)
       const dot = forward3D.dot(toPart);
       if (dot < CONFIG.ragdoll.sliceDotMin) continue;
-
-      // Score: prioriza o que está mais alinhado com a mira
       const score = dot - dist * 0.05;
       if (score > bestScore) {
         bestScore = score;
@@ -997,7 +997,6 @@ class Ragdoll {
 
     if (!bestPart) return false;
 
-    // Remove constraints
     const bodyToRemove = bestPart.body;
     this.constraints = this.constraints.filter(c => {
       if (c.bodyA === bodyToRemove || c.bodyB === bodyToRemove) {
@@ -1007,32 +1006,26 @@ class Ragdoll {
       return true;
     });
 
-    // Remove body do mundo
     world.removeBody(bodyToRemove);
 
-    // Cria FlyingLimb antes de remover o mesh
     const worldPos = bestPart.mesh.position.clone();
     const worldQuat = bestPart.mesh.quaternion.clone();
     const limbType = bestPart.key;
     const limbSize = bestPart.size.clone();
 
-    // Direção do slice (do player pro pedaço)
     const sliceDir = new THREE.Vector3().subVectors(worldPos, cameraPos);
     sliceDir.y = 0;
     sliceDir.normalize();
 
-    // Remove mesh
     scene.remove(bestPart.mesh);
     bestPart.mesh.geometry.dispose();
     const mats = Array.isArray(bestPart.mesh.material) ? bestPart.mesh.material : [bestPart.mesh.material];
     mats.forEach(m => m.dispose());
 
-    // Remove dos arrays
     this.parts.splice(bestIndex, 1);
     const mi = this.meshes.indexOf(bestPart.mesh);
     if (mi >= 0) this.meshes.splice(mi, 1);
 
-    // Cria membro voador (pop pequeno, não voa longe)
     const limb = new FlyingLimb(
       limbType,
       worldPos,
@@ -1040,16 +1033,16 @@ class Ragdoll {
       sliceDir,
       { skin: this.skinColor, shirt: this.shirtColor, pants: this.pantsColor },
       limbSize,
-      0.5 // metade da força
+      0.5
     );
     flyingLimbs.push(limb);
 
-    // Sangue
     spawnBlood(worldPos, sliceDir, 18, true);
     spawnBlood(worldPos, null, 6, true);
 
-    // Reset settle (dá tempo pro player fatiar mais)
-    this.lastHitTime = performance.now() / 1000;
+    // ✅ FIX: reset TUDO (dá 35s NOVOS pra fatiar de novo)
+    this.startTime = performance.now() / 1000;
+    this.lastHitTime = this.startTime;
     this.settleStart = 0;
     this.state = 'falling';
 
@@ -1074,7 +1067,9 @@ class Ragdoll {
 
     if (this.state === 'falling') {
       const allSleeping = this.parts.every(p => p.body.sleepState === CANNON.Body.SLEEPING);
-      const timeSinceSpawn = performance.now() / 1000 - this.startTime;
+      // ✅ FIX: usa o tempo mais recente (spawn OU último slice)
+      const referenceTime = Math.max(this.startTime, this.lastHitTime);
+      const timeSinceSpawn = performance.now() / 1000 - referenceTime;
       if ((allSleeping && timeSinceSpawn > 1.2) || timeSinceSpawn > CONFIG.ragdoll.forceSettleTime) {
         if (this.settleStart === 0) this.settleStart = performance.now() / 1000;
       } else {
@@ -1207,16 +1202,17 @@ function attack() {
   triggerSwing();
   spawnMuzzleFlash();
 
-  // Direção horizontal (pra zumbis vivos)
   const forward = new THREE.Vector3();
   camera.getWorldDirection(forward);
-  const forward3D = forward.clone(); // guarda com Y
+  const forward3D = forward.clone();
   forward.y = 0; forward.normalize();
 
   const aimRegion = getAimRegion();
 
   // ========== ZUMBIS VIVOS ==========
-  zombies.forEach(z => {
+  // ✅ FIX: usa cópia da array (evita pular zumbis com splice)
+  const zombiesSnapshot = [...zombies];
+  zombiesSnapshot.forEach(z => {
     if (z.health <= 0) return;
 
     const toZ = new THREE.Vector3().subVectors(z.mesh.position, player.position);
@@ -1313,7 +1309,6 @@ function attack() {
   });
 
   // ========== FATIAR CADÁVERES ==========
-  // Tenta fatiar no máximo 1 ragdoll por ataque (o que tiver a melhor mira)
   const camPos = camera.position.clone();
   let sliced = false;
   for (const ragdoll of ragdolls) {
@@ -1355,7 +1350,13 @@ function showWaveBanner(text) {
   }, 1400);
 }
 
+// ✅ FIX: limpa interval anterior antes de criar novo
 function startWave() {
+  if (state.waveIntervalId !== null) {
+    clearInterval(state.waveIntervalId);
+    state.waveIntervalId = null;
+  }
+
   state.wave++;
   state.betweenWaves = false;
   const count = Math.min(
@@ -1366,11 +1367,14 @@ function startWave() {
   showWaveBanner(`HORDA ${state.wave}`);
 
   let spawned = 0;
-  const interval = setInterval(() => {
+  state.waveIntervalId = setInterval(() => {
     if (spawned >= count || !state.running) {
-      clearInterval(interval); return;
+      clearInterval(state.waveIntervalId);
+      state.waveIntervalId = null;
+      return;
     }
-    spawnZombie(); spawned++;
+    spawnZombie();
+    spawned++;
   }, 500);
   updateHUD();
 }
@@ -1673,6 +1677,12 @@ function updateHUD() {
 // START / GAME OVER
 // ============================================================
 function startGame() {
+  // ✅ FIX: limpa interval da run anterior
+  if (state.waveIntervalId !== null) {
+    clearInterval(state.waveIntervalId);
+    state.waveIntervalId = null;
+  }
+
   Sfx.initAudio(); Sfx.resumeAudio();
 
   state.health = state.maxHealth;
@@ -1708,6 +1718,10 @@ function startGame() {
 
 function gameOver() {
   state.running = false;
+  if (state.waveIntervalId !== null) {
+    clearInterval(state.waveIntervalId);
+    state.waveIntervalId = null;
+  }
   document.getElementById('final-wave').textContent = state.wave;
   document.getElementById('final-level').textContent = state.level;
   document.getElementById('final-coins').textContent = state.coins;
