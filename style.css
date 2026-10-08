@@ -1,7 +1,159 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
 body {
-  background-color: #1a1a1a;
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#game-container { position: fixed; inset: 0; }
+canvas { display: block; }
+
+/* Mira */
+#crosshair {
+  position: fixed;
+  top: 50%; left: 50%;
+  width: 20px; height: 20px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 10;
+}
+#crosshair::before, #crosshair::after {
+  content: ''; position: absolute;
+  background: rgba(255, 255, 255, 0.85);
+}
+#crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
+#crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
+
+/* HUD */
+#hud {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 5; padding: 16px;
+  display: flex; flex-direction: column;
+  justify-content: space-between;
+}
+#hud-top { display: flex; gap: 16px; max-width: 400px; }
+.hud-item { flex: 1; }
+.hud-label {
+  font-size: 11px; letter-spacing: 2px;
+  text-shadow: 0 0 4px #000;
+  margin-bottom: 4px; display: block;
+}
+.bar {
+  width: 100%; height: 16px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid #fff;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.bar-fill { height: 100%; transition: width 0.2s; }
+.bar-fill.health { background: linear-gradient(90deg, #ff3333, #ff6666); }
+.bar-fill.xp { background: linear-gradient(90deg, #3366ff, #66aaff); }
+#hud-bottom {
+  display: flex; gap: 20px;
+  justify-content: center; flex-wrap: wrap;
+}
+.hud-stat {
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid #fff;
+  padding: 6px 14px;
+  font-size: 14px; font-weight: bold;
+  letter-spacing: 1px;
+  text-shadow: 0 0 4px #000;
+}
+
+/* Menus */
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  z-index: 100; gap: 12px;
+  padding: 20px; text-align: center;
+}
+.overlay.hidden { display: none; }
+.overlay h1 {
+  font-size: 42px; letter-spacing: 6px;
   color: #00ff00;
-  font-family: monospace;
-  text-align: center;
-  padding: 50px;
+  text-shadow: 0 0 20px #00ff00;
+  margin-bottom: 8px;
+}
+.overlay p {
+  font-size: 16px; color: #ccc;
+  letter-spacing: 1px;
+}
+.overlay button {
+  margin-top: 20px; padding: 14px 40px;
+  font-size: 18px; font-family: inherit;
+  font-weight: bold; letter-spacing: 3px;
+  color: #000; background: #00ff00;
+  border: none; cursor: pointer;
+  transition: all 0.2s;
+}
+.overlay button:hover {
+  background: #fff; transform: scale(1.05);
+  box-shadow: 0 0 20px #00ff00;
+}
+#controls-info {
+  margin-top: 20px; font-size: 13px;
+  color: #888; line-height: 1.8;
+}
+#controls-info strong { color: #00ff00; }
+
+/* Mobile */
+#mobile-controls {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 20;
+}
+#mobile-controls.hidden { display: none; }
+#joystick-zone {
+  position: absolute;
+  bottom: 30px; left: 30px;
+  pointer-events: auto;
+}
+#joystick-base {
+  width: 120px; height: 120px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  border: 3px solid rgba(255, 255, 255, 0.5);
+  position: relative;
+  touch-action: none;
+}
+#joystick-stick {
+  width: 50px; height: 50px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.7);
+  position: absolute;
+  top: 50%; left: 50%;
+  margin-left: -25px;
+  margin-top: -25px;
+  pointer-events: none;
+}
+#look-zone {
+  position: absolute;
+  top: 0; right: 0;
+  width: 60%; height: 100%;
+  pointer-events: auto;
+  touch-action: none;
+}
+#btn-attack {
+  position: absolute;
+  bottom: 40px; right: 40px;
+  width: 90px; height: 90px;
+  border-radius: 50%;
+  background: rgba(255, 50, 50, 0.7);
+  border: 3px solid rgba(255, 255, 255, 0.7);
+  color: #fff; font-size: 32px;
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: none;
+}
+#btn-attack:active {
+  background: rgba(255, 100, 100, 0.9);
+  transform: scale(0.95);
 }
