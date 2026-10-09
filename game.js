@@ -350,7 +350,7 @@ function makeBox(w, h, d, s = 5) { return new THREE.BoxGeometry(w, h, d, s, s, s
 function makeJoint(r, seg = 10) { return new THREE.SphereGeometry(r, seg, Math.max(6, Math.floor(seg * 0.75))); }
 
 // ============================================================
-// AIM REGION (baseado na pitch da câmera)
+// AIM REGION
 // ============================================================
 function getAimRegion() {
   if (player.pitch > 0.15) return 'head';
@@ -609,7 +609,9 @@ function createZombieMesh() {
   const legR = makeLeg(); legR.position.set(body.leg * 0.55, 0.72, 0); g.add(legR);
 
   g.scale.y = body.heightScale;
+  g.rotation.order = 'YXZ';
   g.rotation.x = 0.12;
+  g.traverse(c => { c.frustumCulled = false; });
 
   g.userData = {
     armL, armR, legL, legR,
@@ -1276,7 +1278,7 @@ function attack() {
   if (weapon.type === 'ranged') spawnMuzzleFlash();
 
   // ============================================================
-  // MELEE — checagem direta: acerta QUALQUER zumbi no range horizontal
+  // MELEE — checagem direta
   // ============================================================
   if (weapon.type === 'melee') {
     const forward = new THREE.Vector3();
@@ -1708,7 +1710,12 @@ function updateZombies(dt) {
     const to = new THREE.Vector3().subVectors(player.position, z.mesh.position);
     to.y = 0;
     const dist = to.length();
-    z.mesh.lookAt(player.position.x, z.mesh.position.y, player.position.z);
+
+    {
+      const _dx = player.position.x - z.mesh.position.x;
+      const _dz = player.position.z - z.mesh.position.z;
+      z.mesh.rotation.y = Math.atan2(_dx, _dz);
+    }
 
     const staggering = z.hitReactEndTime > now;
 
