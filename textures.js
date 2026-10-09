@@ -110,26 +110,21 @@ export function skyTexture() {
 export function zombieHeadTexture(skinColorHex, isDead = false) {
   const c = makeCanvas(32);
   const ctx = c.getContext('2d');
-
   ctx.fillStyle = skinColorHex;
   ctx.fillRect(0, 0, 32, 32);
-
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.fillRect(0, 30, 32, 2);
   ctx.fillRect(30, 0, 2, 32);
   ctx.fillRect(0, 0, 2, 32);
   ctx.fillRect(0, 0, 32, 2);
-
   ctx.fillStyle = 'rgba(0,0,0,0.08)';
   ctx.fillRect(4, 6, 3, 2);
   ctx.fillRect(24, 20, 3, 2);
   ctx.fillRect(8, 24, 2, 3);
-
   ctx.fillStyle = '#C0392B';
   ctx.fillRect(20, 4, 5, 3);
   ctx.fillStyle = '#8B0000';
   ctx.fillRect(22, 6, 2, 1);
-
   if (isDead) {
     ctx.fillStyle = '#000';
     ctx.fillRect(5, 13, 7, 1);
@@ -152,7 +147,6 @@ export function zombieHeadTexture(skinColorHex, isDead = false) {
     ctx.fillRect(4, 10, 9, 1);
     ctx.fillRect(19, 10, 9, 1);
   }
-
   if (isDead) {
     ctx.fillStyle = '#2B0000';
     ctx.fillRect(10, 21, 12, 6);
@@ -171,7 +165,6 @@ export function zombieHeadTexture(skinColorHex, isDead = false) {
     ctx.fillStyle = '#8B0000';
     ctx.fillRect(21, 23, 1, 1);
   }
-
   const tex = new THREE.CanvasTexture(c);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
