@@ -51,8 +51,16 @@
     </div>
     <div id="hit-marker">X</div>
     <div id="damage-flash"></div>
-        <div id="damage-numbers"></div>
+    <div id="damage-numbers"></div>
     <div id="kill-feed"></div>
+    <div id="downed-overlay" class="hidden">
+      <div id="downed-timer">30</div>
+      <div id="downed-subtitle">VOCÊ CAIU</div>
+      <div id="downed-prompt">
+        Segure <span class="key">E</span> para se levantar
+        <div id="downed-progress-wrap"><div id="downed-progress"></div></div>
+      </div>
+    </div>
   </div>
 
   <div id="wave-banner" class="hidden">HORDA 1</div>
@@ -60,6 +68,36 @@
   <div id="prompt" class="hidden">
     <span class="prompt-key">E</span>
     <span id="prompt-text">Comprar</span>
+  </div>
+
+  <div id="ping-wheel" class="hidden">
+    <div class="ping-center">Q</div>
+    <div class="ping-option ping-top" data-ping="enemy">
+      <div class="ping-icon">!</div>
+      <div class="ping-label">INIMIGO</div>
+    </div>
+    <div class="ping-option ping-right" data-ping="help">
+      <div class="ping-icon">+</div>
+      <div class="ping-label">AJUDA</div>
+    </div>
+    <div class="ping-option ping-bottom" data-ping="go">
+      <div class="ping-icon">▶</div>
+      <div class="ping-label">VAMOS</div>
+    </div>
+    <div class="ping-option ping-left" data-ping="careful">
+      <div class="ping-icon">⚠</div>
+      <div class="ping-label">CUIDADO</div>
+    </div>
+  </div>
+
+  <div id="scoreboard" class="hidden">
+    <div class="scoreboard-title">PLACAR</div>
+    <table class="scoreboard-table">
+      <thead>
+        <tr><th>JOGADOR</th><th>KILLS</th><th>HS</th><th>DANO</th><th>$</th></tr>
+      </thead>
+      <tbody id="scoreboard-body"></tbody>
+    </table>
   </div>
 
   <div id="levelup" class="menu-overlay hidden">
@@ -78,15 +116,7 @@
       <button class="menu-btn" id="btn-restart">TENTAR DE NOVO</button>
     </div>
   </div>
-  <div id="scoreboard" class="hidden">
-    <div class="scoreboard-title">PLACAR</div>
-    <table class="scoreboard-table">
-      <thead>
-        <tr><th>JOGADOR</th><th>KILLS</th><th>HS</th><th>DANO</th><th>$</th></tr>
-      </thead>
-      <tbody id="scoreboard-body"></tbody>
-    </table>
-  </div>
+
   <div id="mobile-controls" class="hidden">
     <div id="joystick-zone"><div id="joystick-base"><div id="joystick-stick"></div></div></div>
     <div id="look-zone"></div>
