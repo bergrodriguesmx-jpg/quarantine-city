@@ -2,13 +2,12 @@ import * as THREE from 'three';
 import * as Textures from './textures.js';
 import { buildWorld } from './scenery.js';
 import * as Sfx from './audio.js';
-import * as bus from './bus.js';
-import { Ev } from './events.js';
-import { nextId } from './ids.js';
-import { LocalAdapter } from './adapter.js';
+import * as bus from './src/core/bus.js';
+import { Ev } from './src/core/events.js';
+import { nextId } from './src/core/ids.js';
+import { LocalAdapter } from './src/net/adapter.js';
 
 bus.setAdapter(new LocalAdapter());
-
 // ============================================================
 // CACHE GLOBAL DE GEOMETRIAS E MATERIAIS (evita vazamento)
 // ============================================================
