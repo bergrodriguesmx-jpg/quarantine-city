@@ -116,7 +116,93 @@ function createFloor() {
 createFloor();
 Scenery.populateScene(scene, CONFIG.arena.size);
 
-const limit = CONFIG.arena.size / 2 - 2;
+// ============================================================
+// CAVERNAS — nas bordas do mapa
+// ============================================================
+const caves = [];
+
+function createCave(x, z, rotationY) {
+  const g = new THREE.Group();
+
+  const rockMat     = new THREE.MeshLambertMaterial({ color: 0x5A5A5A, flatShading: true });
+  const darkRockMat = new THREE.MeshLambertMaterial({ color: 0x3A3A3A, flatShading: true });
+  const holeMat     = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+  // Helper pra criar pedra
+  function makeRock(px, py, pz, sx, sy, sz, mat) {
+    const rock = new THREE.Mesh(
+      new THREE.BoxGeometry(sx, sy, sz, 3, 3, 3),
+      mat || rockMat
+    );
+    rock.position.set(px, py, pz);
+    rock.rotation.y = Math.random() * 0.4 - 0.2;
+    rock.rotation.z = Math.random() * 0.2 - 0.1;
+    rock.castShadow = true;
+    rock.receiveShadow = true;
+    g.add(rock);
+    return rock;
+  }
+
+  // Pilares laterais (esquerda e direita)
+  makeRock(-1.8, 1.4, 0.2, 1.8, 2.8, 2.0, rockMat);
+  makeRock( 1.8, 1.4, 0.2, 1.8, 2.8, 2.0, rockMat);
+
+  // Topo (arco)
+  makeRock(-0.9, 3.2, 0.2, 1.6, 1.4, 2.2, darkRockMat);
+  makeRock( 0.9, 3.2, 0.2, 1.6, 1.4, 2.2, darkRockMat);
+  makeRock( 0,   3.6, 0.2, 3.6, 0.9, 2.0, rockMat);
+
+  // Pedras extras ao redor (deixa mais natural)
+  makeRock(-2.8, 0.6, -0.8, 1.4, 1.2, 1.4, darkRockMat);
+  makeRock( 2.8, 0.6, -0.8, 1.4, 1.2, 1.4, darkRockMat);
+  makeRock(-2.4, 0.4, 1.4, 1.0, 0.8, 1.0, rockMat);
+  makeRock( 2.4, 0.4, 1.4, 1.0, 0.8, 1.0, rockMat);
+
+  // Buraco escuro no fundo (a "boca" da caverna)
+  const hole = new THREE.Mesh(
+    new THREE.BoxGeometry(2.6, 2.6, 0.4),
+    holeMat
+  );
+  hole.position.set(0, 1.3, -1.0);
+  g.add(hole);
+
+  // Detalhe de "profundidade" (escurece mais fundo)
+  const deep = new THREE.Mesh(
+    new THREE.BoxGeometry(1.8, 1.8, 1.2),
+    new THREE.MeshBasicMaterial({ color: 0x000000, fog: false })
+  );
+  deep.position.set(0, 1.1, -1.4);
+  g.add(deep);
+
+  g.position.set(x, 0, z);
+  g.rotation.y = rotationY;
+  return g;
+}
+
+function setupCaves() {
+  const half = CONFIG.arena.size / 2 - 3;
+
+  const caveData = [
+    { x: 0,    z: -half, rot: 0 },           // Norte
+    { x: 0,    z:  half, rot: Math.PI },     // Sul
+    { x: -half, z: 0,    rot: Math.PI / 2 }, // Oeste
+    { x:  half, z: 0,    rot: -Math.PI / 2 },// Leste
+    { x: -half * 0.7, z: -half * 0.7, rot: Math.PI / 4 },   // Noroeste
+    { x:  half * 0.7, z: -half * 0.7, rot: -Math.PI / 4 },  // Nordeste
+    { x: -half * 0.7, z:  half * 0.7, rot: Math.PI * 3 / 4 },// Sudoeste
+    { x:  half * 0.7, z:  half * 0.7, rot: -Math.PI * 3 / 4 },// Sudeste
+  ];
+
+  caveData.forEach(({ x, z, rot }) => {
+    const mesh = createCave(x, z, rot);
+    scene.add(mesh);
+    caves.push({ x, z, rot, mesh });
+  });
+}
+setupCaves();
+
+// Limites invisíveis (pra ninguém sair do mapa)
+const limit = CONFIG.arena.size / 2 - 1;
 const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
 [
   { w: 1, h: 10, d: CONFIG.arena.size, x: -limit, z: 0 },
@@ -130,7 +216,7 @@ const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
 });
 
 // ============================================================
-// VIEWMODEL (faca)
+// VIEWMODEL
 // ============================================================
 const weaponGroup = new THREE.Group();
 camera.add(weaponGroup);
@@ -202,31 +288,19 @@ const player = {
 };
 
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function makeBox(w, h, d, s = 3) { return new THREE.BoxGeometry(w, h, d, s, s, s); }
+function makeJoint(r, seg = 12) { return new THREE.SphereGeometry(r, seg, Math.floor(seg * 0.75)); }
 
 // ============================================================
-// HELPERS DE GEOMETRIA (para mais polígonos)
-// ============================================================
-// BoxGeometry com subdivisões = mais triângulos
-function makeBox(w, h, d, s = 3) {
-  return new THREE.BoxGeometry(w, h, d, s, s, s);
-}
-// Esfera de articulação
-function makeJoint(r, seg = 12) {
-  return new THREE.SphereGeometry(r, seg, Math.floor(seg * 0.75));
-}
-
-// ============================================================
-// ZUMBIS - VERSAO DETALHADA
+// ZUMBIS
 // ============================================================
 const zombies = [];
 
-// Paletas
 const SHIRT_COLORS = [0x8E44AD, 0x2ECC71, 0xE74C3C, 0x3498DB, 0xF39C12, 0xE67E22, 0x16A085, 0xC0392B];
 const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
 const SKIN_COLORS  = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
 const HAIR_COLORS  = [0x2C1810, 0x1A0F08, 0x4A2818, 0x6B3A1F, 0x3A2A1A];
 
-// Tipos de corpo: [larguraTronco, larguraBraco, larguraPerna, escalaAltura]
 const BODY_TYPES = [
   { name: 'magro',  torsoW: 0.55, torsoD: 0.30, arm: 0.18, leg: 0.22, heightScale: 1.05 },
   { name: 'normal', torsoW: 0.70, torsoD: 0.35, arm: 0.22, leg: 0.26, heightScale: 1.00 },
@@ -236,15 +310,14 @@ const BODY_TYPES = [
 function createZombieMesh() {
   const g = new THREE.Group();
 
-  // Sorteia aparência
   const skinColor  = rand(SKIN_COLORS);
   const shirtColor = rand(SHIRT_COLORS);
   const pantsColor = rand(PANTS_COLORS);
   const hairColor  = rand(HAIR_COLORS);
   const bodyType   = rand(BODY_TYPES);
-  const sleeveLong = Math.random() > 0.5; // manga comprida ou curta
-  const hasHat     = Math.random() > 0.7; // 30% chance de chapéu
-  const wounded    = Math.random() > 0.5; // tem feridas extras
+  const sleeveLong = Math.random() > 0.5;
+  const hasHat     = Math.random() > 0.7;
+  const wounded    = Math.random() > 0.5;
 
   const skinMat    = new THREE.MeshLambertMaterial({ color: skinColor });
   const shirtMat   = new THREE.MeshLambertMaterial({ color: shirtColor });
@@ -258,28 +331,22 @@ function createZombieMesh() {
   const woundMat   = new THREE.MeshBasicMaterial({ color: 0xC0392B });
   const bloodMat   = new THREE.MeshBasicMaterial({ color: 0x8B0000 });
 
-  // ============================================================
-  // CABEÇA (grupo)
-  // ============================================================
+  // === CABEÇA ===
   const headGroup = new THREE.Group();
   headGroup.position.y = 1.85;
 
-  // Crânio
   const head = new THREE.Mesh(makeBox(0.55, 0.55, 0.55, 3), skinMat);
   head.castShadow = true;
   headGroup.add(head);
 
-  // Cabelo (tampa)
   const hair = new THREE.Mesh(makeBox(0.58, 0.10, 0.58, 3), hairMat);
   hair.position.y = 0.30;
   headGroup.add(hair);
 
-  // Franja (parte da frente)
   const fringe = new THREE.Mesh(makeBox(0.58, 0.14, 0.08, 3), hairMat);
   fringe.position.set(0, 0.24, 0.28);
   headGroup.add(fringe);
 
-  // Orelhas
   const earGeo = makeBox(0.06, 0.14, 0.10, 2);
   const earL = new THREE.Mesh(earGeo, skinMat);
   earL.position.set(-0.31, 0, 0);
@@ -288,7 +355,6 @@ function createZombieMesh() {
   earR.position.set(0.31, 0, 0);
   headGroup.add(earR);
 
-  // Olho branco esquerdo + pupila
   const eyeWhiteGeo = makeBox(0.13, 0.11, 0.02, 2);
   const eyeWhiteL = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
   eyeWhiteL.position.set(-0.13, 0.08, 0.285);
@@ -305,32 +371,26 @@ function createZombieMesh() {
   pupilR.position.set(0.13, 0.08, 0.295);
   headGroup.add(pupilR);
 
-  // Nariz
   const nose = new THREE.Mesh(makeBox(0.08, 0.08, 0.06, 2), skinMat);
   nose.position.set(0, -0.02, 0.30);
   headGroup.add(nose);
 
-  // Boca (aberta)
   const mouth = new THREE.Mesh(makeBox(0.20, 0.06, 0.02, 2), mouthMat);
   mouth.position.set(0, -0.14, 0.285);
   headGroup.add(mouth);
-  // Dentes
   const teeth = new THREE.Mesh(makeBox(0.18, 0.02, 0.02, 2), eyeWhiteMat);
   teeth.position.set(0, -0.11, 0.29);
   headGroup.add(teeth);
 
-  // Ferida na testa
   if (wounded) {
     const woundHead = new THREE.Mesh(makeBox(0.12, 0.06, 0.02, 2), woundMat);
     woundHead.position.set(-0.15, 0.16, 0.285);
     headGroup.add(woundHead);
-    // Sangue escorrendo
     const blood = new THREE.Mesh(makeBox(0.04, 0.10, 0.02, 2), bloodMat);
     blood.position.set(-0.15, 0.07, 0.285);
     headGroup.add(blood);
   }
 
-  // Chapéu (opcional)
   if (hasHat) {
     const hatGroup = new THREE.Group();
     const hatBase = new THREE.Mesh(
@@ -350,9 +410,7 @@ function createZombieMesh() {
 
   g.add(headGroup);
 
-  // ============================================================
-  // TRONCO (grupo)
-  // ============================================================
+  // === TRONCO ===
   const torsoGroup = new THREE.Group();
   torsoGroup.position.y = 1.15;
 
@@ -363,7 +421,6 @@ function createZombieMesh() {
   torso.castShadow = true;
   torsoGroup.add(torso);
 
-  // Gola / decote
   const collar = new THREE.Mesh(
     makeBox(bodyType.torsoW * 0.85, 0.06, bodyType.torsoD * 0.9, 2),
     new THREE.MeshLambertMaterial({ color: 0x000000 })
@@ -371,7 +428,6 @@ function createZombieMesh() {
   collar.position.y = 0.43;
   torsoGroup.add(collar);
 
-  // Ombreiras (pequenas caixas arredondadas nos ombros)
   const shoulderGeo = makeBox(0.20, 0.15, bodyType.torsoD * 0.9, 3);
   const shoulderL = new THREE.Mesh(shoulderGeo, shirtMat);
   shoulderL.position.set(-bodyType.torsoW / 2 + 0.02, 0.35, 0);
@@ -380,7 +436,6 @@ function createZombieMesh() {
   shoulderR.position.set(bodyType.torsoW / 2 - 0.02, 0.35, 0);
   torsoGroup.add(shoulderR);
 
-  // Feridas no tronco
   if (wounded) {
     const w1 = new THREE.Mesh(makeBox(0.14, 0.10, 0.02, 2), woundMat);
     w1.position.set(0.15, 0.05, bodyType.torsoD / 2 + 0.01);
@@ -388,7 +443,6 @@ function createZombieMesh() {
     const w2 = new THREE.Mesh(makeBox(0.10, 0.14, 0.02, 2), woundMat);
     w2.position.set(-0.18, -0.15, bodyType.torsoD / 2 + 0.01);
     torsoGroup.add(w2);
-    // Sangue
     const b1 = new THREE.Mesh(makeBox(0.04, 0.15, 0.02, 2), bloodMat);
     b1.position.set(0.15, -0.05, bodyType.torsoD / 2 + 0.01);
     torsoGroup.add(b1);
@@ -396,50 +450,40 @@ function createZombieMesh() {
 
   g.add(torsoGroup);
 
-  // ============================================================
-  // BRAÇOS (grupos)
-  // ============================================================
+  // === BRAÇOS ===
   const armW = bodyType.arm;
-  const armPieces = [];
 
   function makeArm(side) {
     const arm = new THREE.Group();
 
-    // Ombro (esfera articulada)
     const shoulder = new THREE.Mesh(makeJoint(armW * 0.55), shirtMat);
     arm.add(shoulder);
 
-    // Braço superior
     const upperMat = sleeveLong ? shirtMat : skinMat;
     const upper = new THREE.Mesh(makeBox(armW, 0.42, armW, 3), upperMat);
     upper.position.y = -0.22;
     upper.castShadow = true;
     arm.add(upper);
 
-    // Cotovelo (esfera)
     const elbow = new THREE.Mesh(makeJoint(armW * 0.45), upperMat);
     elbow.position.y = -0.46;
     arm.add(elbow);
 
-    // Antebraço
     const lowerMat = sleeveLong ? shirtMat : skinMat;
     const lower = new THREE.Mesh(makeBox(armW * 0.92, 0.42, armW * 0.92, 3), lowerMat);
     lower.position.y = -0.68;
     lower.castShadow = true;
     arm.add(lower);
 
-    // Pulso
     const wrist = new THREE.Mesh(makeJoint(armW * 0.4), skinMat);
     wrist.position.y = -0.90;
     arm.add(wrist);
 
-    // Mão (palma)
     const hand = new THREE.Mesh(makeBox(armW * 1.05, 0.14, armW * 1.15, 3), skinMat);
     hand.position.y = -0.99;
     hand.castShadow = true;
     arm.add(hand);
 
-    // 4 dedos
     const fingerGeo = makeBox(armW * 0.18, 0.13, armW * 0.18, 2);
     for (let i = 0; i < 4; i++) {
       const finger = new THREE.Mesh(fingerGeo, skinMat);
@@ -451,12 +495,10 @@ function createZombieMesh() {
       arm.add(finger);
     }
 
-    // Polegar
     const thumb = new THREE.Mesh(makeBox(armW * 0.22, 0.11, armW * 0.22, 2), skinMat);
     thumb.position.set(side * armW * 0.5, -1.02, armW * 0.38);
     arm.add(thumb);
 
-    // Ferida no braço
     if (wounded) {
       const w = new THREE.Mesh(makeBox(0.08, 0.08, 0.02, 2), woundMat);
       w.position.set(side * armW * 0.5, -0.55, 0);
@@ -470,59 +512,47 @@ function createZombieMesh() {
   const armL = makeArm(-1);
   armL.position.set(-bodyType.torsoW / 2 - armW / 2 + 0.05, 1.5, 0);
   g.add(armL);
-  armPieces.push(armL);
 
   const armR = makeArm(1);
   armR.position.set(bodyType.torsoW / 2 + armW / 2 - 0.05, 1.5, 0);
   g.add(armR);
-  armPieces.push(armR);
 
-  // ============================================================
-  // PERNAS (grupos)
-  // ============================================================
+  // === PERNAS ===
   const legW = bodyType.leg;
 
   function makeLeg() {
     const leg = new THREE.Group();
 
-    // Quadril (esfera)
     const hip = new THREE.Mesh(makeJoint(legW * 0.58), pantsMat);
     leg.add(hip);
 
-    // Coxa
     const thigh = new THREE.Mesh(makeBox(legW, 0.55, legW, 3), pantsMat);
     thigh.position.y = -0.30;
     thigh.castShadow = true;
     leg.add(thigh);
 
-    // Joelho
     const knee = new THREE.Mesh(makeJoint(legW * 0.48), pantsMat);
     knee.position.y = -0.60;
     leg.add(knee);
 
-    // Canela
     const shin = new THREE.Mesh(makeBox(legW * 0.9, 0.40, legW * 0.9, 3), pantsMat);
     shin.position.y = -0.82;
     shin.castShadow = true;
     leg.add(shin);
 
-    // Tornozelo
     const ankle = new THREE.Mesh(makeJoint(legW * 0.42), shoeMat);
     ankle.position.y = -1.04;
     leg.add(ankle);
 
-    // Tênis - base
     const shoeBase = new THREE.Mesh(makeBox(legW * 1.15, 0.14, legW * 1.35, 3), shoeMat);
     shoeBase.position.set(0, -1.12, 0.03);
     shoeBase.castShadow = true;
     leg.add(shoeBase);
 
-    // Tênis - bico
     const shoeTip = new THREE.Mesh(makeBox(legW * 1.15, 0.08, legW * 0.45, 3), shoeMat);
     shoeTip.position.set(0, -1.16, legW * 0.85);
     leg.add(shoeTip);
 
-    // Sola branca
     const sole = new THREE.Mesh(makeBox(legW * 1.18, 0.04, legW * 1.4, 3), soleMat);
     sole.position.set(0, -1.20, 0.03);
     leg.add(sole);
@@ -538,12 +568,11 @@ function createZombieMesh() {
   legR.position.set(legW * 0.55, 0.72, 0);
   g.add(legR);
 
-  // Escala vertical pra variação de altura
   g.scale.y = bodyType.heightScale;
 
-  // ============================================================
-  // USERDATA
-  // ============================================================
+  // Postura curvada (zumbi corcunda)
+  g.rotation.x = 0.12;
+
   g.userData.armL = armL;
   g.userData.armR = armR;
   g.userData.legL = legL;
@@ -561,18 +590,28 @@ function createZombieMesh() {
 let groanTimer = 0;
 
 function spawnZombie() {
-  const s = CONFIG.arena.size / 2 - 5;
-  const side = Math.floor(Math.random() * 4);
-  let x, z;
-  if (side === 0) { x = (Math.random() - 0.5) * s * 2; z = -s; }
-  else if (side === 1) { x = (Math.random() - 0.5) * s * 2; z = s; }
-  else if (side === 2) { x = -s; z = (Math.random() - 0.5) * s * 2; }
-  else { x = s; z = (Math.random() - 0.5) * s * 2; }
+  // Sorteia uma caverna
+  const cave = caves[Math.floor(Math.random() * caves.length)];
+
+  // Spawna dentro da caverna (virado pra dentro do mapa)
+  const toCenterX = -cave.x;
+  const toCenterZ = -cave.z;
+  const len = Math.sqrt(toCenterX * toCenterX + toCenterZ * toCenterZ) || 1;
+  const dirX = toCenterX / len;
+  const dirZ = toCenterZ / len;
+
+  // Posição inicial: um pouco atrás da entrada (dentro da caverna)
+  const offsetBack = 0.8 + Math.random() * 0.8;
+  const offsetSide = (Math.random() - 0.5) * 1.6;
+
+  const x = cave.x + dirX * offsetBack + (-dirZ) * offsetSide;
+  const z = cave.z + dirZ * offsetBack + (dirX) * offsetSide;
 
   const mesh = createZombieMesh();
   mesh.position.set(x, 0, z);
   scene.add(mesh);
 
+  // Zumbi recém-nascido da caverna — começa devagar
   zombies.push({
     mesh,
     health: CONFIG.zombie.maxHealth,
@@ -582,13 +621,14 @@ function spawnZombie() {
     hitReactEndTime: 0,
     hitDirection: new THREE.Vector3(),
     dismembered: { head: false, armL: false, armR: false, legL: false, legR: false },
+    emergeTime: 0, // tempo desde o nascimento
   });
   state.zombiesAlive++;
   updateHUD();
 }
 
 // ============================================================
-// SANGUE E PARTÍCULAS
+// SANGUE
 // ============================================================
 const particles = [];
 
@@ -1357,6 +1397,9 @@ function updatePlayer(dt) {
   camera.rotation.x = player.pitch;
 }
 
+// ============================================================
+// ATUALIZA ZUMBIS — agora com animação realista
+// ============================================================
 function updateZombies(dt) {
   const now = performance.now() / 1000;
 
@@ -1368,6 +1411,10 @@ function updateZombies(dt) {
 
   zombies.forEach(z => {
     if (z.health <= 0) return;
+
+    // Tempo desde o spawn (emerge da caverna devagar)
+    z.emergeTime = (z.emergeTime || 0) + dt;
+    const emergeFactor = Math.min(1, z.emergeTime / 1.5);
 
     const hpPercent = z.health / z.maxHealth;
     const isWounded = hpPercent < 0.5;
@@ -1384,37 +1431,83 @@ function updateZombies(dt) {
       z.mesh.rotateX(-lean * 0.45);
       z.mesh.position.addScaledVector(z.hitDirection, -dt * 4 * lean);
     } else {
-      let speedMod = 1;
+      let speedMod = emergeFactor;
       if (z.dismembered.legL || z.dismembered.legR) speedMod *= 0.55;
       if (z.dismembered.legL && z.dismembered.legR) speedMod *= 0.3;
 
       const walkSpeed = (isWounded ? 3.2 : 5) * speedMod;
       z.walkPhase += dt * walkSpeed;
 
-      const swing = Math.sin(z.walkPhase) * 0.55;
-
-      if (z.mesh.userData.legL && !z.dismembered.legL) z.mesh.userData.legL.rotation.x = swing;
-      if (z.mesh.userData.legR && !z.dismembered.legR) z.mesh.userData.legR.rotation.x = -swing;
-
       const armLAvailable = !z.dismembered.armL && z.mesh.userData.armL;
       const armRAvailable = !z.dismembered.armR && z.mesh.userData.armR;
-      if (armLAvailable) z.mesh.userData.armL.rotation.x = -1.5 + Math.sin(z.walkPhase) * 0.12;
-      if (armRAvailable) z.mesh.userData.armR.rotation.x = -1.5 + Math.cos(z.walkPhase) * 0.12;
+      const legLAvailable = !z.dismembered.legL && z.mesh.userData.legL;
+      const legRAvailable = !z.dismembered.legR && z.mesh.userData.legR;
+
+      // ============================================================
+      // ANIMAÇÃO REALISTA
+      // ============================================================
+      // Pernas: passada natural (uma frente, outra atrás)
+      const legSwing = Math.sin(z.walkPhase) * 0.6;
+      if (legLAvailable) z.mesh.userData.legL.rotation.x = legSwing;
+      if (legRAvailable) z.mesh.userData.legR.rotation.x = -legSwing;
+
+      // Braços: se está LONGE do player, balança naturalmente como um humano
+      //           se está PERTO, estica os braços pra te agarrar (pose clássica)
+      const isReaching = dist < 3.5;
+
+      if (armLAvailable) {
+        const target = isReaching
+          ? -1.5 + Math.sin(z.walkPhase) * 0.08
+          : -legSwing * 0.7;
+        // Interpolação suave
+        const current = z.mesh.userData.armL.rotation.x;
+        z.mesh.userData.armL.rotation.x = current + (target - current) * 0.15;
+      }
+      if (armRAvailable) {
+        const target = isReaching
+          ? -1.5 + Math.cos(z.walkPhase) * 0.08
+          : legSwing * 0.7;
+        const current = z.mesh.userData.armR.rotation.x;
+        z.mesh.userData.armR.rotation.x = current + (target - current) * 0.15;
+      }
+
+      // Cabeça balança levemente (movimento vivo)
+      if (z.mesh.userData.head) {
+        z.mesh.userData.head.rotation.z = Math.sin(z.walkPhase * 0.5) * 0.08;
+        z.mesh.userData.head.rotation.y = Math.sin(z.walkPhase * 0.3) * 0.1;
+      }
+
+      // Postura: quanto mais perto do player, mais pra frente se inclina
+      // (fica mais agressivo quando ataca)
+      const targetLean = isWounded
+        ? 0.20 + (dist < 3 ? 0.10 : 0)
+        : 0.12 + (dist < 3 ? 0.08 : 0);
+      z.mesh.rotation.x += (targetLean - z.mesh.rotation.x) * 0.05;
+
+      // Balanço lateral quando ferido (manca)
+      if (isWounded) {
+        z.mesh.rotation.z = Math.sin(z.walkPhase * 0.5) * 0.15;
+      } else {
+        z.mesh.rotation.z *= 0.9;
+      }
     }
 
     if (z.dismembered.head) { z.health = 0; return; }
 
-    const zombieSpeed = CONFIG.zombie.speed * (isWounded ? 0.6 : 1);
-    if (!staggering && dist > CONFIG.zombie.attackRange) {
-      toP.normalize();
-      z.mesh.position.addScaledVector(toP, zombieSpeed * dt);
-    } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
-      z.lastAttackTime = now;
-      state.health -= CONFIG.zombie.damage;
-      Sfx.playPlayerHurt();
-      showDamageFlash();
-      updateHUD();
-      if (state.health <= 0) gameOver();
+    // Só anda se já saiu da caverna
+    if (emergeFactor >= 0.5) {
+      const zombieSpeed = CONFIG.zombie.speed * (isWounded ? 0.6 : 1);
+      if (!staggering && dist > CONFIG.zombie.attackRange) {
+        toP.normalize();
+        z.mesh.position.addScaledVector(toP, zombieSpeed * dt);
+      } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
+        z.lastAttackTime = now;
+        state.health -= CONFIG.zombie.damage;
+        Sfx.playPlayerHurt();
+        showDamageFlash();
+        updateHUD();
+        if (state.health <= 0) gameOver();
+      }
     }
   });
 }
