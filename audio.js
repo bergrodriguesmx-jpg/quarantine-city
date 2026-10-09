@@ -208,21 +208,6 @@ export function playLauncher() {
   o.start(t + 0.3); o.stop(t + 0.9);
 }
 
-export function playReload() {
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  [0, 0.12].forEach((delay, i) => {
-    const o = ctx.createOscillator();
-    o.type = 'square';
-    o.frequency.setValueAtTime(i === 0 ? 300 : 500, t + delay);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.2, t + delay);
-    g.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.05);
-    o.connect(g).connect(ctx.destination);
-    o.start(t + delay); o.stop(t + delay + 0.05);
-  });
-}
-
 export function playZombieDeath() {
   if (!ctx) return;
   const t = ctx.currentTime;
