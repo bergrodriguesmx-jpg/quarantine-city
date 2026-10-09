@@ -70,16 +70,19 @@ function makeHouse(scene, cx, cz, size, wallColor, roofColor, world) {
   const roofHex = parseInt(roofColor.replace('#', ''), 16);
   const roofMat = new THREE.MeshLambertMaterial({ color: roofHex, flatShading: true });
 
+  // CHÃO INTERNO
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W - T * 2, D - T * 2), floorMat);
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(cx, 0.06, cz);
   floor.receiveShadow = true;
   scene.add(floor);
 
+  // PAREDES EXTERNAS
   addWall(scene, world, cx, cz - D / 2 + T / 2, W, T, H, wallMat);
   addWall(scene, world, cx - W / 2 + T / 2, cz, T, D, H, wallMat);
   addWall(scene, world, cx + W / 2 - T / 2, cz, T, D, H, wallMat);
 
+  // FRENTE (+Z) dividida com porta
   const frontZ = cz + D / 2 - T / 2;
   const segW = (W - DOOR_W) / 2;
   addWall(scene, world, cx - W / 2 + segW / 2, frontZ, segW, T, H, wallMat);
@@ -110,8 +113,9 @@ function makeHouse(scene, cx, cz, size, wallColor, roofColor, world) {
     worldZ: frontZ,
   });
 
+  // PAREDES INTERNAS — afastadas do centro pra não bloquear a porta
   if (size === 'medium' || size === 'large') {
-    const innerX = cx + (size === 'large' ? -1.5 : 0);
+    const innerX = cx + (size === 'large' ? -2.2 : 2.0);
     const gapSize = 1.4;
     const wallSegD = (D - gapSize) / 2;
     addWall(scene, world, innerX, cz - D / 4 - gapSize / 4, T, wallSegD, H, wallMat);
