@@ -220,3 +220,140 @@ body.aiming #crosshair::before {
   pointer-events: auto; cursor: pointer; touch-action: none;
 }
 #btn-attack:active { background: rgba(255, 50, 50, 0.95); transform: scale(0.94); }
+/* ============================================ */
+/* FASE 2-A — DAMAGE NUMBERS                    */
+/* ============================================ */
+#damage-numbers {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 15;
+  overflow: hidden;
+}
+.dmg-number {
+  position: absolute;
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  font-size: 22px;
+  color: #fff;
+  text-shadow: 2px 2px 0 #000, -1px -1px 0 #000;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: dmgFloat 0.8s ease-out forwards;
+  will-change: transform, opacity;
+}
+.dmg-number.dmg-crit {
+  color: #ffdd00;
+  font-size: 28px;
+  text-shadow: 2px 2px 0 #000, 0 0 8px #ffaa00;
+}
+.dmg-number.dmg-headshot {
+  color: #ff2020;
+  font-size: 34px;
+  text-shadow: 2px 2px 0 #000, 0 0 12px #ff0000;
+}
+@keyframes dmgFloat {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+  15%  { opacity: 1; transform: translate(-50%, -75%) scale(1.15); }
+  100% { opacity: 0; transform: translate(-50%, -180%) scale(0.9); }
+}
+
+/* ============================================ */
+/* FASE 2-A — KILL FEED                         */
+/* ============================================ */
+#kill-feed {
+  position: fixed;
+  top: 90px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 15;
+  font-family: 'Courier New', monospace;
+  align-items: flex-end;
+}
+.kill-entry {
+  background: rgba(0, 0, 0, 0.78);
+  border-left: 3px solid #cc0000;
+  padding: 5px 12px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  text-shadow: 1px 1px 0 #000;
+  animation: killSlide 0.25s ease-out;
+  transition: opacity 0.4s;
+}
+.kill-entry.fading { opacity: 0; }
+.kill-entry .killer { color: #ffdd00; }
+.kill-entry .victim { color: #aaa; }
+.kill-entry .weapon {
+  color: #888;
+  font-size: 11px;
+  padding: 1px 5px;
+  background: #222;
+  border-radius: 2px;
+}
+.kill-entry .hs-badge {
+  color: #fff;
+  background: #cc0000;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  letter-spacing: 1px;
+}
+@keyframes killSlide {
+  from { transform: translateX(40px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* ============================================ */
+/* FASE 2-A — SCOREBOARD (Tab)                  */
+/* ============================================ */
+#scoreboard {
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 520px;
+  background: rgba(10, 10, 10, 0.94);
+  border: 3px solid #cc0000;
+  padding: 20px 28px;
+  z-index: 60;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  box-shadow: 0 0 40px rgba(204, 0, 0, 0.4);
+  pointer-events: none;
+}
+#scoreboard.hidden { display: none; }
+.scoreboard-title {
+  color: #cc0000;
+  font-size: 20px;
+  letter-spacing: 6px;
+  text-align: center;
+  margin-bottom: 16px;
+  text-shadow: 2px 2px 0 #000;
+}
+.scoreboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.scoreboard-table th {
+  text-align: left;
+  color: #888;
+  font-size: 11px;
+  letter-spacing: 2px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #333;
+}
+.scoreboard-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #1a1a1a;
+}
+.scoreboard-table tr.local-row td {
+  color: #ffdd00;
+  font-weight: bold;
+}
