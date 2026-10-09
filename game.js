@@ -98,7 +98,6 @@ sun.shadow.camera.bottom = -60;
 sun.shadow.bias = -0.0004;
 scene.add(sun);
 
-// Chão
 {
   const size = CONFIG.arena.size;
   const tex = Textures.grassTexture();
@@ -112,10 +111,8 @@ scene.add(sun);
   scene.add(floor);
 }
 
-// Constrói o mundo
 const world = buildWorld(scene, CONFIG.arena.size);
 
-// Cavernas
 const caves = [];
 {
   const half = CONFIG.arena.size / 2 - 3;
@@ -164,7 +161,6 @@ function createCave(x, z, rotationY) {
   return g;
 }
 
-// Limites
 const limit = CONFIG.arena.size / 2 - 1;
 const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
 [
@@ -199,32 +195,192 @@ function buildViewModel(weaponId) {
   }
   const w = WEAPONS[weaponId];
   const g = new THREE.Group();
+  const metal = new THREE.MeshLambertMaterial({ color: 0x2C3E50 });
+  const darkMetal = new THREE.MeshLambertMaterial({ color: 0x1A1A1A });
+  const lightMetal = new THREE.MeshLambertMaterial({ color: 0x7F8C8D });
+  const wood = new THREE.MeshLambertMaterial({ color: 0x5D4030 });
+  const grip = new THREE.MeshLambertMaterial({ color: 0x1A1A1A });
 
   if (weaponId === 'knife') {
-    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22, 0.06, 2, 4, 2), new THREE.MeshLambertMaterial({ color: 0x2C3E50 }));
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.20, 0.055), grip);
     g.add(handle);
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 0.02, 2, 6, 1), new THREE.MeshLambertMaterial({ color: 0xBDC3C7 }));
-    blade.position.set(0, 0.34, 0);
+    const pommel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.03, 0.07), lightMetal);
+    pommel.position.set(0, -0.10, 0);
+    g.add(pommel);
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.025, 0.08), darkMetal);
+    guard.position.set(0, 0.11, 0);
+    g.add(guard);
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.5, 0.018), lightMetal);
+    blade.position.set(0, 0.37, 0);
     g.add(blade);
-    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, 0.02, 2, 2, 1), new THREE.MeshLambertMaterial({ color: 0xECF0F1 }));
-    tip.position.set(0, 0.59, 0);
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.48, 0.02), new THREE.MeshBasicMaterial({ color: 0xECF0F1 }));
+    edge.position.set(-0.02, 0.37, 0);
+    g.add(edge);
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.06, 0.018), lightMetal);
+    tip.position.set(0, 0.65, 0);
     g.add(tip);
-  } else {
-    const bodyMat = new THREE.MeshLambertMaterial({ color: w.color });
-    const darkMat = new THREE.MeshLambertMaterial({ color: 0x1A1A1A });
-    const gunBody = new THREE.Mesh(new THREE.BoxGeometry(w.size[0], w.size[1], w.size[2]), bodyMat);
-    g.add(gunBody);
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.15, 0.06), darkMat);
-    grip.position.set(0, -0.12, 0.05);
-    grip.rotation.x = 0.3;
-    g.add(grip);
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.3), darkMat);
-    barrel.position.set(0, 0.02, -w.size[2] / 2 - 0.15);
+  }
+  else if (weaponId === 'pistol') {
+    const slide = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.28), metal);
+    slide.position.set(0, 0.06, -0.05);
+    g.add(slide);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.05, 8), darkMetal);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.06, -0.22);
     g.add(barrel);
+    const gripMesh = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.16, 0.07), grip);
+    gripMesh.position.set(0, -0.05, 0.06);
+    gripMesh.rotation.x = 0.25;
+    g.add(gripMesh);
+    const triggerGuard = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.008, 6, 12, Math.PI), darkMetal);
+    triggerGuard.rotation.z = Math.PI;
+    triggerGuard.position.set(0, -0.02, 0.01);
+    g.add(triggerGuard);
+    const rearSight = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.015, 0.02), darkMetal);
+    rearSight.position.set(0, 0.11, 0.06);
+    g.add(rearSight);
+    const frontSight = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.015, 0.02), darkMetal);
+    frontSight.position.set(0, 0.11, -0.19);
+    g.add(frontSight);
+  }
+  else if (weaponId === 'revolver') {
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.22, 8), metal);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.05, -0.15);
+    g.add(barrel);
+    const cylinder = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.09, 8), darkMetal);
+    cylinder.rotation.x = Math.PI / 2;
+    cylinder.position.set(0, 0.04, 0);
+    g.add(cylinder);
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.18), metal);
+    frame.position.set(0, 0.03, -0.02);
+    g.add(frame);
+    const gripMesh = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.18, 0.08), wood);
+    gripMesh.position.set(0, -0.07, 0.08);
+    gripMesh.rotation.x = 0.3;
+    g.add(gripMesh);
+    const triggerGuard = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.007, 6, 12, Math.PI), darkMetal);
+    triggerGuard.rotation.z = Math.PI;
+    triggerGuard.position.set(0, -0.02, 0.03);
+    g.add(triggerGuard);
+    const hammer = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.04, 0.03), darkMetal);
+    hammer.position.set(0, 0.08, 0.08);
+    g.add(hammer);
+    const sight = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.012, 0.02), darkMetal);
+    sight.position.set(0, 0.075, -0.25);
+    g.add(sight);
+  }
+  else if (weaponId === 'smg') {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.34), metal);
+    body.position.set(0, 0.03, -0.05);
+    g.add(body);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.08, 8), darkMetal);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.03, -0.26);
+    g.add(barrel);
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.14, 0.06), darkMetal);
+    mag.position.set(0, -0.09, 0.05);
+    mag.rotation.x = 0.15;
+    g.add(mag);
+    const foregrip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.1, 0.05), grip);
+    foregrip.position.set(0, -0.06, -0.15);
+    g.add(foregrip);
+    const rearGrip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.12, 0.06), grip);
+    rearGrip.position.set(0, -0.06, 0.09);
+    rearGrip.rotation.x = 0.2;
+    g.add(rearGrip);
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.06, 0.08), metal);
+    stock.position.set(0, 0.02, 0.16);
+    g.add(stock);
+    const sight = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.02, 0.02), darkMetal);
+    sight.position.set(0, 0.08, 0.05);
+    g.add(sight);
+  }
+  else if (weaponId === 'rifle') {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.075, 0.5), metal);
+    body.position.set(0, 0.03, -0.1);
+    g.add(body);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 8), darkMetal);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.03, -0.45);
+    g.add(barrel);
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.15, 0.06), darkMetal);
+    mag.position.set(0, -0.08, 0.02);
+    mag.rotation.x = 0.1;
+    g.add(mag);
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.16), wood);
+    stock.position.set(0, 0.0, 0.22);
+    g.add(stock);
+    const rearGrip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.11, 0.05), wood);
+    rearGrip.position.set(0, -0.06, 0.1);
+    rearGrip.rotation.x = 0.2;
+    g.add(rearGrip);
+    const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.2, 8), darkMetal);
+    scope.rotation.x = Math.PI / 2;
+    scope.position.set(0, 0.11, -0.05);
+    g.add(scope);
+    const lensMat = new THREE.MeshBasicMaterial({ color: 0x4A90D9 });
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.022, 8), lensMat);
+    lens.position.set(0, 0.11, -0.15);
+    g.add(lens);
+  }
+  else if (weaponId === 'shotgun') {
+    const barrel1 = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.45, 8), darkMetal);
+    barrel1.rotation.x = Math.PI / 2;
+    barrel1.position.set(-0.02, 0.04, -0.2);
+    g.add(barrel1);
+    const barrel2 = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.45, 8), darkMetal);
+    barrel2.rotation.x = Math.PI / 2;
+    barrel2.position.set(0.02, 0.04, -0.2);
+    g.add(barrel2);
+    const magTube = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.35, 8), metal);
+    magTube.rotation.x = Math.PI / 2;
+    magTube.position.set(0, -0.02, -0.2);
+    g.add(magTube);
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.2), wood);
+    stock.position.set(0, 0.0, 0.2);
+    g.add(stock);
+    const rearGrip = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.13, 0.06), wood);
+    rearGrip.position.set(0, -0.06, 0.08);
+    rearGrip.rotation.x = 0.15;
+    g.add(rearGrip);
+    const pump = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.05, 0.1), wood);
+    pump.position.set(0, -0.02, -0.15);
+    g.add(pump);
+    const hammer = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.03, 0.02), darkMetal);
+    hammer.position.set(0, 0.08, 0.15);
+    g.add(hammer);
+  }
+  else if (weaponId === 'launcher') {
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.7, 12), metal);
+    tube.rotation.x = Math.PI / 2;
+    tube.position.set(0, 0.02, -0.1);
+    g.add(tube);
+    const mouth = new THREE.Mesh(new THREE.CircleGeometry(0.05, 12), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    mouth.rotation.y = Math.PI;
+    mouth.position.set(0, 0.02, -0.45);
+    g.add(mouth);
+    const foregrip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.12, 0.06), grip);
+    foregrip.position.set(0, -0.08, -0.15);
+    g.add(foregrip);
+    const rearGrip = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.14, 0.07), grip);
+    rearGrip.position.set(0, -0.09, 0.12);
+    rearGrip.rotation.x = 0.15;
+    g.add(rearGrip);
+    const sightBase = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.04, 0.06), darkMetal);
+    sightBase.position.set(0, 0.09, 0.05);
+    g.add(sightBase);
+    const sightTop = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.02, 0.02), darkMetal);
+    sightTop.position.set(0, 0.12, 0.05);
+    g.add(sightTop);
+    const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.04, 12), new THREE.MeshBasicMaterial({ color: 0xCC0000 }));
+    stripe.rotation.x = Math.PI / 2;
+    stripe.position.set(0, 0.02, -0.35);
+    g.add(stripe);
   }
 
-  g.position.set(0.35, -0.35, -0.7);
-  g.rotation.set(-0.3, -0.4, 0.3);
+  g.position.set(0.32, -0.32, -0.6);
+  g.rotation.set(-0.15, -0.35, 0.15);
   currentViewModel = g;
   weaponGroup.add(g);
   return g;
@@ -241,23 +397,23 @@ function updateWeaponViewModel(dt) {
       swinging = false;
       swingProgress = 0;
       if (currentViewModel) {
-        currentViewModel.position.set(0.35, -0.35, -0.7);
-        currentViewModel.rotation.set(-0.3, -0.4, 0.3);
+        currentViewModel.position.set(0.32, -0.32, -0.6);
+        currentViewModel.rotation.set(-0.15, -0.35, 0.15);
       }
     } else {
       const t = swingProgress;
       const arc = Math.sin(t * Math.PI);
       if (currentViewModel) {
-        currentViewModel.position.set(0.35 - arc * 0.4, -0.35 + arc * 0.15, -0.7 - arc * 0.15);
-        currentViewModel.rotation.set(-0.3 - arc * 0.6, -0.4 + arc * 0.8, 0.3 - arc * 0.5);
+        currentViewModel.position.set(0.32 - arc * 0.35, -0.32 + arc * 0.12, -0.6 - arc * 0.15);
+        currentViewModel.rotation.set(-0.15 - arc * 0.5, -0.35 + arc * 0.7, 0.15 - arc * 0.4);
       }
     }
   } else {
     if (currentViewModel) {
       const bob = Math.sin(state.bobTime) * 0.015;
       const bobX = Math.cos(state.bobTime * 0.5) * 0.01;
-      currentViewModel.position.x = 0.35 + (state.isMoving ? bobX : 0);
-      currentViewModel.position.y = -0.35 + (state.isMoving ? bob : 0);
+      currentViewModel.position.x = 0.32 + (state.isMoving ? bobX : 0);
+      currentViewModel.position.y = -0.32 + (state.isMoving ? bob : 0);
     }
   }
 }
@@ -435,6 +591,8 @@ function createZombieMesh() {
     shin.position.y = -0.82; leg.add(shin);
     const shoeBase = new THREE.Mesh(makeBox(bodyType.leg * 1.15, 0.14, bodyType.leg * 1.35, 3), shoeMat);
     shoeBase.position.set(0, -1.12, 0.03); leg.add(shoeBase);
+    const sole = new THREE.Mesh(makeBox(bodyType.leg * 1.18, 0.04, bodyType.leg * 1.4, 3), soleMat);
+    sole.position.set(0, -1.20, 0.03); leg.add(sole);
     return leg;
   }
   const legL = makeLeg(); legL.position.set(-bodyType.leg * 0.55, 0.72, 0); g.add(legL);
@@ -798,7 +956,7 @@ function detachLimb(z, limbKey, hitDir) {
 }
 
 // ============================================================
-// AIM / CRIT
+// AIM / CRIT / RAYCAST
 // ============================================================
 function getAimRegion() {
   const pitch = player.pitch;
@@ -807,6 +965,55 @@ function getAimRegion() {
   return 'torso';
 }
 function rollCrit() { return Math.random() < state.critChance; }
+
+function raycastZombie(origin, dir, maxDist) {
+  let bestZ = null;
+  let bestDist = Infinity;
+  for (const z of zombies) {
+    if (z.health <= 0) continue;
+    const cx = z.mesh.position.x;
+    const cz = z.mesh.position.z;
+    const halfW = 0.45;
+    const minY = 0;
+    const maxY = 2.1;
+    const minX = cx - halfW, maxX = cx + halfW;
+    const minZ = cz - halfW, maxZ = cz + halfW;
+    let tMin = 0, tMax = maxDist, hit = true;
+    if (Math.abs(dir.x) < 1e-6) {
+      if (origin.x < minX || origin.x > maxX) hit = false;
+    } else {
+      const t1 = (minX - origin.x) / dir.x;
+      const t2 = (maxX - origin.x) / dir.x;
+      tMin = Math.max(tMin, Math.min(t1, t2));
+      tMax = Math.min(tMax, Math.max(t1, t2));
+    }
+    if (hit) {
+      if (Math.abs(dir.y) < 1e-6) {
+        if (origin.y < minY || origin.y > maxY) hit = false;
+      } else {
+        const t1 = (minY - origin.y) / dir.y;
+        const t2 = (maxY - origin.y) / dir.y;
+        tMin = Math.max(tMin, Math.min(t1, t2));
+        tMax = Math.min(tMax, Math.max(t1, t2));
+      }
+    }
+    if (hit) {
+      if (Math.abs(dir.z) < 1e-6) {
+        if (origin.z < minZ || origin.z > maxZ) hit = false;
+      } else {
+        const t1 = (minZ - origin.z) / dir.z;
+        const t2 = (maxZ - origin.z) / dir.z;
+        tMin = Math.max(tMin, Math.min(t1, t2));
+        tMax = Math.min(tMax, Math.max(t1, t2));
+      }
+    }
+    if (hit && tMin <= tMax && tMin >= 0 && tMin < bestDist) {
+      bestDist = tMin;
+      bestZ = z;
+    }
+  }
+  return { zombie: bestZ, distance: bestDist };
+}
 
 const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
@@ -872,7 +1079,7 @@ function damageZombie(z, damage, isCrit, aimRegion, hitDir) {
   } else {
     spawnBlood(hitPoint, hitDir, 14, false);
   }
-  Sfx.playHit();
+  Sfx.playKnifeHitFlesh();
   showHitMarker(isCrit);
   if (isCrit) {
     let limbToDetach = null;
@@ -932,7 +1139,23 @@ function attack() {
     updateHUD();
   }
 
-  Sfx.playKnife();
+  // SOM ÚNICO POR ARMA
+  if (weapon.type === 'melee') {
+    Sfx.playKnifeSwing();
+  } else if (weaponId === 'pistol') {
+    Sfx.playPistol();
+  } else if (weaponId === 'revolver') {
+    Sfx.playRevolver();
+  } else if (weaponId === 'smg') {
+    Sfx.playSMG();
+  } else if (weaponId === 'rifle') {
+    Sfx.playRifle();
+  } else if (weaponId === 'shotgun') {
+    Sfx.playShotgun();
+  } else if (weaponId === 'launcher') {
+    Sfx.playLauncher();
+  }
+
   triggerSwing();
   if (weapon.type === 'ranged') spawnMuzzleFlash();
 
@@ -963,13 +1186,14 @@ function attack() {
       if (sliced) break;
       if (r.sliceAt(camPos, forward, CONFIG.ragdoll.sliceRange)) {
         sliced = true;
-        Sfx.playHit();
+        Sfx.playKnifeHitFlesh();
         showHitMarker(false);
       }
     }
     return;
   }
 
+  // ARMA DE FOGO
   const origin = camera.position.clone();
   const forward = new THREE.Vector3();
   camera.getWorldDirection(forward);
@@ -983,32 +1207,19 @@ function attack() {
       dir.z += (Math.random() - 0.5) * weapon.spread * 2;
       dir.normalize();
     }
-    let hitZ = null;
-    let hitDist = Infinity;
-    for (const z of zombies) {
-      if (z.health <= 0) continue;
-      const toZ = new THREE.Vector3().subVectors(z.mesh.position, origin);
-      toZ.y += 1.0;
-      const proj = toZ.dot(dir);
-      if (proj < 0 || proj > range) continue;
-      const closestPoint = origin.clone().addScaledVector(dir, proj);
-      const distToZ = closestPoint.distanceTo(z.mesh.position.clone().setY(z.mesh.position.y + 1.0));
-      if (distToZ < CONFIG.zombie.radius + 0.3) {
-        if (proj < hitDist) { hitDist = proj; hitZ = z; }
-      }
-    }
-    if (hitZ) {
-      const hitPoint = origin.clone().addScaledVector(dir, hitDist);
-      spawnTracer(origin.clone().addScaledVector(dir, 0.6), hitPoint);
+    const result = raycastZombie(origin, dir, range);
+    if (result.zombie) {
+      const hitPoint = origin.clone().addScaledVector(dir, result.distance);
+      spawnTracer(origin.clone().addScaledVector(dir, 0.8), hitPoint);
       const isCrit = rollCrit();
       const baseDmg = weapon.damage * state.damageMult;
       const critMult = CONFIG.crit.damageMultiplier + state.critDamageBonus;
       const dmg = isCrit ? baseDmg * critMult : baseDmg;
       const hitDir = dir.clone(); hitDir.y = 0; hitDir.normalize();
-      damageZombie(hitZ, dmg, isCrit, aimRegion, hitDir);
+      damageZombie(result.zombie, dmg, isCrit, aimRegion, hitDir);
     } else {
       const endPoint = origin.clone().addScaledVector(dir, range);
-      spawnTracer(origin.clone().addScaledVector(dir, 0.6), endPoint);
+      spawnTracer(origin.clone().addScaledVector(dir, 0.8), endPoint);
     }
   }
 }
