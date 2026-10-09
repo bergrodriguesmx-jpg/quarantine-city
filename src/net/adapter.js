@@ -1,5 +1,5 @@
-import { Ev } from './events.js';
-import { emitRemote } from './bus.js';
+import { Ev } from '../core/events.js';
+import { emitRemote } from '../core/bus.js';
 
 // ============================================================
 // CLASSIFICAÇÃO DE EVENTOS
