@@ -220,8 +220,6 @@ export function playReload() {
   playOsc(t, 'square', 400, 250, 0.15, 0.06, 0.07);
   playNoise(t + 0.15, 0.05, 'highpass', 2000, 0.12, 0.04);
 }
-
-// NOVO — impacto de pedaços nos zumbis
 export function playDebrisImpact() {
   if (!ctx) return;
   const t = ctx.currentTime;
