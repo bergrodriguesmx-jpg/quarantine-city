@@ -10,26 +10,26 @@ import { LocalAdapter } from './src/net/adapter.js';
 bus.setAdapter(new LocalAdapter());
 
 // ============================================================
-// CACHE GLOBAL
+// CACHE
 // ============================================================
 const geoCache = new Map();
 const matCache = new Map();
 const HQ = 3, MQ = 2, LQ = 1;
 
 function geoBox(w, h, d, seg = MQ) {
-  const k = `b:${w}:${h}:${d}:${seg}`;
+  const k = `b:${w.toFixed(3)}:${h.toFixed(3)}:${d.toFixed(3)}:${seg}`;
   let g = geoCache.get(k);
   if (!g) { g = new THREE.BoxGeometry(w, h, d, seg, seg, seg); geoCache.set(k, g); }
   return g;
 }
 function geoSphere(r, s = 12) {
-  const k = `s:${r}:${s}`;
+  const k = `s:${r.toFixed(3)}:${s}`;
   let g = geoCache.get(k);
   if (!g) { g = new THREE.SphereGeometry(r, s, Math.max(6, Math.floor(s * 0.75))); geoCache.set(k, g); }
   return g;
 }
 function geoCyl(rt, rb, h, s = 10) {
-  const k = `c:${rt}:${rb}:${h}:${s}`;
+  const k = `c:${rt.toFixed(3)}:${rb.toFixed(3)}:${h.toFixed(3)}:${s}`;
   let g = geoCache.get(k);
   if (!g) { g = new THREE.CylinderGeometry(rt, rb, h, s); geoCache.set(k, g); }
   return g;
@@ -54,16 +54,16 @@ function matB(color, opts) {
 }
 
 // ============================================================
-// SPRING HELPERS (física de mola para animação)
+// SPRING (para animação)
 // ============================================================
-function springStep(obj, key, target, stiffness, damping, dt) {
+function springStep(obj, key, target, k, c, dt) {
   const vKey = key + 'Vel';
-  const accel = (target - obj[key]) * stiffness - obj[vKey] * damping;
-  obj[vKey] += accel * dt;
+  const a = (target - obj[key]) * k - obj[vKey] * c;
+  obj[vKey] += a * dt;
   obj[key] += obj[vKey] * dt;
 }
 function springKick(obj, key, impulse) {
-  obj[key + 'Vel'] += impulse;
+  obj[key + 'Vel'] = (obj[key + 'Vel'] || 0) + impulse;
 }
 
 // ============================================================
@@ -78,7 +78,6 @@ const WEAPONS = {
   shotgun:  { id: 'shotgun',  name: 'SHOTGUN',        slot: 3, damage: 32, range: 8,   cooldown: 1.15, type: 'ranged', cost: 300,  spread: 0.22,  pellets: 10, auto: false, color: 0x8B4513, magSize: 5,  reserveMax: 30,  reloadTime: 2.5 },
   launcher: { id: 'launcher', name: 'LANCA-FOGUETES', slot: 4, damage: 250, range: 20, cooldown: 1.9,  type: 'ranged', cost: 1200, spread: 0.02,  pellets: 1, auto: false, color: 0xC0392B, magSize: 1,  reserveMax: 5,   reloadTime: 3.5 },
 };
-
 const AMMO_PACKS = { pistol: 60, revolver: 12, smg: 90, rifle: 15, shotgun: 15, launcher: 2 };
 const AMMO_PRICES = { pistol: 5, revolver: 15, smg: 25, rifle: 40, shotgun: 30, launcher: 100 };
 
@@ -144,7 +143,7 @@ const state = {
 };
 
 // ============================================================
-// SETUP 3D
+// 3D SETUP
 // ============================================================
 const container = document.getElementById('game-container');
 const scene = new THREE.Scene();
@@ -173,14 +172,12 @@ scene.add(sun);
 
 {
   const size = CONFIG.arena.size;
-  const tex = Textures.grassTexture();
-  tex.repeat.set(size / 2, size / 2);
+  const tex = Textures.grassTexture(); tex.repeat.set(size / 2, size / 2);
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshLambertMaterial({ map: tex }));
   floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
 }
 
 const world = buildWorld(scene, CONFIG.arena.size);
-
 const caves = [];
 {
   const half = CONFIG.arena.size / 2 - 3;
@@ -197,7 +194,6 @@ const caves = [];
     caves.push({ x, z, rot, mesh });
   });
 }
-
 function createCave(x, z, rotationY) {
   const g = new THREE.Group();
   const rockMat = matL(0x5A5A5A, { flatShading: true });
@@ -233,8 +229,7 @@ const invisible = new THREE.MeshBasicMaterial({ visible: false });
 });
 
 function createPTShirtTexture() {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 256;
+  const c = document.createElement('canvas'); c.width = 256; c.height = 256;
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, 256, 256);
   const cx = 128, cy = 128, outerR = 100, innerR = 40;
@@ -242,8 +237,7 @@ function createPTShirtTexture() {
   for (let i = 0; i < 10; i++) {
     const r = (i % 2 === 0) ? outerR : innerR;
     const angle = (Math.PI / 5) * i - Math.PI / 2;
-    const x = cx + Math.cos(angle) * r;
-    const y = cy + Math.sin(angle) * r;
+    const x = cx + Math.cos(angle) * r, y = cy + Math.sin(angle) * r;
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
   ctx.closePath();
@@ -261,7 +255,7 @@ const PT_SHIRT_TEXTURE = createPTShirtTexture();
 const PT_DECAL_MAT = new THREE.MeshBasicMaterial({ map: PT_SHIRT_TEXTURE, transparent: true, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4 });
 
 // ============================================================
-// VIEWMODELS (inalterado)
+// VIEWMODELS
 // ============================================================
 const weaponGroup = new THREE.Group();
 camera.add(weaponGroup);
@@ -344,7 +338,6 @@ function buildViewModel(weaponId) {
 
 let swingProgress = 0, swinging = false;
 function triggerSwing() { swinging = true; swingProgress = 0; }
-
 function updateWeaponViewModel(dt) {
   if (!currentViewModel) return;
   if (state.reload.active) {
@@ -379,14 +372,12 @@ function updateWeaponViewModel(dt) {
 }
 
 const player = { id: nextId('p'), position: new THREE.Vector3(0, CONFIG.player.height, 0), yaw: 0, pitch: 0 };
-
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function getAimRegion() {
   if (player.pitch > 0.15) return 'head';
   if (player.pitch < -0.25) return 'legs';
   return 'torso';
 }
-
 function circleVsAABB(px, pz, radius, box) {
   const cx = Math.max(box.minX, Math.min(px, box.maxX));
   const cz = Math.max(box.minZ, Math.min(pz, box.maxZ));
@@ -418,14 +409,13 @@ function resolveWallCollisions(pos, radius) {
 }
 
 // ============================================================
-// ZUMBIS — anatomia articulada
+// ZUMBIS
 // ============================================================
 const zombies = [];
 const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
 const SKIN_COLORS = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
 const HAIR_COLORS = [0x2C1810, 0x1A0F08, 0x4A2818, 0x6B3A1F, 0x3A2A1A];
-const SHIRT_RED = 0xCC1111;
-const SHIRT_BLACK = 0x1A1A1A;
+const SHIRT_RED = 0xCC1111, SHIRT_BLACK = 0x1A1A1A;
 const BODY_TYPES = [
   { torsoW: 0.55, torsoD: 0.30, arm: 0.18, leg: 0.22, heightScale: 1.05 },
   { torsoW: 0.70, torsoD: 0.35, arm: 0.22, leg: 0.26, heightScale: 1.00 },
@@ -435,82 +425,96 @@ const BONE_MAT = matL(0xE8E0D0);
 const BONE_DARK_MAT = matL(0xC8BFA8);
 const BONE_DARKER = matL(0xA89F88);
 
-function buildHumanHead(headGroup, skinMat, hairMat, wound, hasHat) {
-  const skull = new THREE.Mesh(geoSphere(0.32, 16), skinMat); skull.scale.set(0.95, 1.05, 0.95); skull.castShadow = true; headGroup.add(skull);
-  const jaw = new THREE.Mesh(geoBox(0.42, 0.18, 0.42, MQ), skinMat); jaw.position.set(0, -0.24, 0.04); headGroup.add(jaw);
-  const hair = new THREE.Mesh(geoBox(0.60, 0.14, 0.60, MQ), hairMat); hair.position.y = 0.30; headGroup.add(hair);
-  const fringe = new THREE.Mesh(geoBox(0.58, 0.14, 0.10, MQ), hairMat); fringe.position.set(0, 0.24, 0.28); headGroup.add(fringe);
-  const earGeo = geoBox(0.07, 0.15, 0.11, MQ);
-  const earL = new THREE.Mesh(earGeo, skinMat); earL.position.set(-0.32, 0, 0); headGroup.add(earL);
-  const earR = new THREE.Mesh(earGeo, skinMat); earR.position.set(0.32, 0, 0); headGroup.add(earR);
+// Proporções humanas (aplicadas antes do scale)
+const P_PELVIS_Y = 0.92;      // Altura do quadril
+const P_SPINE_LOW_OFF = 0.05;
+const P_SPINE_UP_OFF = 0.24;
+const P_NECK_OFF = 0.32;
+const P_HEAD_OFF = 0.14;
+const P_SHOULDER_X = 0.55;     // Multiplicador de torsoW
+const P_SHOULDER_Y = 0.26;
+const P_ELBOW_OFF = 0.32;
+const P_WRIST_OFF = 0.30;
+const P_HIP_X = 0.35;          // Multiplicador de torsoW
+const P_KNEE_OFF = 0.42;
+const P_ANKLE_OFF = 0.40;
+
+// --- HEADS ---
+function buildHumanHead(head, skinMat, hairMat, wound, hasHat) {
+  const skull = new THREE.Mesh(geoSphere(0.16, 16), skinMat); skull.scale.set(1.05, 1.1, 1.0); skull.castShadow = true; head.add(skull);
+  const jaw = new THREE.Mesh(geoBox(0.20, 0.09, 0.20, MQ), skinMat); jaw.position.set(0, -0.11, 0.02); head.add(jaw);
+  const hair = new THREE.Mesh(geoBox(0.30, 0.07, 0.30, MQ), hairMat); hair.position.y = 0.14; head.add(hair);
+  const fringe = new THREE.Mesh(geoBox(0.30, 0.09, 0.05, MQ), hairMat); fringe.position.set(0, 0.11, 0.14); head.add(fringe);
+  const earGeo = geoBox(0.035, 0.08, 0.06, MQ);
+  const eL = new THREE.Mesh(earGeo, skinMat); eL.position.set(-0.16, 0, 0); head.add(eL);
+  const eR = new THREE.Mesh(earGeo, skinMat); eR.position.set(0.16, 0, 0); head.add(eR);
   const eyeW = matB(0xFFFFFF), pupil = matB(0x000000);
-  const eyeGeo = geoBox(0.13, 0.11, 0.02, LQ);
-  const eL = new THREE.Mesh(eyeGeo, eyeW); eL.position.set(-0.13, 0.08, 0.29); headGroup.add(eL);
-  const eR = new THREE.Mesh(eyeGeo, eyeW); eR.position.set(0.13, 0.08, 0.29); headGroup.add(eR);
-  const pupGeo = geoBox(0.05, 0.05, 0.02, LQ);
-  const pL = new THREE.Mesh(pupGeo, pupil); pL.position.set(-0.13, 0.08, 0.30); headGroup.add(pL);
-  const pR = new THREE.Mesh(pupGeo, pupil); pR.position.set(0.13, 0.08, 0.30); headGroup.add(pR);
-  const browGeo = geoBox(0.14, 0.025, 0.02, LQ);
-  const bL = new THREE.Mesh(browGeo, hairMat); bL.position.set(-0.13, 0.17, 0.30); headGroup.add(bL);
-  const bR = new THREE.Mesh(browGeo, hairMat); bR.position.set(0.13, 0.17, 0.30); headGroup.add(bR);
-  const nose = new THREE.Mesh(geoBox(0.08, 0.09, 0.08, MQ), skinMat); nose.position.set(0, -0.02, 0.31); headGroup.add(nose);
-  const mouth = new THREE.Mesh(geoBox(0.22, 0.07, 0.02, LQ), matB(0x2B0000)); mouth.position.set(0, -0.15, 0.30); headGroup.add(mouth);
-  const teethGeo = geoBox(0.025, 0.035, 0.02, LQ);
-  for (let i = 0; i < 5; i++) { const t = new THREE.Mesh(teethGeo, matB(0xE8E0D0)); t.position.set(-0.08 + i * 0.04, -0.13, 0.31); headGroup.add(t); }
-  const woundHead = new THREE.Mesh(geoBox(0.13, 0.07, 0.02, LQ), wound); woundHead.position.set(-0.15, 0.16, 0.30); headGroup.add(woundHead);
+  const eyeGeo = geoBox(0.06, 0.05, 0.02, LQ);
+  const wL = new THREE.Mesh(eyeGeo, eyeW); wL.position.set(-0.065, 0.03, 0.145); head.add(wL);
+  const wR = new THREE.Mesh(eyeGeo, eyeW); wR.position.set(0.065, 0.03, 0.145); head.add(wR);
+  const pupGeo = geoBox(0.025, 0.025, 0.02, LQ);
+  const pL = new THREE.Mesh(pupGeo, pupil); pL.position.set(-0.065, 0.03, 0.150); head.add(pL);
+  const pR = new THREE.Mesh(pupGeo, pupil); pR.position.set(0.065, 0.03, 0.150); head.add(pR);
+  const browGeo = geoBox(0.07, 0.015, 0.015, LQ);
+  const bL = new THREE.Mesh(browGeo, hairMat); bL.position.set(-0.065, 0.08, 0.148); head.add(bL);
+  const bR = new THREE.Mesh(browGeo, hairMat); bR.position.set(0.065, 0.08, 0.148); head.add(bR);
+  const nose = new THREE.Mesh(geoBox(0.04, 0.045, 0.035, MQ), skinMat); nose.position.set(0, -0.02, 0.155); head.add(nose);
+  const mouth = new THREE.Mesh(geoBox(0.11, 0.03, 0.015, LQ), matB(0x2B0000)); mouth.position.set(0, -0.085, 0.148); head.add(mouth);
+  const teethGeo = geoBox(0.012, 0.018, 0.015, LQ);
+  for (let i = 0; i < 5; i++) { const t = new THREE.Mesh(teethGeo, matB(0xE8E0D0)); t.position.set(-0.04 + i * 0.02, -0.075, 0.15); head.add(t); }
+  const woundHead = new THREE.Mesh(geoBox(0.07, 0.03, 0.015, LQ), wound); woundHead.position.set(-0.08, 0.08, 0.148); head.add(woundHead);
   if (hasHat) {
     const hg = new THREE.Group();
-    hg.add(new THREE.Mesh(geoBox(0.66, 0.05, 0.66, MQ), MAT.metalMid));
-    const ht = new THREE.Mesh(geoBox(0.46, 0.26, 0.46, MQ), MAT.metalDark); ht.position.y = 0.15; hg.add(ht);
-    hg.position.y = 0.34; headGroup.add(hg);
+    hg.add(new THREE.Mesh(geoBox(0.34, 0.025, 0.34, MQ), MAT.metalMid));
+    const ht = new THREE.Mesh(geoBox(0.24, 0.13, 0.24, MQ), MAT.metalDark); ht.position.y = 0.08; hg.add(ht);
+    hg.position.y = 0.17; head.add(hg);
   }
 }
-function buildDonkeyHead(headGroup, skinMat, wound) {
+function buildDonkeyHead(head, skinMat, wound) {
   const dSkin = matL(0x9E8B7A), dDark = matL(0x6B5D4F), muzzleMat = matL(0xB8A796);
-  const skull = new THREE.Mesh(geoSphere(0.30, 14), dSkin); skull.scale.set(1, 0.95, 1.1); skull.castShadow = true; headGroup.add(skull);
-  const muzzle = new THREE.Mesh(geoBox(0.30, 0.26, 0.36, MQ), muzzleMat); muzzle.position.set(0, -0.08, 0.42); headGroup.add(muzzle);
+  const skull = new THREE.Mesh(geoSphere(0.15, 14), dSkin); skull.scale.set(1, 0.95, 1.15); skull.castShadow = true; head.add(skull);
+  const muzzle = new THREE.Mesh(geoBox(0.15, 0.14, 0.20, MQ), muzzleMat); muzzle.position.set(0, -0.04, 0.22); head.add(muzzle);
   const nostrilMat = matB(0x2A1F1A);
-  const nL = new THREE.Mesh(geoBox(0.05, 0.04, 0.02, LQ), nostrilMat); nL.position.set(-0.08, -0.02, 0.60); headGroup.add(nL);
-  const nR = new THREE.Mesh(geoBox(0.05, 0.04, 0.02, LQ), nostrilMat); nR.position.set(0.08, -0.02, 0.60); headGroup.add(nR);
-  const mouth = new THREE.Mesh(geoBox(0.24, 0.05, 0.02, LQ), matB(0x2B0000)); mouth.position.set(0, -0.20, 0.60); headGroup.add(mouth);
+  const nL = new THREE.Mesh(geoBox(0.025, 0.02, 0.01, LQ), nostrilMat); nL.position.set(-0.04, -0.01, 0.31); head.add(nL);
+  const nR = new THREE.Mesh(geoBox(0.025, 0.02, 0.01, LQ), nostrilMat); nR.position.set(0.04, -0.01, 0.31); head.add(nR);
+  const mouth = new THREE.Mesh(geoBox(0.12, 0.025, 0.01, LQ), matB(0x2B0000)); mouth.position.set(0, -0.10, 0.31); head.add(mouth);
   const eyeW = matB(0xFFFFFF), pupil = matB(0x000000);
-  const eL = new THREE.Mesh(geoBox(0.10, 0.10, 0.02, LQ), eyeW); eL.position.set(-0.20, 0.10, 0.28); headGroup.add(eL);
-  const eR = new THREE.Mesh(geoBox(0.10, 0.10, 0.02, LQ), eyeW); eR.position.set(0.20, 0.10, 0.28); headGroup.add(eR);
-  const pL = new THREE.Mesh(geoBox(0.05, 0.05, 0.02, LQ), pupil); pL.position.set(-0.20, 0.10, 0.29); headGroup.add(pL);
-  const pR = new THREE.Mesh(geoBox(0.05, 0.05, 0.02, LQ), pupil); pR.position.set(0.20, 0.10, 0.29); headGroup.add(pR);
+  const eL = new THREE.Mesh(geoBox(0.05, 0.05, 0.01, LQ), eyeW); eL.position.set(-0.10, 0.05, 0.14); head.add(eL);
+  const eR = new THREE.Mesh(geoBox(0.05, 0.05, 0.01, LQ), eyeW); eR.position.set(0.10, 0.05, 0.14); head.add(eR);
+  const pL = new THREE.Mesh(geoBox(0.025, 0.025, 0.01, LQ), pupil); pL.position.set(-0.10, 0.05, 0.15); head.add(pL);
+  const pR = new THREE.Mesh(geoBox(0.025, 0.025, 0.01, LQ), pupil); pR.position.set(0.10, 0.05, 0.15); head.add(pR);
   function makeEar(side) {
     const ear = new THREE.Group();
-    ear.add(new THREE.Mesh(geoBox(0.10, 0.25, 0.10, MQ), dSkin));
-    const mid = new THREE.Mesh(geoBox(0.09, 0.20, 0.09, MQ), dSkin); mid.position.y = 0.22; mid.rotation.z = side * 0.15; ear.add(mid);
-    const tip = new THREE.Mesh(geoBox(0.08, 0.12, 0.08, MQ), dDark); tip.position.y = 0.40; tip.rotation.z = side * 0.2; ear.add(tip);
-    const inner = new THREE.Mesh(geoBox(0.05, 0.20, 0.02, LQ), matL(0xE8B8B0)); inner.position.set(0, 0.10, 0.06); ear.add(inner);
+    ear.add(new THREE.Mesh(geoBox(0.05, 0.13, 0.05, MQ), dSkin));
+    const mid = new THREE.Mesh(geoBox(0.045, 0.10, 0.045, MQ), dSkin); mid.position.y = 0.11; mid.rotation.z = side * 0.15; ear.add(mid);
+    const tip = new THREE.Mesh(geoBox(0.04, 0.06, 0.04, MQ), dDark); tip.position.y = 0.20; tip.rotation.z = side * 0.2; ear.add(tip);
     return ear;
   }
-  const eL2 = makeEar(-1); eL2.position.set(-0.18, 0.28, 0); eL2.rotation.z = 0.25; headGroup.add(eL2);
-  const eR2 = makeEar(1); eR2.position.set(0.18, 0.28, 0); eR2.rotation.z = -0.25; headGroup.add(eR2);
-  const woundHead = new THREE.Mesh(geoBox(0.14, 0.08, 0.02, LQ), wound); woundHead.position.set(-0.20, 0.22, 0.24); headGroup.add(woundHead);
+  const eL2 = makeEar(-1); eL2.position.set(-0.09, 0.14, 0); eL2.rotation.z = 0.25; head.add(eL2);
+  const eR2 = makeEar(1); eR2.position.set(0.09, 0.14, 0); eR2.rotation.z = -0.25; head.add(eR2);
+  const woundHead = new THREE.Mesh(geoBox(0.07, 0.04, 0.015, LQ), wound); woundHead.position.set(-0.10, 0.11, 0.12); head.add(woundHead);
 }
-function buildJudgeHead(headGroup, skinMat, wound) {
-  const hs = new THREE.Mesh(geoSphere(0.32, 16), skinMat); hs.castShadow = true; headGroup.add(hs);
+function buildJudgeHead(head, skinMat, wound) {
+  const hs = new THREE.Mesh(geoSphere(0.16, 16), skinMat); hs.castShadow = true; head.add(hs);
   const eyeW = matB(0xFFFFFF), pupil = matB(0x000000);
-  const eL = new THREE.Mesh(geoBox(0.11, 0.10, 0.02, LQ), eyeW); eL.position.set(-0.13, 0.06, 0.30); headGroup.add(eL);
-  const eR = new THREE.Mesh(geoBox(0.11, 0.10, 0.02, LQ), eyeW); eR.position.set(0.13, 0.06, 0.30); headGroup.add(eR);
-  const pL = new THREE.Mesh(geoBox(0.05, 0.05, 0.02, LQ), pupil); pL.position.set(-0.13, 0.06, 0.31); headGroup.add(pL);
-  const pR = new THREE.Mesh(geoBox(0.05, 0.05, 0.02, LQ), pupil); pR.position.set(0.13, 0.06, 0.31); headGroup.add(pR);
+  const eL = new THREE.Mesh(geoBox(0.055, 0.05, 0.015, LQ), eyeW); eL.position.set(-0.065, 0.03, 0.15); head.add(eL);
+  const eR = new THREE.Mesh(geoBox(0.055, 0.05, 0.015, LQ), eyeW); eR.position.set(0.065, 0.03, 0.15); head.add(eR);
+  const pL = new THREE.Mesh(geoBox(0.025, 0.025, 0.015, LQ), pupil); pL.position.set(-0.065, 0.03, 0.155); head.add(pL);
+  const pR = new THREE.Mesh(geoBox(0.025, 0.025, 0.015, LQ), pupil); pR.position.set(0.065, 0.03, 0.155); head.add(pR);
   const browMat = matB(0x888888);
-  const bL = new THREE.Mesh(geoBox(0.14, 0.03, 0.02, LQ), browMat); bL.position.set(-0.13, 0.15, 0.30); headGroup.add(bL);
-  const bR = new THREE.Mesh(geoBox(0.14, 0.03, 0.02, LQ), browMat); bR.position.set(0.13, 0.15, 0.30); headGroup.add(bR);
-  const nose = new THREE.Mesh(geoBox(0.08, 0.07, 0.07, MQ), skinMat); nose.position.set(0, -0.02, 0.31); headGroup.add(nose);
-  const must = new THREE.Mesh(geoBox(0.24, 0.05, 0.03, LQ), browMat); must.position.set(0, -0.10, 0.30); headGroup.add(must);
-  const beard = new THREE.Mesh(geoBox(0.20, 0.10, 0.04, LQ), browMat); beard.position.set(0, -0.22, 0.28); headGroup.add(beard);
-  const mouth = new THREE.Mesh(geoBox(0.20, 0.05, 0.02, LQ), matB(0x2B0000)); mouth.position.set(0, -0.15, 0.31); headGroup.add(mouth);
-  const woundHead = new THREE.Mesh(geoBox(0.12, 0.06, 0.02, LQ), wound); woundHead.position.set(-0.10, 0.20, 0.26); headGroup.add(woundHead);
+  const bL = new THREE.Mesh(geoBox(0.07, 0.015, 0.015, LQ), browMat); bL.position.set(-0.065, 0.08, 0.15); head.add(bL);
+  const bR = new THREE.Mesh(geoBox(0.07, 0.015, 0.015, LQ), browMat); bR.position.set(0.065, 0.08, 0.15); head.add(bR);
+  const nose = new THREE.Mesh(geoBox(0.04, 0.035, 0.035, MQ), skinMat); nose.position.set(0, -0.01, 0.155); head.add(nose);
+  const must = new THREE.Mesh(geoBox(0.12, 0.025, 0.015, LQ), browMat); must.position.set(0, -0.05, 0.15); head.add(must);
+  const beard = new THREE.Mesh(geoBox(0.10, 0.05, 0.02, LQ), browMat); beard.position.set(0, -0.11, 0.14); head.add(beard);
+  const mouth = new THREE.Mesh(geoBox(0.10, 0.025, 0.01, LQ), matB(0x2B0000)); mouth.position.set(0, -0.075, 0.155); head.add(mouth);
+  const woundHead = new THREE.Mesh(geoBox(0.06, 0.03, 0.015, LQ), wound); woundHead.position.set(-0.05, 0.10, 0.13); head.add(woundHead);
 }
-function buildJudgeOutfit(torsoGroup, body) {
+function buildJudgeOutfit(spineUpper, body) {
   const wm = matL(0xF5F5F5);
-  const cL = new THREE.Mesh(geoBox(0.15, 0.20, 0.04, LQ), wm); cL.position.set(-0.12, 0.30, body.torsoD / 2 + 0.008); cL.rotation.z = 0.5; torsoGroup.add(cL);
-  const cR = new THREE.Mesh(geoBox(0.15, 0.20, 0.04, LQ), wm); cR.position.set(0.12, 0.30, body.torsoD / 2 + 0.008); cR.rotation.z = -0.5; torsoGroup.add(cR);
-  const tie = new THREE.Mesh(geoBox(0.06, 0.35, 0.02, LQ), matL(0xCC1111)); tie.position.set(0, 0.10, body.torsoD / 2 + 0.012); torsoGroup.add(tie);
+  const cL = new THREE.Mesh(geoBox(0.075, 0.10, 0.02, LQ), wm); cL.position.set(-0.06, 0.15, body.torsoD / 2 + 0.005); cL.rotation.z = 0.5; spineUpper.add(cL);
+  const cR = new THREE.Mesh(geoBox(0.075, 0.10, 0.02, LQ), wm); cR.position.set(0.06, 0.15, body.torsoD / 2 + 0.005); cR.rotation.z = -0.5; spineUpper.add(cR);
+  const tie = new THREE.Mesh(geoBox(0.03, 0.18, 0.01, LQ), matL(0xCC1111)); tie.position.set(0, 0.05, body.torsoD / 2 + 0.006); spineUpper.add(tie);
 }
 function computePartLocalBox(group) {
   group.updateMatrixWorld(true);
@@ -537,130 +541,8 @@ function pickVariant() {
 }
 
 // ============================================================
-// ANATOMIA ARTICULADA — braços e pernas com sub-grupos
+// CRIA ZUMBI COM HIERARQUIA DE OSSOS
 // ============================================================
-function makeArm(side, body, shirtMat, skinMat) {
-  const arm = new THREE.Group();
-  const outer = [], bones = [];
-
-  // Ombro (bola)
-  const shoulder = new THREE.Mesh(geoSphere(body.arm * 0.7, 14), shirtMat);
-  shoulder.castShadow = true; arm.add(shoulder); outer.push(shoulder);
-
-  // Grupo do braço (pivô no ombro)
-  const upper = new THREE.Group();
-  upper.position.y = -0.02;
-  arm.add(upper);
-
-  // Braço superior
-  const upperMesh = new THREE.Mesh(geoBox(body.arm * 1.1, 0.32, body.arm * 1.1, HQ), shirtMat);
-  upperMesh.position.y = -0.17; upperMesh.castShadow = true; upper.add(upperMesh); outer.push(upperMesh);
-
-  // Cotovelo (pivô do antebraço)
-  const elbowGroup = new THREE.Group();
-  elbowGroup.position.y = -0.34;
-  upper.add(elbowGroup);
-
-  const elbowBall = new THREE.Mesh(geoSphere(body.arm * 0.55, 12), shirtMat);
-  elbowBall.castShadow = true; elbowGroup.add(elbowBall); outer.push(elbowBall);
-
-  // Antebraço
-  const forearm = new THREE.Mesh(geoBox(body.arm * 1.0, 0.32, body.arm * 1.0, HQ), skinMat);
-  forearm.position.y = -0.17; forearm.castShadow = true; elbowGroup.add(forearm); outer.push(forearm);
-
-  // Pulso + mão (pivô)
-  const wristGroup = new THREE.Group();
-  wristGroup.position.y = -0.36;
-  elbowGroup.add(wristGroup);
-
-  const wristBall = new THREE.Mesh(geoSphere(body.arm * 0.45, 10), skinMat);
-  wristBall.castShadow = true; wristGroup.add(wristBall); outer.push(wristBall);
-
-  const hand = new THREE.Mesh(geoBox(body.arm * 1.15, 0.16, body.arm * 1.25, MQ), skinMat);
-  hand.position.y = -0.11; hand.castShadow = true; wristGroup.add(hand); outer.push(hand);
-
-  const fingerGeo = geoBox(body.arm * 0.18, 0.15, body.arm * 0.2, LQ);
-  for (let i = 0; i < 4; i++) {
-    const f = new THREE.Mesh(fingerGeo, skinMat);
-    f.position.set(-body.arm * 0.36 + i * body.arm * 0.24, -0.22, body.arm * 0.24);
-    wristGroup.add(f); outer.push(f);
-  }
-  const thumb = new THREE.Mesh(geoBox(body.arm * 0.22, 0.13, body.arm * 0.24, LQ), skinMat);
-  thumb.position.set(side * body.arm * 0.52, -0.14, body.arm * 0.32);
-  wristGroup.add(thumb); outer.push(thumb);
-
-  // Ossos (escondidos; mostrar em desmembramento)
-  const humerus = new THREE.Mesh(geoCyl(body.arm * 0.22, body.arm * 0.20, 0.34, 10), BONE_MAT);
-  humerus.position.y = -0.17; humerus.visible = false; upper.add(humerus); bones.push(humerus);
-  const humTop = new THREE.Mesh(geoSphere(body.arm * 0.32, 10), BONE_MAT);
-  humTop.visible = false; arm.add(humTop); bones.push(humTop);
-  const humBot = new THREE.Mesh(geoSphere(body.arm * 0.28, 10), BONE_MAT);
-  humBot.position.y = -0.34; humBot.visible = false; upper.add(humBot); bones.push(humBot);
-  const radius = new THREE.Mesh(geoCyl(body.arm * 0.18, body.arm * 0.16, 0.36, 10), BONE_MAT);
-  radius.position.y = -0.17; radius.visible = false; elbowGroup.add(radius); bones.push(radius);
-  const radBot = new THREE.Mesh(geoSphere(body.arm * 0.20, 10), BONE_MAT);
-  radBot.position.y = -0.36; radBot.visible = false; elbowGroup.add(radBot); bones.push(radBot);
-  const handBone = new THREE.Mesh(geoBox(body.arm * 0.75, 0.10, body.arm * 0.9, LQ), BONE_MAT);
-  handBone.position.y = -0.11; handBone.visible = false; wristGroup.add(handBone); bones.push(handBone);
-
-  arm.userData = { outerMeshes: outer, boneMeshes: bones, upper, elbow: elbowGroup, wrist: wristGroup };
-  return arm;
-}
-
-function makeLeg(body, pantsMat, shoeMat) {
-  const leg = new THREE.Group();
-  const outer = [], bones = [];
-
-  const hip = new THREE.Mesh(geoSphere(body.leg * 0.7, 14), pantsMat);
-  hip.castShadow = true; leg.add(hip); outer.push(hip);
-
-  const thighGroup = new THREE.Group();
-  thighGroup.position.y = -0.02;
-  leg.add(thighGroup);
-
-  const thigh = new THREE.Mesh(geoBox(body.leg * 1.1, 0.44, body.leg * 1.1, HQ), pantsMat);
-  thigh.position.y = -0.24; thigh.castShadow = true; thighGroup.add(thigh); outer.push(thigh);
-
-  const kneeGroup = new THREE.Group();
-  kneeGroup.position.y = -0.48;
-  thighGroup.add(kneeGroup);
-
-  const kneeBall = new THREE.Mesh(geoSphere(body.leg * 0.55, 12), pantsMat);
-  kneeBall.castShadow = true; kneeGroup.add(kneeBall); outer.push(kneeBall);
-
-  const shin = new THREE.Mesh(geoBox(body.leg * 1.0, 0.36, body.leg * 1.0, HQ), pantsMat);
-  shin.position.y = -0.19; shin.castShadow = true; kneeGroup.add(shin); outer.push(shin);
-
-  const ankleGroup = new THREE.Group();
-  ankleGroup.position.y = -0.40;
-  kneeGroup.add(ankleGroup);
-
-  const ankleBall = new THREE.Mesh(geoSphere(body.leg * 0.45, 10), shoeMat);
-  ankleBall.castShadow = true; ankleGroup.add(ankleBall); outer.push(ankleBall);
-
-  const shoe = new THREE.Mesh(geoBox(body.leg * 1.15, 0.15, body.leg * 1.4, MQ), shoeMat);
-  shoe.position.set(0, -0.09, 0.05); shoe.castShadow = true; ankleGroup.add(shoe); outer.push(shoe);
-
-  const tip = new THREE.Mesh(geoBox(body.leg * 1.15, 0.10, body.leg * 0.5, MQ), shoeMat);
-  tip.position.set(0, -0.11, body.leg * 0.85); ankleGroup.add(tip); outer.push(tip);
-
-  const femur = new THREE.Mesh(geoCyl(body.leg * 0.22, body.leg * 0.20, 0.46, 10), BONE_MAT);
-  femur.position.y = -0.24; femur.visible = false; thighGroup.add(femur); bones.push(femur);
-  const femTop = new THREE.Mesh(geoSphere(body.leg * 0.30, 10), BONE_MAT);
-  femTop.visible = false; leg.add(femTop); bones.push(femTop);
-  const femBot = new THREE.Mesh(geoSphere(body.leg * 0.28, 10), BONE_MAT);
-  femBot.position.y = -0.48; femBot.visible = false; thighGroup.add(femBot); bones.push(femBot);
-  const tibia = new THREE.Mesh(geoCyl(body.leg * 0.18, body.leg * 0.16, 0.40, 10), BONE_MAT);
-  tibia.position.y = -0.19; tibia.visible = false; kneeGroup.add(tibia); bones.push(tibia);
-  const tibBot = new THREE.Mesh(geoSphere(body.leg * 0.20, 10), BONE_MAT);
-  tibBot.position.y = -0.40; tibBot.visible = false; kneeGroup.add(tibBot); bones.push(tibBot);
-  const footBone = new THREE.Mesh(geoBox(body.leg * 0.85, 0.08, body.leg * 1.15, LQ), BONE_DARKER);
-  footBone.position.set(0, -0.09, 0.15); footBone.visible = false; ankleGroup.add(footBone); bones.push(footBone);
-
-  leg.userData = { outerMeshes: outer, boneMeshes: bones, thigh: thighGroup, knee: kneeGroup, ankle: ankleGroup };
-  return leg;
-}
-
 function createZombieMesh(variantKey) {
   const variant = ZOMBIE_VARIANTS[variantKey] || ZOMBIE_VARIANTS.normal;
   const g = new THREE.Group();
@@ -672,9 +554,9 @@ function createZombieMesh(variantKey) {
   let zombieType;
   if (variant.forcedType) zombieType = variant.forcedType;
   else {
-    const roll = Math.random();
-    if (roll < 0.40) zombieType = 'pt';
-    else if (roll < 0.70) zombieType = 'pt_donkey';
+    const r = Math.random();
+    if (r < 0.40) zombieType = 'pt';
+    else if (r < 0.70) zombieType = 'pt_donkey';
     else zombieType = 'judge';
   }
 
@@ -685,124 +567,281 @@ function createZombieMesh(variantKey) {
   const shoeMat = matL(0x1A1A1A);
   const wound = matB(0xC0392B);
 
-  // === CABEÇA (grupo com pivô no pescoço) ===
-  const headGroup = new THREE.Group();
-  headGroup.position.y = 1.85;
+  // ============ PELVIS (raiz) ============
+  const pelvis = new THREE.Group();
+  pelvis.position.y = P_PELVIS_Y;
+  g.add(pelvis);
 
-  // Pescoço
-  const neck = new THREE.Mesh(geoCyl(0.13, 0.15, 0.16, 10), skinMat);
-  neck.position.y = -0.32; headGroup.add(neck);
+  const pelvisMesh = new THREE.Mesh(geoBox(body.torsoW * 0.9, 0.16, body.torsoD * 0.9, MQ), pantsMat);
+  pelvisMesh.castShadow = true; pelvis.add(pelvisMesh);
 
-  if (zombieType === 'pt') buildHumanHead(headGroup, skinMat, hairMat, wound, Math.random() > 0.7);
-  else if (zombieType === 'pt_donkey') buildDonkeyHead(headGroup, skinMat, wound);
-  else buildJudgeHead(headGroup, skinMat, wound);
+  // ============ SPINE LOWER ============
+  const spineLower = new THREE.Group();
+  spineLower.position.y = P_SPINE_LOW_OFF;
+  pelvis.add(spineLower);
 
-  // Ossos da cabeça (para decapitação)
-  const skullBone = new THREE.Mesh(geoSphere(0.24, 10), BONE_MAT);
-  skullBone.visible = false; headGroup.add(skullBone);
-  const jawBone = new THREE.Mesh(geoBox(0.38, 0.16, 0.38, MQ), BONE_DARK_MAT);
-  jawBone.position.set(0, -0.22, 0.04); jawBone.visible = false; headGroup.add(jawBone);
-  const sockGeo = geoSphere(0.06, 8);
-  const sk1 = new THREE.Mesh(sockGeo, matB(0x000000)); sk1.position.set(-0.13, 0.08, 0.24); sk1.visible = false; headGroup.add(sk1);
-  const sk2 = new THREE.Mesh(sockGeo, matB(0x000000)); sk2.position.set(0.13, 0.08, 0.24); sk2.visible = false; headGroup.add(sk2);
-  const skTeeth = [];
-  const skTeethGeo = geoBox(0.025, 0.04, 0.02, LQ);
-  for (let i = 0; i < 5; i++) {
-    const t = new THREE.Mesh(skTeethGeo, BONE_MAT); t.position.set(-0.09 + i * 0.045, -0.18, 0.22); t.visible = false; headGroup.add(t); skTeeth.push(t);
-  }
-  g.add(headGroup);
+  const abdomen = new THREE.Mesh(geoBox(body.torsoW * 0.9, 0.20, body.torsoD * 0.9, HQ), shirtMat);
+  abdomen.position.y = 0.10; abdomen.castShadow = true; spineLower.add(abdomen);
 
-  // === TORSO (chest + abdomen + pelvis em sub-grupos) ===
-  const torsoGroup = new THREE.Group();
-  torsoGroup.position.y = 1.15;
+  // ============ SPINE UPPER (CHEST) ============
+  const spineUpper = new THREE.Group();
+  spineUpper.position.y = P_SPINE_UP_OFF;
+  spineLower.add(spineUpper);
 
-  const chest = new THREE.Mesh(geoBox(body.torsoW, 0.55, body.torsoD, HQ), shirtMat);
-  chest.position.y = 0.15; chest.castShadow = true; torsoGroup.add(chest);
+  const chest = new THREE.Mesh(geoBox(body.torsoW, 0.30, body.torsoD, HQ), shirtMat);
+  chest.position.y = 0.15; chest.castShadow = true; spineUpper.add(chest);
 
-  const abdomenGroup = new THREE.Group();
-  abdomenGroup.position.y = -0.15;
-  torsoGroup.add(abdomenGroup);
+  const upperChest = new THREE.Mesh(geoBox(body.torsoW * 1.08, 0.08, body.torsoD * 1.05, MQ), shirtMat);
+  upperChest.position.y = 0.28; spineUpper.add(upperChest);
 
-  const abdomen = new THREE.Mesh(geoBox(body.torsoW * 0.9, 0.30, body.torsoD * 0.9, MQ), shirtMat);
-  abdomen.castShadow = true; abdomenGroup.add(abdomen);
-
-  const pelvis = new THREE.Mesh(geoBox(body.torsoW * 0.85, 0.20, body.torsoD * 0.9, MQ), pantsMat);
-  pelvis.position.y = -0.24; abdomenGroup.add(pelvis);
-
+  // PT decal
   if (zombieType === 'pt' || zombieType === 'pt_donkey') {
-    const decal = new THREE.Mesh(new THREE.PlaneGeometry(body.torsoW * 0.85, 0.65), PT_DECAL_MAT);
-    decal.position.set(0, 0.10, body.torsoD / 2 + 0.008);
-    torsoGroup.add(decal);
+    const decal = new THREE.Mesh(new THREE.PlaneGeometry(body.torsoW * 0.75, 0.42), PT_DECAL_MAT);
+    decal.position.set(0, 0.14, body.torsoD / 2 + 0.008);
+    spineUpper.add(decal);
   }
+  // Collar
   if (zombieType !== 'judge') {
-    const collar = new THREE.Mesh(geoBox(body.torsoW * 0.9, 0.06, body.torsoD * 0.95, LQ), MAT.metalDark);
-    collar.position.y = 0.42; torsoGroup.add(collar);
-  } else buildJudgeOutfit(torsoGroup, body);
+    const collar = new THREE.Mesh(geoBox(body.torsoW * 0.9, 0.04, body.torsoD * 0.95, LQ), MAT.metalDark);
+    collar.position.y = 0.32; spineUpper.add(collar);
+  } else {
+    buildJudgeOutfit(spineUpper, body);
+  }
 
-  const w1 = new THREE.Mesh(geoBox(0.14, 0.10, 0.02, LQ), wound); w1.position.set(0.15, 0.25, body.torsoD / 2 + 0.01); torsoGroup.add(w1);
-  const w2 = new THREE.Mesh(geoBox(0.10, 0.14, 0.02, LQ), wound); w2.position.set(-0.18, -0.15, body.torsoD / 2 + 0.01); abdomenGroup.add(w2);
+  // Wounds
+  const w1 = new THREE.Mesh(geoBox(0.09, 0.06, 0.015, LQ), wound); w1.position.set(0.10, 0.15, body.torsoD / 2 + 0.01); spineUpper.add(w1);
+  const w2 = new THREE.Mesh(geoBox(0.07, 0.09, 0.015, LQ), wound); w2.position.set(-0.10, -0.08, body.torsoD / 2 + 0.01); spineLower.add(w2);
 
-  // Ossos internos
+  // Rib cage (oculto)
   const ribCage = new THREE.Group();
   for (let i = 0; i < 5; i++) {
-    const rib = new THREE.Mesh(geoTorus(body.torsoW * 0.42, 0.022, 6, 14, Math.PI), BONE_MAT);
+    const rib = new THREE.Mesh(geoTorus(body.torsoW * 0.42, 0.02, 6, 14, Math.PI), BONE_MAT);
     rib.rotation.x = Math.PI / 2; rib.rotation.z = Math.PI;
-    rib.position.y = 0.30 - i * 0.12; rib.visible = false; ribCage.add(rib);
+    rib.position.y = 0.24 - i * 0.10; rib.visible = false; ribCage.add(rib);
   }
-  const spine = new THREE.Mesh(geoCyl(0.035, 0.035, 0.85, 10), BONE_DARK_MAT); spine.visible = false; ribCage.add(spine);
-  const pelvisBone = new THREE.Mesh(geoBox(body.torsoW * 0.7, 0.18, body.torsoD * 0.85, LQ), BONE_MAT);
-  pelvisBone.position.y = -0.38; pelvisBone.visible = false; ribCage.add(pelvisBone);
-  torsoGroup.add(ribCage);
-  g.add(torsoGroup);
+  const spine = new THREE.Mesh(geoCyl(0.03, 0.03, 0.55, 10), BONE_DARK_MAT);
+  spine.visible = false; spine.position.y = 0.08; ribCage.add(spine);
+  spineUpper.add(ribCage);
 
-  // === BRAÇOS ===
-  const armL = makeArm(-1, body, shirtMat, skinMat); armL.position.set(-body.torsoW / 2 - body.arm / 2 + 0.05, 1.5, 0); g.add(armL);
-  const armR = makeArm(1, body, shirtMat, skinMat); armR.position.set(body.torsoW / 2 + body.arm / 2 - 0.05, 1.5, 0); g.add(armR);
+  // ============ NECK + HEAD ============
+  const neck = new THREE.Group();
+  neck.position.y = P_NECK_OFF;
+  spineUpper.add(neck);
 
-  // === PERNAS ===
-  const legL = makeLeg(body, pantsMat, shoeMat); legL.position.set(-body.leg * 0.55, 0.72, 0); g.add(legL);
-  const legR = makeLeg(body, pantsMat, shoeMat); legR.position.set(body.leg * 0.55, 0.72, 0); g.add(legR);
+  const neckMesh = new THREE.Mesh(geoCyl(0.075, 0.085, 0.10, 10), skinMat);
+  neckMesh.position.y = 0.05; neck.add(neckMesh);
 
-  g.scale.y = body.heightScale * variant.scale;
-  g.rotation.order = 'YXZ';
-  g.rotation.x = 0.12;
+  const head = new THREE.Group();
+  head.position.y = P_HEAD_OFF;
+  neck.add(head);
 
+  if (zombieType === 'pt') buildHumanHead(head, skinMat, hairMat, wound, Math.random() > 0.7);
+  else if (zombieType === 'pt_donkey') buildDonkeyHead(head, skinMat, wound);
+  else buildJudgeHead(head, skinMat, wound);
+
+  // Skull bones (para decapitação)
+  const skullBone = new THREE.Mesh(geoSphere(0.14, 10), BONE_MAT);
+  skullBone.visible = false; head.add(skullBone);
+  const jawBone = new THREE.Mesh(geoBox(0.20, 0.09, 0.20, MQ), BONE_DARK_MAT);
+  jawBone.position.set(0, -0.11, 0.02); jawBone.visible = false; head.add(jawBone);
+  const sockGeo = geoSphere(0.035, 8);
+  const sk1 = new THREE.Mesh(sockGeo, matB(0x000000)); sk1.position.set(-0.065, 0.03, 0.12); sk1.visible = false; head.add(sk1);
+  const sk2 = new THREE.Mesh(sockGeo, matB(0x000000)); sk2.position.set(0.065, 0.03, 0.12); sk2.visible = false; head.add(sk2);
+  const skTeeth = [];
+  const skTeethGeo = geoBox(0.012, 0.02, 0.015, LQ);
+  for (let i = 0; i < 5; i++) { const t = new THREE.Mesh(skTeethGeo, BONE_MAT); t.position.set(-0.04 + i * 0.02, -0.09, 0.11); t.visible = false; head.add(t); skTeeth.push(t); }
+
+  // ============ ARMS (cadeia articulada) ============
+  function makeArm(side) {
+    const shoulder = new THREE.Group();
+    shoulder.position.set(side * body.torsoW * P_SHOULDER_X, P_SHOULDER_Y, 0);
+    spineUpper.add(shoulder);
+
+    const shoulderBall = new THREE.Mesh(geoSphere(body.arm * 0.65, 14), shirtMat);
+    shoulderBall.castShadow = true; shoulder.add(shoulderBall);
+
+    const upperArm = new THREE.Group();
+    upperArm.position.y = -0.03;
+    shoulder.add(upperArm);
+
+    const upperMesh = new THREE.Mesh(geoBox(body.arm * 1.05, 0.28, body.arm * 1.05, HQ), shirtMat);
+    upperMesh.position.y = -0.15; upperMesh.castShadow = true; upperArm.add(upperMesh);
+
+    const elbow = new THREE.Group();
+    elbow.position.y = -P_ELBOW_OFF;
+    upperArm.add(elbow);
+
+    const elbowBall = new THREE.Mesh(geoSphere(body.arm * 0.5, 12), skinMat);
+    elbowBall.castShadow = true; elbow.add(elbowBall);
+
+    const forearmMesh = new THREE.Mesh(geoBox(body.arm * 0.92, 0.26, body.arm * 0.92, HQ), skinMat);
+    forearmMesh.position.y = -0.14; forearmMesh.castShadow = true; elbow.add(forearmMesh);
+
+    const hand = new THREE.Group();
+    hand.position.y = -P_WRIST_OFF;
+    elbow.add(hand);
+
+    const wristBall = new THREE.Mesh(geoSphere(body.arm * 0.42, 10), skinMat);
+    wristBall.castShadow = true; hand.add(wristBall);
+
+    const handMesh = new THREE.Mesh(geoBox(body.arm * 1.05, 0.11, body.arm * 1.15, MQ), skinMat);
+    handMesh.position.y = -0.09; handMesh.castShadow = true; hand.add(handMesh);
+
+    const fingerGeo = geoBox(body.arm * 0.16, 0.10, body.arm * 0.18, LQ);
+    for (let i = 0; i < 4; i++) {
+      const f = new THREE.Mesh(fingerGeo, skinMat);
+      f.position.set(-body.arm * 0.34 + i * body.arm * 0.23, -0.16, body.arm * 0.20);
+      hand.add(f);
+    }
+    const thumb = new THREE.Mesh(geoBox(body.arm * 0.20, 0.09, body.arm * 0.22, LQ), skinMat);
+    thumb.position.set(side * body.arm * 0.50, -0.10, body.arm * 0.28);
+    hand.add(thumb);
+
+    // Bones (dismember)
+    const boneMeshes = [];
+    const humerus = new THREE.Mesh(geoCyl(body.arm * 0.2, body.arm * 0.18, 0.30, 10), BONE_MAT);
+    humerus.position.y = -0.15; humerus.visible = false; upperArm.add(humerus); boneMeshes.push(humerus);
+    const humTop = new THREE.Mesh(geoSphere(body.arm * 0.28, 10), BONE_MAT);
+    humTop.visible = false; shoulder.add(humTop); boneMeshes.push(humTop);
+    const humBot = new THREE.Mesh(geoSphere(body.arm * 0.24, 10), BONE_MAT);
+    humBot.position.y = -0.32; humBot.visible = false; upperArm.add(humBot); boneMeshes.push(humBot);
+    const radiusB = new THREE.Mesh(geoCyl(body.arm * 0.16, body.arm * 0.14, 0.28, 10), BONE_MAT);
+    radiusB.position.y = -0.14; radiusB.visible = false; elbow.add(radiusB); boneMeshes.push(radiusB);
+    const radBot = new THREE.Mesh(geoSphere(body.arm * 0.18, 10), BONE_MAT);
+    radBot.position.y = -0.30; radBot.visible = false; elbow.add(radBot); boneMeshes.push(radBot);
+    const handBone = new THREE.Mesh(geoBox(body.arm * 0.7, 0.08, body.arm * 0.85, LQ), BONE_MAT);
+    handBone.position.y = -0.09; handBone.visible = false; hand.add(handBone); boneMeshes.push(handBone);
+
+    const outerMeshes = [shoulderBall, upperMesh, elbowBall, forearmMesh, wristBall, handMesh];
+    shoulder.userData = { outerMeshes, boneMeshes, upperArm, elbow, hand };
+    return { shoulder, upperArm, elbow, hand };
+  }
+
+  const armL = makeArm(-1);
+  const armR = makeArm(1);
+
+  // ============ LEGS (cadeia articulada) ============
+  function makeLeg(side) {
+    const hip = new THREE.Group();
+    hip.position.set(side * body.torsoW * P_HIP_X, -0.05, 0);
+    pelvis.add(hip);
+
+    const hipBall = new THREE.Mesh(geoSphere(body.leg * 0.7, 14), pantsMat);
+    hipBall.castShadow = true; hip.add(hipBall);
+
+    const thigh = new THREE.Group();
+    thigh.position.y = -0.03;
+    hip.add(thigh);
+
+    const thighMesh = new THREE.Mesh(geoBox(body.leg * 1.05, 0.38, body.leg * 1.05, HQ), pantsMat);
+    thighMesh.position.y = -0.19; thighMesh.castShadow = true; thigh.add(thighMesh);
+
+    const knee = new THREE.Group();
+    knee.position.y = -P_KNEE_OFF;
+    thigh.add(knee);
+
+    const kneeBall = new THREE.Mesh(geoSphere(body.leg * 0.5, 12), pantsMat);
+    kneeBall.castShadow = true; knee.add(kneeBall);
+
+    const shinMesh = new THREE.Mesh(geoBox(body.leg * 0.9, 0.32, body.leg * 0.9, HQ), pantsMat);
+    shinMesh.position.y = -0.17; shinMesh.castShadow = true; knee.add(shinMesh);
+
+    const foot = new THREE.Group();
+    foot.position.y = -P_ANKLE_OFF;
+    knee.add(foot);
+
+    const ankleBall = new THREE.Mesh(geoSphere(body.leg * 0.42, 10), shoeMat);
+    ankleBall.castShadow = true; foot.add(ankleBall);
+
+    const shoeMesh = new THREE.Mesh(geoBox(body.leg * 1.05, 0.12, body.leg * 1.3, MQ), shoeMat);
+    shoeMesh.position.set(0, -0.07, 0.05); shoeMesh.castShadow = true; foot.add(shoeMesh);
+
+    const toeMesh = new THREE.Mesh(geoBox(body.leg * 1.05, 0.08, body.leg * 0.42, MQ), shoeMat);
+    toeMesh.position.set(0, -0.09, body.leg * 0.72); foot.add(toeMesh);
+
+    // Bones
+    const boneMeshes = [];
+    const femur = new THREE.Mesh(geoCyl(body.leg * 0.2, body.leg * 0.18, 0.42, 10), BONE_MAT);
+    femur.position.y = -0.19; femur.visible = false; thigh.add(femur); boneMeshes.push(femur);
+    const femTop = new THREE.Mesh(geoSphere(body.leg * 0.28, 10), BONE_MAT);
+    femTop.visible = false; hip.add(femTop); boneMeshes.push(femTop);
+    const femBot = new THREE.Mesh(geoSphere(body.leg * 0.24, 10), BONE_MAT);
+    femBot.position.y = -0.42; femBot.visible = false; thigh.add(femBot); boneMeshes.push(femBot);
+    const tibia = new THREE.Mesh(geoCyl(body.leg * 0.16, body.leg * 0.14, 0.36, 10), BONE_MAT);
+    tibia.position.y = -0.17; tibia.visible = false; knee.add(tibia); boneMeshes.push(tibia);
+    const tibBot = new THREE.Mesh(geoSphere(body.leg * 0.18, 10), BONE_MAT);
+    tibBot.position.y = -0.38; tibBot.visible = false; knee.add(tibBot); boneMeshes.push(tibBot);
+    const footBone = new THREE.Mesh(geoBox(body.leg * 0.8, 0.07, body.leg * 1.1, LQ), BONE_DARKER);
+    footBone.position.set(0, -0.07, 0.14); footBone.visible = false; foot.add(footBone); boneMeshes.push(footBone);
+
+    const outerMeshes = [hipBall, thighMesh, kneeBall, shinMesh, ankleBall, shoeMesh, toeMesh];
+    hip.userData = { outerMeshes, boneMeshes, thigh, knee, foot };
+    return { hip, thigh, knee, foot };
+  }
+
+  const legL = makeLeg(-1);
+  const legR = makeLeg(1);
+
+  // Aplicar scale
+  const scale = body.heightScale * variant.scale;
+  g.scale.setScalar(scale);
+
+  // Pré-computar AABB por parte
   const localBoxes = {
-    head: computePartLocalBox(headGroup), torso: computePartLocalBox(torsoGroup),
-    armL: computePartLocalBox(armL), armR: computePartLocalBox(armR),
-    legL: computePartLocalBox(legL), legR: computePartLocalBox(legR),
+    head: computePartLocalBox(head),
+    torso: computePartLocalBox(spineLower),
+    armL: computePartLocalBox(armL.shoulder),
+    armR: computePartLocalBox(armR.shoulder),
+    legL: computePartLocalBox(legL.hip),
+    legR: computePartLocalBox(legR.hip),
   };
 
   g.userData = {
-    armL, armR, legL, legR, head: headGroup, torso: torsoGroup,
-    abdomenGroup, skullBone, jawBone, sk1, sk2, ribCage, skTeeth,
+    // Refs de "peças" para ragdoll / dismember / raycast
+    armL: armL.shoulder, armR: armR.shoulder,
+    legL: legL.hip, legR: legR.hip,
+    head, torso: spineLower,
+    ribCage, skullBone, jawBone, sk1, sk2, skTeeth,
+    // Refs de joints para animação
+    joints: {
+      pelvis, spineLower, spineUpper, neck, head,
+      shoulderL: armL.shoulder, upperArmL: armL.upperArm, elbowL: armL.elbow, handL: armL.hand,
+      shoulderR: armR.shoulder, upperArmR: armR.upperArm, elbowR: armR.elbow, handR: armR.hand,
+      hipL: legL.hip, thighL: legL.thigh, kneeL: legL.knee, footL: legL.foot,
+      hipR: legR.hip, thighR: legR.thigh, kneeR: legR.knee, footR: legR.foot,
+    },
     skinColor, shirtColor: zombieType === 'judge' ? SHIRT_BLACK : SHIRT_RED,
-    pantsColor, bodyType: body,
-    heightScale: body.heightScale * variant.scale,
+    pantsColor, bodyType: body, heightScale: scale,
     zombieType, variantKey, variant, localBoxes,
+    // Personalidade (offset aleatório para "semblante de zumbi")
+    headLoll: (Math.random() - 0.5) * 0.35,
+    headPitchBase: 0.05 + Math.random() * 0.15,
+    armDroopL: -(Math.random() * 0.3),
+    armDroopR: -(Math.random() * 0.3),
+    limpAmount: Math.random() * 0.12,
+    limpSide: Math.random() < 0.5 ? 'L' : 'R',
   };
+
   return g;
 }
 
 // ============================================================
-// ANIM STATE (springs)
+// ANIM STATE
 // ============================================================
 function makeAnimState() {
   return {
-    // Posições (perseguem target com spring)
-    armLX: 0, armRX: 0, legLX: 0, legRX: 0,
-    elbowLX: 0, elbowRX: 0, kneeLX: 0, kneeRX: 0,
-    headRZ: 0, headRY: 0, bodyLean: 0.12,
-    abdomenX: 0, abdomenZ: 0,
-    // Velocidades (springs)
-    armLXVel: 0, armRXVel: 0, legLXVel: 0, legRXVel: 0,
-    elbowLXVel: 0, elbowRXVel: 0, kneeLXVel: 0, kneeRXVel: 0,
-    headRZVel: 0, headRYVel: 0, bodyLeanVel: 0,
-    abdomenXVel: 0, abdomenZVel: 0,
-    // Soft body wobble (empurrado por hits)
-    wobbleX: 0, wobbleZ: 0, wobbleXVel: 0, wobbleZVel: 0,
-    // Queda/desmaio
-    collapseY: 0, collapseYVel: 0,
+    // Joint rotations
+    pelvisRoll: 0, pelvisTwist: 0, pelvisBob: 0,
+    spineTwist: 0, spineLean: 0.10, spineRoll: 0, spineSide: 0,
+    headTwist: 0, headRoll: 0, headPitch: 0,
+    armLX: 0, armRX: 0, elbowLX: 0, elbowRX: 0,
+    thighLX: 0, thighRX: 0, kneeLX: 0, kneeRX: 0, footLX: 0, footRX: 0,
+    // Velocities
+    pelvisRollVel: 0, pelvisTwistVel: 0, pelvisBobVel: 0,
+    spineTwistVel: 0, spineLeanVel: 0, spineRollVel: 0, spineSideVel: 0,
+    headTwistVel: 0, headRollVel: 0, headPitchVel: 0,
+    armLXVel: 0, armRXVel: 0, elbowLXVel: 0, elbowRXVel: 0,
+    thighLXVel: 0, thighRXVel: 0, kneeLXVel: 0, kneeRXVel: 0, footLXVel: 0, footRXVel: 0,
   };
 }
 
@@ -846,8 +885,13 @@ function spawnZombie(forceVariant) {
     lastAttackTime: 0, walkPhase: Math.random() * Math.PI * 2,
     hitReactEndTime: 0, hitDirection: new THREE.Vector3(),
     dismembered: { head: false, armL: false, armR: false, legL: false, legR: false },
-    emergeTime: 0,
-    anim: makeAnimState(),
+    emergeTime: 0, anim: makeAnimState(),
+    headLoll: mesh.userData.headLoll,
+    headPitchBase: mesh.userData.headPitchBase,
+    armDroopL: mesh.userData.armDroopL,
+    armDroopR: mesh.userData.armDroopR,
+    limpAmount: mesh.userData.limpAmount,
+    limpSide: mesh.userData.limpSide,
   };
   zombies.push(z);
   state.zombiesAlive++;
@@ -927,8 +971,7 @@ function updateBloodPools(dt) {
 class Debris {
   constructor(mesh, size, mass, life = 35) {
     this.mesh = mesh; this.size = size; this.mass = mass;
-    this.velocity = new THREE.Vector3();
-    this.angularVelocity = new THREE.Vector3();
+    this.velocity = new THREE.Vector3(); this.angularVelocity = new THREE.Vector3();
     this.settled = false; this.settleTimer = 0;
     this.life = life; this.maxLife = life;
     this.key = 'piece';
@@ -980,10 +1023,8 @@ class Debris {
 // RAGDOLL
 // ============================================================
 const ragdolls = [];
-const _worldPosTmp = new THREE.Vector3();
-const _worldQuatTmp = new THREE.Quaternion();
-const _jointSprings = [];
-
+const _wpTmp = new THREE.Vector3();
+const _wqTmp = new THREE.Quaternion();
 class Ragdoll {
   constructor(zombieMesh, hitDir, hitStrength, missingParts) {
     zombieMesh.updateMatrixWorld(true);
@@ -992,44 +1033,54 @@ class Ragdoll {
     this.settleStart = 0;
     this.state = 'falling';
     this.fadeProgress = 0;
-    this.jointSprings = []; // Secondary motion for extra softness
 
     const ud = zombieMesh.userData;
     const bt = ud.bodyType || BODY_TYPES[1];
     const hitDirN = hitDir.clone(); hitDirN.y = 0; hitDirN.normalize();
 
     const defs = [
-      { key: 'torso', obj: ud.torso, size: new THREE.Vector3(bt.torsoW, 1.0, bt.torsoD), mass: 8 },
-      { key: 'head', obj: ud.head, size: new THREE.Vector3(0.65, 0.65, 0.65), mass: 2.5 },
-      { key: 'armL', obj: ud.armL, size: new THREE.Vector3(bt.arm * 1.2, 1.1, bt.arm * 1.2), mass: 0.9 },
-      { key: 'armR', obj: ud.armR, size: new THREE.Vector3(bt.arm * 1.2, 1.1, bt.arm * 1.2), mass: 0.9 },
-      { key: 'legL', obj: ud.legL, size: new THREE.Vector3(bt.leg * 1.1, 1.2, bt.leg * 1.1), mass: 1.3 },
-      { key: 'legR', obj: ud.legR, size: new THREE.Vector3(bt.leg * 1.1, 1.2, bt.leg * 1.1), mass: 1.3 },
+      { key: 'torso', obj: ud.torso, size: new THREE.Vector3(bt.torsoW, 0.85, bt.torsoD), mass: 8 },
+      { key: 'head', obj: ud.head, size: new THREE.Vector3(0.4, 0.4, 0.4), mass: 2.5 },
+      { key: 'armL', obj: ud.armL, size: new THREE.Vector3(bt.arm * 1.2, 1.0, bt.arm * 1.2), mass: 0.9 },
+      { key: 'armR', obj: ud.armR, size: new THREE.Vector3(bt.arm * 1.2, 1.0, bt.arm * 1.2), mass: 0.9 },
+      { key: 'legL', obj: ud.legL, size: new THREE.Vector3(bt.leg * 1.1, 1.1, bt.leg * 1.1), mass: 1.3 },
+      { key: 'legR', obj: ud.legR, size: new THREE.Vector3(bt.leg * 1.1, 1.1, bt.leg * 1.1), mass: 1.3 },
     ];
 
-    for (const def of defs) {
-      if (missingParts[def.key]) continue;
+    // Detach sub-pieces first (head/arms/legs out of torso) to avoid nested extraction
+    // Ordem importa: extrai peças-folhas primeiro
+    const order = ['head', 'armL', 'armR', 'legL', 'legR', 'torso'];
+    const defMap = Object.fromEntries(defs.map(d => [d.key, d]));
+
+    for (const key of order) {
+      const def = defMap[key];
+      if (missingParts[key] || !def || !def.obj) continue;
       const obj = def.obj;
-      if (!obj) continue;
-      obj.getWorldPosition(_worldPosTmp);
-      obj.getWorldQuaternion(_worldQuatTmp);
+
+      obj.getWorldPosition(_wpTmp);
+      obj.getWorldQuaternion(_wqTmp);
       obj.rotation.set(0, 0, 0);
+
       if (obj.parent) obj.parent.remove(obj);
       scene.add(obj);
-      obj.position.copy(_worldPosTmp);
-      obj.quaternion.copy(_worldQuatTmp);
-      obj.scale.set(1, 1, 1);
+      obj.position.copy(_wpTmp);
+      obj.quaternion.copy(_wqTmp);
+
       obj.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(obj);
       if (box.isEmpty()) { obj.visible = false; continue; }
       const center = box.getCenter(new THREE.Vector3());
+
       const wrapper = new THREE.Group();
       wrapper.position.copy(center);
       scene.add(wrapper);
+
       obj.position.sub(center);
       wrapper.add(obj);
+
       const piece = new Debris(wrapper, def.size, def.mass, 9999);
-      piece.key = def.key;
+      piece.key = key;
+
       const base = CONFIG.ragdoll.impactImpulse * hitStrength;
       piece.applyImpulse(new THREE.Vector3(
         hitDirN.x * base + (Math.random() - 0.5) * 2,
@@ -1119,8 +1170,8 @@ function detachLimb(z, key, hitDir) {
   else if (key === 'legR') limbObj = ud.legR;
   if (!limbObj || z.dismembered[key]) return;
   z.mesh.updateMatrixWorld(true);
-  limbObj.getWorldPosition(_worldPosTmp);
-  limbObj.getWorldQuaternion(_worldQuatTmp);
+  limbObj.getWorldPosition(_wpTmp);
+  limbObj.getWorldQuaternion(_wqTmp);
   if (key === 'head') {
     ud.skullBone.visible = true; ud.jawBone.visible = true; ud.sk1.visible = true; ud.sk2.visible = true;
     ud.skTeeth.forEach(t => t.visible = true);
@@ -1136,14 +1187,14 @@ function detachLimb(z, key, hitDir) {
   z.dismembered[key] = true;
   const bt = ud.bodyType || BODY_TYPES[1];
   let size, color;
-  if (key === 'head') { size = new THREE.Vector3(0.6, 0.6, 0.6); color = ud.skinColor; }
-  else if (key === 'armL' || key === 'armR') { size = new THREE.Vector3(bt.arm * 1.2, 1.1, bt.arm * 1.2); color = ud.shirtColor; }
-  else { size = new THREE.Vector3(bt.leg * 1.15, 1.2, bt.leg * 1.15); color = ud.pantsColor; }
+  if (key === 'head') { size = new THREE.Vector3(0.4, 0.4, 0.4); color = ud.skinColor; }
+  else if (key === 'armL' || key === 'armR') { size = new THREE.Vector3(bt.arm * 1.2, 1.0, bt.arm * 1.2); color = ud.shirtColor; }
+  else { size = new THREE.Vector3(bt.leg * 1.1, 1.1, bt.leg * 1.1); color = ud.pantsColor; }
   const geo = geoBox(size.x, size.y, size.z, MQ);
   const mat = matL(color);
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.copy(_worldPosTmp);
-  mesh.quaternion.copy(_worldQuatTmp);
+  mesh.position.copy(_wpTmp);
+  mesh.quaternion.copy(_wqTmp);
   mesh.castShadow = true;
   scene.add(mesh);
   const piece = new Debris(mesh, size, 1.2, CONFIG.dismember.limbLife);
@@ -1153,9 +1204,9 @@ function detachLimb(z, key, hitDir) {
   piece.velocity.set(dir.x * speed + (Math.random() - 0.5) * 6, speed * 0.8 + Math.random() * 5, dir.z * speed + (Math.random() - 0.5) * 6);
   piece.angularVelocity.set((Math.random() - 0.5) * 35, (Math.random() - 0.5) * 35, (Math.random() - 0.5) * 35);
   flyingLimbs.push(piece);
-  spawnBlood(_worldPosTmp, dir, 35, true);
-  spawnBlood(_worldPosTmp, null, 15, true);
-  bus.emit(Ev.DISMEMBER, { zombieId: z.id, part: key, pos: { x: _worldPosTmp.x, y: _worldPosTmp.y, z: _worldPosTmp.z } });
+  spawnBlood(_wpTmp, dir, 35, true);
+  spawnBlood(_wpTmp, null, 15, true);
+  bus.emit(Ev.DISMEMBER, { zombieId: z.id, part: key, pos: { x: _wpTmp.x, y: _wpTmp.y, z: _wpTmp.z } });
 }
 
 function randomDismemberOnDeath(z) {
@@ -1181,17 +1232,14 @@ function randomDismemberOnDeath(z) {
 }
 
 // ============================================================
-// FÍSICA DE PEDAÇOS vs ZUMBIS
+// FÍSICA DE PEDAÇOS
 // ============================================================
 const _debrisDir = new THREE.Vector3();
 function checkDebrisZombieCollision() {
   const now = performance.now() / 1000;
   const allPieces = [];
   for (const l of flyingLimbs) allPieces.push(l);
-  for (const r of ragdolls) {
-    if (r.state === 'fading') continue;
-    for (const p of r.pieces) allPieces.push(p);
-  }
+  for (const r of ragdolls) { if (r.state === 'fading') continue; for (const p of r.pieces) allPieces.push(p); }
   for (const piece of allPieces) {
     if (piece.settled) continue;
     const y = piece.mesh.position.y;
@@ -1219,9 +1267,8 @@ function checkDebrisZombieCollision() {
       piece.lastGlobalHit = now;
       const force = Math.min(3.0, Math.sqrt(speed2) * Math.min(2, piece.mass) * 0.12);
       _debrisDir.set(nx, 0, nz);
-      const stagger = 0.15 + force * 0.18;
       applyHitReaction(z, 'torso', _debrisDir, force);
-      z.hitReactEndTime = now + stagger;
+      z.hitReactEndTime = now + 0.15 + force * 0.18;
       z.hitDirection.copy(_debrisDir);
       const pushZ = force * 0.09 / Math.max(0.5, z.scale);
       z.mesh.position.x += nx * pushZ;
@@ -1231,8 +1278,7 @@ function checkDebrisZombieCollision() {
       piece.velocity.z = -nz * bounce + (Math.random() - 0.5) * 2.5;
       piece.velocity.y = Math.max(1.5, piece.velocity.y * 0.5);
       piece.angularVelocity.multiplyScalar(1.8);
-      piece.settled = false;
-      piece.settleTimer = 0;
+      piece.settled = false; piece.settleTimer = 0;
       if (force > 0.9) Sfx.playDebrisImpact();
       if (force > 1.5) addShake(0.03 * force);
     }
@@ -1299,38 +1345,68 @@ function raycastZombie(origin, dir, maxDist) {
   return { zombie: bestZ, part: bestPart, distance: bestDist, point: bestPoint };
 }
 
+// ============================================================
+// IMPACTO DISTRIBUÍDO PELA COLUNA
+// ============================================================
 function applyHitReaction(z, part, hitDirWorld, force = 1) {
-  const now = performance.now() / 1000;
   const localDir = hitDirWorld.clone();
   const zQuat = z.mesh.quaternion.clone();
   zQuat.invert();
   localDir.applyQuaternion(zQuat);
-  const strength = Math.min(2.0, force);
 
-  // Impulso no wobble do torso (soft body)
-  springKick(z.anim, 'wobbleZ', localDir.z * strength * 12);
-  springKick(z.anim, 'wobbleX', localDir.x * strength * 12);
+  const s = Math.min(2.0, force);
+  const anim = z.anim;
 
-  // Impulso nos membros próximos ao impacto
+  // Impulso direto na parte atingida
   if (part === 'head') {
-    springKick(z.anim, 'headRZ', localDir.x * strength * 8);
-    springKick(z.anim, 'headRY', -localDir.z * strength * 8);
-  } else if (part === 'armL') {
-    springKick(z.anim, 'armLX', -localDir.z * strength * 10);
-  } else if (part === 'armR') {
-    springKick(z.anim, 'armRX', -localDir.z * strength * 10);
+    springKick(anim, 'headTwistVel', localDir.x * s * 9);
+    springKick(anim, 'headRollVel', -localDir.x * s * 7);
+    springKick(anim, 'headPitchVel', localDir.z * s * 8);
+    // Propagação para coluna superior
+    springKick(anim, 'spineTwistVel', localDir.x * s * 3);
+    springKick(anim, 'spineLeanVel', localDir.z * s * 2);
   } else if (part === 'torso') {
-    springKick(z.anim, 'abdomenX', localDir.x * strength * 10);
-    springKick(z.anim, 'abdomenZ', localDir.z * strength * 10);
+    springKick(anim, 'spineTwistVel', localDir.x * s * 7);
+    springKick(anim, 'spineRollVel', -localDir.x * s * 6);
+    springKick(anim, 'spineLeanVel', localDir.z * s * 6);
+    springKick(anim, 'spineSideVel', localDir.x * s * 5);
+    // Cadeia inferior com menos força
+    springKick(anim, 'pelvisTwistVel', localDir.x * s * 3);
+    springKick(anim, 'pelvisRollVel', -localDir.x * s * 4);
+    // Cabeça reage por inércia
+    springKick(anim, 'headTwistVel', -localDir.x * s * 2);
+    springKick(anim, 'headPitchVel', localDir.z * s * 3);
+  } else if (part === 'armL') {
+    springKick(anim, 'armLXVel', localDir.z * s * 9);
+    springKick(anim, 'elbowLXVel', localDir.z * s * 6);
+    springKick(anim, 'spineTwistVel', localDir.x * s * 2);
+    springKick(anim, 'spineSideVel', localDir.x * s * 2);
+  } else if (part === 'armR') {
+    springKick(anim, 'armRXVel', localDir.z * s * 9);
+    springKick(anim, 'elbowRXVel', localDir.z * s * 6);
+    springKick(anim, 'spineTwistVel', localDir.x * s * 2);
+    springKick(anim, 'spineSideVel', localDir.x * s * 2);
   } else if (part === 'legL') {
-    springKick(z.anim, 'legLX', -localDir.z * strength * 10);
+    springKick(anim, 'thighLXVel', localDir.z * s * 8);
+    springKick(anim, 'kneeLXVel', localDir.z * s * 4);
+    springKick(anim, 'pelvisTwistVel', localDir.x * s * 3);
+    springKick(anim, 'pelvisRollVel', -localDir.x * s * 3);
   } else if (part === 'legR') {
-    springKick(z.anim, 'legRX', -localDir.z * strength * 10);
+    springKick(anim, 'thighRXVel', localDir.z * s * 8);
+    springKick(anim, 'kneeRXVel', localDir.z * s * 4);
+    springKick(anim, 'pelvisTwistVel', localDir.x * s * 3);
+    springKick(anim, 'pelvisRollVel', localDir.x * s * 3);
   }
+
+  // Wobble geral (menos em tanks)
+  const ww = s / Math.max(0.7, z.scale);
+  springKick(anim, 'spineSideVel', localDir.x * ww * 5);
+  springKick(anim, 'pelvisRollVel', -localDir.x * ww * 4);
+  springKick(anim, 'spineLeanVel', localDir.z * ww * 3);
 }
 
 // ============================================================
-// HIT MARKER / FX
+// FX
 // ============================================================
 const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
@@ -1341,20 +1417,15 @@ function showHitMarker(critical = false) {
   hitMarker.classList.add('active');
   setTimeout(() => hitMarker.classList.remove('critical'), 300);
 }
-function showDamageFlash() {
-  damageFlash.classList.add('active');
-  setTimeout(() => damageFlash.classList.remove('active'), 120);
-}
+function showDamageFlash() { damageFlash.classList.add('active'); setTimeout(() => damageFlash.classList.remove('active'), 120); }
 function addShake(amount) { state.shake = Math.min(0.7, state.shake + amount); }
 const muzzleLight = new THREE.PointLight(0xFFAA33, 0, 8, 2);
 scene.add(muzzleLight);
 let muzzleLightEnd = 0;
 function spawnMuzzleFlash() {
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
+  const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
   muzzleLight.position.copy(camera.position).addScaledVector(dir, 1.4);
-  muzzleLightEnd = performance.now() / 1000 + 0.08;
-  muzzleLight.intensity = 4;
+  muzzleLightEnd = performance.now() / 1000 + 0.08; muzzleLight.intensity = 4;
 }
 const tracerPool = [], tracers = [];
 function spawnTracer(from, to) {
@@ -1363,8 +1434,7 @@ function spawnTracer(from, to) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
     const mat = new THREE.LineBasicMaterial({ color: 0xFFDD33, transparent: true, opacity: 0.9 });
-    t = { mesh: new THREE.Line(geo, mat), life: 0 };
-    scene.add(t.mesh);
+    t = { mesh: new THREE.Line(geo, mat), life: 0 }; scene.add(t.mesh);
   }
   const arr = t.mesh.geometry.attributes.position.array;
   arr[0] = from.x; arr[1] = from.y; arr[2] = from.z;
@@ -1376,15 +1446,10 @@ function spawnTracer(from, to) {
 function updateTracers(dt) {
   for (let i = tracers.length - 1; i >= 0; i--) {
     const t = tracers[i];
-    t.life -= dt;
-    t.mesh.material.opacity = Math.max(0, t.life / 0.08);
+    t.life -= dt; t.mesh.material.opacity = Math.max(0, t.life / 0.08);
     if (t.life <= 0) { t.mesh.visible = false; tracerPool.push(t); tracers.splice(i, 1); }
   }
 }
-
-// ============================================================
-// EXPLOSIONS
-// ============================================================
 const explosions = [];
 function spawnExplosion(pos) {
   const light = new THREE.PointLight(0xFF6600, 8, 14, 2);
@@ -1427,7 +1492,7 @@ function updateExplosions(dt) {
 }
 
 // ============================================================
-// DAMAGE
+// DAMAGE / RELOAD / ATTACK
 // ============================================================
 function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   z.health -= damage;
@@ -1439,8 +1504,7 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   else if (sourceType !== 'explosion') Sfx.playBulletImpact();
   showHitMarker(isCrit || isHead);
   addShake(CONFIG.shake.hit);
-  const hitForce = isCrit || isHead ? 1.4 : 1.0;
-  applyHitReaction(z, part, hitDir, hitForce);
+  applyHitReaction(z, part, hitDir, isCrit || isHead ? 1.4 : 1.0);
   if (isCrit || isHead) {
     let limb = null;
     const roll = Math.random();
@@ -1480,9 +1544,6 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
 }
 function rollCrit() { return Math.random() < state.critChance; }
 
-// ============================================================
-// RELOAD
-// ============================================================
 function startReload(wid) {
   if (state.reload.active) return;
   const w = WEAPONS[wid], am = state.ammo[wid];
@@ -1511,10 +1572,6 @@ function updateReload(now) {
     cancelReload(); updateHUD();
   }
 }
-
-// ============================================================
-// ATTACK
-// ============================================================
 function attack() {
   if (state.downed) {
     const wid = state.inventory[state.currentSlot] || 'knife';
@@ -1546,8 +1603,7 @@ function attack() {
   triggerSwing();
   if (weapon.type === 'ranged') { spawnMuzzleFlash(); addShake(CONFIG.shake.shoot * (weapon.damage / 40)); }
   if (weapon.type === 'melee') {
-    const forward = new THREE.Vector3();
-    camera.getWorldDirection(forward);
+    const forward = new THREE.Vector3(); camera.getWorldDirection(forward);
     forward.y = 0; forward.normalize();
     const range = weapon.range + state.rangeBonus;
     const aimRegion = getAimRegion();
@@ -1555,8 +1611,7 @@ function attack() {
     for (let i = 0; i < zombies.length; i++) {
       const z = zombies[i];
       if (z.health <= 0) continue;
-      const dx = z.mesh.position.x - player.position.x;
-      const dz = z.mesh.position.z - player.position.z;
+      const dx = z.mesh.position.x - player.position.x, dz = z.mesh.position.z - player.position.z;
       const horizDist = Math.sqrt(dx * dx + dz * dz);
       if (horizDist > range) continue;
       if (horizDist > 0.001) { const dot = (dx * forward.x + dz * forward.z) / horizDist; if (dot < minDot) continue; }
@@ -1565,7 +1620,7 @@ function attack() {
       else if (aimRegion === 'legs') part = Math.random() < 0.5 ? 'legL' : 'legR';
       else part = 'torso';
       const hitPoint = z.mesh.position.clone();
-      hitPoint.y += (part === 'head') ? 1.85 : (part === 'legL' || part === 'legR') ? 0.5 : 1.15;
+      hitPoint.y += (part === 'head') ? 1.75 : (part === 'legL' || part === 'legR') ? 0.5 : 1.15;
       const isCrit = rollCrit();
       const baseDmg = weapon.damage * state.damageMult;
       const critMult = CONFIG.crit.damageMultiplier + state.critDamageBonus;
@@ -1579,8 +1634,7 @@ function attack() {
     return true;
   }
   const origin = camera.position.clone();
-  const forward = new THREE.Vector3();
-  camera.getWorldDirection(forward);
+  const forward = new THREE.Vector3(); camera.getWorldDirection(forward);
   const range = weapon.range + state.rangeBonus;
   const baseSpread = state.aiming ? weapon.spread * 0.25 : weapon.spread;
   for (let i = 0; i < weapon.pellets; i++) {
@@ -1677,15 +1731,13 @@ function startWave() {
   state.zombiesRemainingInWave = count + (isBossWave ? 1 : 0);
   showWaveBanner((isBossWave ? 'HORDA CHEFE ' : 'HORDA ') + state.wave);
   bus.emit(Ev.WAVE_START, { wave: state.wave, count, boss: isBossWave });
-  let spawnedBoss = false;
-  updateHUD();
+  let spawnedBoss = false; updateHUD();
   state.waveIntervalId = setInterval(() => {
     if (!state.running || state.paused) { if (!state.running) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; } return; }
     if (state.levelUpActive) return;
     if (state.zombiesRemainingInWave <= 0) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; return; }
     if (isBossWave && !spawnedBoss) { spawnZombie('boss'); spawnedBoss = true; } else spawnZombie();
-    state.zombiesRemainingInWave--;
-    updateHUD();
+    state.zombiesRemainingInWave--; updateHUD();
   }, 500);
 }
 function checkWaveComplete() {
@@ -1694,14 +1746,10 @@ function checkWaveComplete() {
     state.betweenWaves = true;
     bus.emit(Ev.WAVE_CLEAR, { wave: state.wave });
     const bonus = Math.round(CONFIG.wave.coinBonus * state.coinMult);
-    state.coins += bonus;
-    updateHUD();
+    state.coins += bonus; updateHUD();
     showWaveBanner('+' + bonus + ' $ - PROXIMA EM 5s');
     if (state.waveStartTimeoutId !== null) clearTimeout(state.waveStartTimeoutId);
-    state.waveStartTimeoutId = setTimeout(() => {
-      state.waveStartTimeoutId = null;
-      if (state.running && !state.paused) startWave();
-    }, CONFIG.wave.breakTime * 1000);
+    state.waveStartTimeoutId = setTimeout(() => { state.waveStartTimeoutId = null; if (state.running && !state.paused) startWave(); }, CONFIG.wave.breakTime * 1000);
   }
 }
 function switchToSlot(slot) {
@@ -1739,8 +1787,7 @@ function enterDownedState() {
   updateCrosshair(); cancelReload();
   if (state.pingWheelOpen) { state.pingWheelOpen = false; document.getElementById('ping-wheel').classList.add('hidden'); }
   document.body.classList.add('downed');
-  const overlay = document.getElementById('downed-overlay');
-  overlay.classList.remove('hidden');
+  document.getElementById('downed-overlay').classList.remove('hidden');
   document.getElementById('downed-timer').textContent = '30';
   document.getElementById('downed-prompt').classList.remove('visible');
   document.getElementById('downed-progress-wrap').classList.remove('visible');
@@ -2018,7 +2065,6 @@ function togglePause() {
 const clock = new THREE.Clock();
 let shadowFrame = 0;
 const _fwdV = new THREE.Vector3(), _rightV = new THREE.Vector3(), _moveV = new THREE.Vector3();
-
 function updatePlayer(dt) {
   let speedMult = state.aiming ? 0.5 : 1;
   if (state.downed) speedMult = 0.25;
@@ -2072,18 +2118,21 @@ function resolvePlayerZombieCollision() {
 }
 
 // ============================================================
-// ZOMBIE UPDATE — com springs
+// STIFFNESS (springs)
+// ============================================================
+const K_THIGH = 110, C_THIGH = 14;
+const K_KNEE = 90, C_KNEE = 12;
+const K_FOOT = 130, C_FOOT = 12;
+const K_PELVIS = 130, C_PELVIS = 15;
+const K_SPINE = 140, C_SPINE = 16;
+const K_HEAD = 180, C_HEAD = 17;
+const K_ARM = 95, C_ARM = 13;
+const K_ELBOW = 110, C_ELBOW = 12;
+
+// ============================================================
+// ZOMBIE UPDATE (animação realista)
 // ============================================================
 const _toV = new THREE.Vector3();
-const STIFF_ARM = 90, DAMP_ARM = 11;
-const STIFF_ELBOW = 70, DAMP_ELBOW = 10;
-const STIFF_LEG = 95, DAMP_LEG = 12;
-const STIFF_KNEE = 75, DAMP_KNEE = 10;
-const STIFF_HEAD = 180, DAMP_HEAD = 16;
-const STIFF_LEAN = 60, DAMP_LEAN = 10;
-const STIFF_ABDO = 140, DAMP_ABDO = 9;
-const STIFF_WOBBLE = 120, DAMP_WOBBLE = 7;
-
 function updateZombies(dt) {
   const now = performance.now() / 1000;
   groanTimer -= dt;
@@ -2096,108 +2145,154 @@ function updateZombies(dt) {
     const emerge = Math.min(1, z.emergeTime / 1.5);
     const isWounded = z.health / z.maxHealth < 0.5;
     const ud = z.mesh.userData;
+    const joints = ud.joints;
     const anim = z.anim;
+
     _toV.subVectors(player.position, z.mesh.position);
     _toV.y = 0;
     const dist = _toV.length();
-
     const dxP = player.position.x - z.mesh.position.x;
     const dzP = player.position.z - z.mesh.position.z;
-    z.mesh.rotation.y = Math.atan2(dxP, dzP);
+
+    // Smooth facing
+    const targetYaw = Math.atan2(dxP, dzP);
+    let yawDiff = targetYaw - z.mesh.rotation.y;
+    while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+    while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+    z.mesh.rotation.y += yawDiff * Math.min(1, dt * 6);
 
     const staggering = z.hitReactEndTime > now;
+
+    // Walk cycle
     let sm = emerge;
     if (z.dismembered.legL || z.dismembered.legR) sm *= 0.55;
     if (z.dismembered.legL && z.dismembered.legR) sm *= 0.3;
     const ws = (isWounded ? 3.2 : 5) * sm * (z.speed / CONFIG.zombie.speed) * 0.7;
     z.walkPhase += dt * ws;
+    const phase = z.walkPhase;
+    const sinP = Math.sin(phase);
+    const cosP = Math.cos(phase);
 
-    // ===== TARGETS DO CICLO DE ANDAR =====
-    const legSwing = Math.sin(z.walkPhase) * 0.7;
-    const kneeBend = Math.max(0, Math.sin(z.walkPhase + Math.PI * 0.5)) * 0.6;
+    // === LEGS (ciclo de caminhada) ===
+    const legAmp = 0.55;
+    let legFwdL = sinP;
+    let legFwdR = -sinP;
 
-    const armLTargetRaw = z.dismembered.armL ? 0 : legSwing * 0.6;
-    const armRTargetRaw = z.dismembered.armR ? 0 : -legSwing * 0.6;
-    const legLTarget = z.dismembered.legL ? 0 : legSwing;
-    const legRTarget = z.dismembered.legR ? 0 : -legSwing;
+    // Limp (perna favorita)
+    if (z.limpSide === 'L') legFwdL *= (1 - z.limpAmount * 2);
+    else legFwdR *= (1 - z.limpAmount * 2);
 
-    const reaching = dist < 3.2 && !staggering;
-    const armLTarget = z.dismembered.armL ? 0 : (reaching ? -1.6 + Math.sin(z.walkPhase) * 0.15 : armLTargetRaw);
-    const armRTarget = z.dismembered.armR ? 0 : (reaching ? -1.6 + Math.cos(z.walkPhase) * 0.15 : armRTargetRaw);
+    const thighLTarget = legFwdL * legAmp;
+    const thighRTarget = legFwdR * legAmp;
 
-    // Cotovelos dobram um pouco quando alcançam
-    const elbowLTarget = (z.dismembered.armL || !reaching) ? -0.15 : -0.5 + Math.sin(z.walkPhase * 1.3) * 0.1;
-    const elbowRTarget = (z.dismembered.armR || !reaching) ? -0.15 : -0.5 + Math.cos(z.walkPhase * 1.3) * 0.1;
+    // Joelho dobra quando a perna está atrás (indo pra frente)
+    const kneeAmp = 0.75;
+    const kneeLTarget = Math.max(0, -legFwdL) * kneeAmp + 0.08;
+    const kneeRTarget = Math.max(0, -legFwdR) * kneeAmp + 0.08;
 
-    // Joelhos dobram alternadamente
-    const kneeLTarget = z.dismembered.legL ? 0 : (legSwing > 0 ? kneeBend : 0);
-    const kneeRTarget = z.dismembered.legR ? 0 : (-legSwing > 0 ? kneeBend : 0);
+    // Tornozelo rola (toe down quando perna vai pra trás)
+    const footLTarget = -legFwdL * 0.30;
+    const footRTarget = -legFwdR * 0.30;
 
-    // Cabeça balança com delay
-    const headRZTarget = Math.sin(z.walkPhase * 0.5) * 0.10;
-    const headRYTarget = Math.sin(z.walkPhase * 0.3) * 0.12;
+    // === PELVIS ===
+    // Sway lateral (roll) — pesa pra um lado quando pé planta
+    const pelvisRollTarget = -cosP * 0.05;
+    // Twist (Y) — quadril gira com a passada
+    const pelvisTwistTarget = sinP * 0.12;
+    // Bob vertical — 2 por ciclo
+    const pelvisBobTarget = Math.abs(cosP) * 0.030 - 0.015;
 
-    // Corpo inclina
-    const leanTarget = isWounded ? 0.24 + (dist < 3 ? 0.1 : 0) : 0.14 + (dist < 3 ? 0.08 : 0);
+    // === SPINE (counter-rotation) ===
+    // Ombros giram opostos aos quadris
+    const spineTwistTarget = -sinP * 0.13;
+    // Lean pra frente
+    const leanBase = isWounded ? 0.22 : 0.10;
+    const spineLeanTarget = leanBase + (dist < 3 ? 0.08 : 0);
+    // Roll lateral estabiliza
+    const spineRollTarget = 0;
 
-    // ===== SPRINGS =====
-    springStep(anim, 'armLX', armLTarget, STIFF_ARM, DAMP_ARM, dt);
-    springStep(anim, 'armRX', armRTarget, STIFF_ARM, DAMP_ARM, dt);
-    springStep(anim, 'elbowLX', elbowLTarget, STIFF_ELBOW, DAMP_ELBOW, dt);
-    springStep(anim, 'elbowRX', elbowRTarget, STIFF_ELBOW, DAMP_ELBOW, dt);
-    springStep(anim, 'legLX', legLTarget, STIFF_LEG, DAMP_LEG, dt);
-    springStep(anim, 'legRX', legRTarget, STIFF_LEG, DAMP_LEG, dt);
-    springStep(anim, 'kneeLX', kneeLTarget, STIFF_KNEE, DAMP_KNEE, dt);
-    springStep(anim, 'kneeRX', kneeRTarget, STIFF_KNEE, DAMP_KNEE, dt);
-    springStep(anim, 'headRZ', headRZTarget, STIFF_HEAD, DAMP_HEAD, dt);
-    springStep(anim, 'headRY', headRYTarget, STIFF_HEAD, DAMP_HEAD, dt);
-    springStep(anim, 'bodyLean', leanTarget, STIFF_LEAN, DAMP_LEAN, dt);
-    // Wobble volta para 0
-    springStep(anim, 'wobbleX', 0, STIFF_WOBBLE, DAMP_WOBBLE, dt);
-    springStep(anim, 'wobbleZ', 0, STIFF_WOBBLE, DAMP_WOBBLE, dt);
-    springStep(anim, 'abdomenX', 0, STIFF_ABDO, DAMP_ABDO, dt);
-    springStep(anim, 'abdomenZ', 0, STIFF_ABDO, DAMP_ABDO, dt);
+    // === HEAD ===
+    // Estabilização vestibular (contra o twist)
+    const headTwistTarget = spineTwistTarget * 0.3 + sinP * 0.05;
+    // Loll de zumbi (não estabiliza no roll)
+    const headRollTarget = z.headLoll + cosP * 0.05;
+    // Pitch
+    const headPitchTarget = z.headPitchBase;
 
-    // ===== APLICAR =====
-    if (ud.armL) {
-      ud.armL.rotation.x = anim.armLX;
-      ud.armL.userData.elbow.rotation.x = anim.elbowLX;
+    // === ARMS ===
+    // Balanço oposto às pernas
+    const armAmp = 0.55;
+    const reaching = dist < 3.5 && !staggering;
+    let armLXTarget, armRXTarget;
+    if (reaching) {
+      armLXTarget = -1.5 + Math.sin(phase * 0.6) * 0.10;
+      armRXTarget = -1.5 + Math.sin(phase * 0.6 + 1.5) * 0.10;
+    } else {
+      armLXTarget = -legFwdL * armAmp + z.armDroopL;
+      armRXTarget = -legFwdR * armAmp + z.armDroopR;
     }
-    if (ud.armR) {
-      ud.armR.rotation.x = anim.armRX;
-      ud.armR.userData.elbow.rotation.x = anim.elbowRX;
-    }
-    if (ud.legL) {
-      ud.legL.rotation.x = anim.legLX;
-      ud.legL.userData.knee.rotation.x = anim.kneeLX;
-    }
-    if (ud.legR) {
-      ud.legR.rotation.x = anim.legRX;
-      ud.legR.userData.knee.rotation.x = anim.kneeRX;
-    }
-    ud.head.rotation.z = anim.headRZ;
-    ud.head.rotation.y = anim.headRY;
+    const elbowLXTarget = reaching ? -0.9 + Math.sin(phase * 0.8) * 0.1 : -0.15 - Math.max(0, armLXTarget) * 0.4;
+    const elbowRXTarget = reaching ? -0.9 + Math.sin(phase * 0.8 + 1.5) * 0.1 : -0.15 - Math.max(0, armRXTarget) * 0.4;
 
-    // Abdômen oscila
-    if (ud.abdomenGroup) {
-      ud.abdomenGroup.rotation.x = anim.abdomenX;
-      ud.abdomenGroup.rotation.z = anim.abdomenZ;
-    }
+    // === SPRINGS ===
+    springStep(anim, 'thighLX', thighLTarget, K_THIGH, C_THIGH, dt);
+    springStep(anim, 'thighRX', thighRTarget, K_THIGH, C_THIGH, dt);
+    springStep(anim, 'kneeLX', kneeLTarget, K_KNEE, C_KNEE, dt);
+    springStep(anim, 'kneeRX', kneeRTarget, K_KNEE, C_KNEE, dt);
+    springStep(anim, 'footLX', footLTarget, K_FOOT, C_FOOT, dt);
+    springStep(anim, 'footRX', footRTarget, K_FOOT, C_FOOT, dt);
+    springStep(anim, 'pelvisRoll', pelvisRollTarget, K_PELVIS, C_PELVIS, dt);
+    springStep(anim, 'pelvisTwist', pelvisTwistTarget, K_PELVIS, C_PELVIS, dt);
+    springStep(anim, 'pelvisBob', pelvisBobTarget, K_PELVIS, C_PELVIS, dt);
+    springStep(anim, 'spineTwist', spineTwistTarget, K_SPINE, C_SPINE, dt);
+    springStep(anim, 'spineLean', spineLeanTarget, K_SPINE, C_SPINE, dt);
+    springStep(anim, 'spineRoll', spineRollTarget, K_SPINE, C_SPINE, dt);
+    springStep(anim, 'spineSide', 0, K_SPINE, C_SPINE, dt);
+    springStep(anim, 'headTwist', headTwistTarget, K_HEAD, C_HEAD, dt);
+    springStep(anim, 'headRoll', headRollTarget, K_HEAD * 0.7, C_HEAD, dt);
+    springStep(anim, 'headPitch', headPitchTarget, K_HEAD, C_HEAD, dt);
+    springStep(anim, 'armLX', armLXTarget, K_ARM, C_ARM, dt);
+    springStep(anim, 'armRX', armRXTarget, K_ARM, C_ARM, dt);
+    springStep(anim, 'elbowLX', elbowLXTarget, K_ELBOW, C_ELBOW, dt);
+    springStep(anim, 'elbowRX', elbowRXTarget, K_ELBOW, C_ELBOW, dt);
 
-    // Corpo principal: lean + wobble
-    z.mesh.rotation.x = anim.bodyLean + anim.wobbleZ;
-    z.mesh.rotation.z = anim.wobbleX;
+    // === APLICAR ===
+    joints.pelvis.rotation.z = anim.pelvisRoll;
+    joints.pelvis.rotation.y = anim.pelvisTwist;
+    joints.pelvis.position.y = P_PELVIS_Y + anim.pelvisBob;
 
-    // Stagger extra
+    joints.spineLower.rotation.x = anim.spineLean * 0.4;
+    joints.spineLower.rotation.z = anim.spineRoll * 0.4 + anim.spineSide * 0.3;
+
+    joints.spineUpper.rotation.y = anim.spineTwist;
+    joints.spineUpper.rotation.x = anim.spineLean * 0.6;
+    joints.spineUpper.rotation.z = anim.spineRoll * 0.6 + anim.spineSide * 0.7;
+
+    joints.head.rotation.y = anim.headTwist;
+    joints.head.rotation.z = anim.headRoll;
+    joints.head.rotation.x = anim.headPitch;
+
+    joints.shoulderL.rotation.x = anim.armLX;
+    joints.shoulderR.rotation.x = anim.armRX;
+    joints.elbowL.rotation.x = anim.elbowLX;
+    joints.elbowR.rotation.x = anim.elbowRX;
+
+    joints.thighL.rotation.x = anim.thighLX;
+    joints.thighR.rotation.x = anim.thighRX;
+    joints.kneeL.rotation.x = anim.kneeLX;
+    joints.kneeR.rotation.x = anim.kneeRX;
+    joints.footL.rotation.x = anim.footLX;
+    joints.footR.rotation.x = anim.footRX;
+
+    // Stagger extra (torção adicional ao ser empurrado)
     if (staggering) {
       const lean = (z.hitReactEndTime - now) / CONFIG.zombie.knockbackStagger;
-      z.mesh.rotation.x -= lean * 0.35;
+      joints.spineUpper.rotation.x -= lean * 0.30;
       z.mesh.position.addScaledVector(z.hitDirection, -dt * 4 * lean);
     }
 
     if (z.dismembered.head) {
-      Sfx.playZombieDeath();
-      state.zombiesAlive--;
+      Sfx.playZombieDeath(); state.zombiesAlive--;
       const idx = zombies.indexOf(z);
       if (idx >= 0) zombies.splice(idx, 1);
       bus.emit(Ev.DEATH, { id: z.id, killerId: player.id, part: 'head' });
@@ -2227,9 +2322,11 @@ function updateZombies(dt) {
         z.mesh.position.addScaledVector(_toV, z.speed * dt);
       } else if (!staggering && now - z.lastAttackTime > z.attackCooldown) {
         z.lastAttackTime = now;
-        // Balanço de ataque (braço para frente)
-        springKick(anim, 'armLX', -3);
-        springKick(anim, 'armRX', -3);
+        // Balanço de ataque
+        springKick(anim, 'armLXVel', 8);
+        springKick(anim, 'armRXVel', 8);
+        springKick(anim, 'elbowLXVel', -6);
+        springKick(anim, 'elbowRXVel', -6);
         if (state.downed) { state.downedHP -= z.damage * 0.8; }
         else {
           const invuln = performance.now() / 1000 < state.invulnUntil;
@@ -2246,7 +2343,7 @@ function updateZombies(dt) {
     resolveWallCollisions(z.mesh.position, z.radius);
   }
 
-  // Colisão zumbi-zumbi com massas
+  // Colisão zumbi-zumbi
   for (let i = 0; i < zombies.length; i++) {
     for (let j = i + 1; j < zombies.length; j++) {
       const a = zombies[i], b = zombies[j];
@@ -2288,12 +2385,9 @@ const promptText = document.getElementById('prompt-text');
 function spawnWeaponPickup(weaponId, x, z, y = 0.9) {
   const w = WEAPONS[weaponId];
   const mesh = new THREE.Mesh(geoBox(0.3, 0.15, 0.6, LQ), new THREE.MeshLambertMaterial({ color: w.color, emissive: w.color, emissiveIntensity: 0.3 }));
-  mesh.position.set(x, y, z);
-  scene.add(mesh);
+  mesh.position.set(x, y, z); scene.add(mesh);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.04, 8, 16), new THREE.MeshBasicMaterial({ color: 0xffdd00 }));
-  ring.rotation.x = Math.PI / 2;
-  ring.position.copy(mesh.position); ring.position.y += 0.1;
-  scene.add(ring);
+  ring.rotation.x = Math.PI / 2; ring.position.copy(mesh.position); ring.position.y += 0.1; scene.add(ring);
   world.weaponSpots.push({ x, y, z, mesh, ring, weaponId, bought: false, baseY: y });
 }
 function setupWeaponSpawns() {
@@ -2453,7 +2547,7 @@ function animate() {
 animate();
 
 // ============================================================
-// GAME START / OVER
+// START / OVER
 // ============================================================
 function getRecord() { try { return parseInt(localStorage.getItem('qb_record_wave') || '0', 10); } catch { return 0; } }
 function saveRecord(wave, level) {
