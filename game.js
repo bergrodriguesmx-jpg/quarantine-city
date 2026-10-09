@@ -620,7 +620,6 @@ function buildJudgeOutfit(torsoGroup, body, woundMat) {
   torsoGroup.add(tie);
 }
 
-// -------- Precompute local AABB per part (grande ganho de perf) --------
 function computePartLocalBox(group) {
   group.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(group.matrixWorld).invert();
@@ -850,14 +849,14 @@ function spawnZombie() {
   const cave = caves[Math.floor(Math.random() * caves.length)];
   const toCX = -cave.x, toCZ = -cave.z;
   const len = Math.sqrt(toCX * toCX + toCZ * toCZ) || 1;
-  const dx = toCX / len, dz = toCZ / len;
+  const dirX = toCX / len, dirZ = toCZ / len;
   const back = 0.8 + Math.random() * 0.8;
   const side = (Math.random() - 0.5) * 1.6;
-  const x = cave.x + dx * back + (-dz) * side;
-  const z = cave.z + dz * back + dx * side;
+  const spawnX = cave.x + dirX * back + (-dirZ) * side;
+  const spawnZ = cave.z + dirZ * back + dirX * side;
 
   const mesh = createZombieMesh();
-  mesh.position.set(x, 0, z);
+  mesh.position.set(spawnX, 0, spawnZ);
   scene.add(mesh);
 
   const z = {
@@ -873,7 +872,6 @@ function spawnZombie() {
   zombies.push(z);
   state.zombiesAlive++;
 
-  // -------- EVENTO: zumbi spawnou --------
   bus.emit(Ev.ZOMBIE_SPAWNED, {
     id: z.id,
     type: mesh.userData.zombieType,
@@ -1265,7 +1263,6 @@ function detachLimb(z, key, hitDir) {
   spawnBlood(wp, dir, 35, true);
   spawnBlood(wp, null, 15, true);
 
-  // -------- EVENTO: membro destacado --------
   bus.emit(Ev.DISMEMBER, {
     zombieId: z.id,
     part: key,
@@ -1300,7 +1297,7 @@ function randomDismemberOnDeath(z) {
 }
 
 // ============================================================
-// RAYCAST OTIMIZADO (usa AABB pré-computado)
+// RAYCAST OTIMIZADO
 // ============================================================
 function rayAABB(origin, dir, min, max, maxDist) {
   let tMin = 0, tMax = maxDist;
@@ -1386,7 +1383,7 @@ function applyHitReaction(z, part, hitDirWorld) {
 }
 
 // ============================================================
-// HIT MARKER / FX (pooleados)
+// HIT MARKER / FX
 // ============================================================
 const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
@@ -1407,7 +1404,6 @@ function addShake(amount) {
   state.shake = Math.min(0.6, state.shake + amount);
 }
 
-// Muzzle flash pool
 const muzzleLight = new THREE.PointLight(0xFFAA33, 0, 8, 2);
 scene.add(muzzleLight);
 let muzzleLightEnd = 0;
@@ -1419,7 +1415,6 @@ function spawnMuzzleFlash() {
   muzzleLight.intensity = 4;
 }
 
-// Tracer pool
 const tracerPool = [];
 const tracers = [];
 function spawnTracer(from, to) {
@@ -1457,7 +1452,6 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   z.health -= damage;
   const isHead = part === 'head';
 
-  // -------- EVENTO: dano causado --------
   bus.emit(Ev.DAMAGE, {
     attackerId: player.id,
     victimId: z.id,
@@ -1511,7 +1505,6 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     state.xp += xpGain;
     if (state.lifesteal > 0) state.health = Math.min(state.maxHealth, state.health + state.lifesteal);
 
-    // -------- EVENTOS de morte / kill / economia --------
     bus.emit(Ev.DEATH, { id: z.id, killerId: player.id, part });
     bus.emit(Ev.KILL, {
       killerId: player.id,
@@ -1553,7 +1546,6 @@ function attack() {
 
   state.lastAttackTime = now;
 
-  // -------- EVENTO: ataque disparado --------
   bus.emit(Ev.ATTACK, {
     playerId: player.id,
     weaponId,
@@ -1664,10 +1656,7 @@ function checkLevelUp() {
     state.level++;
     state.xpToNextLevel = Math.floor(state.xpToNextLevel * 1.4);
     state.pendingLevelUps++;
-
-    // -------- EVENTO: level up --------
     bus.emit(Ev.LEVEL_UP, { playerId: player.id, level: state.level });
-
     leveled = true;
   }
   if (leveled) {
@@ -1704,7 +1693,6 @@ function pickSkill(skillId) {
   const skill = SKILLS.find(s => s.id === skillId);
   if (skill) skill.apply();
 
-  // -------- EVENTO: skill escolhida --------
   bus.emit(Ev.SKILL_PICK, { playerId: player.id, skillId, level: state.level });
 
   document.getElementById('levelup').classList.add('hidden');
@@ -1741,7 +1729,6 @@ function startWave() {
   state.zombiesRemainingInWave = count;
   showWaveBanner('HORDA ' + state.wave);
 
-  // -------- EVENTO: horda começou --------
   bus.emit(Ev.WAVE_START, { wave: state.wave, count });
 
   updateHUD();
@@ -1760,7 +1747,6 @@ function checkWaveComplete() {
   if (state.zombiesAlive === 0 && state.zombiesRemainingInWave <= 0) {
     state.betweenWaves = true;
 
-    // -------- EVENTO: horda limpa --------
     bus.emit(Ev.WAVE_CLEAR, { wave: state.wave });
 
     showWaveBanner('PROXIMA EM 5s');
@@ -1779,12 +1765,7 @@ function switchToSlot(slot) {
   }
   buildViewModel(weaponId);
 
-  // -------- EVENTO: troca de arma --------
-  bus.emit(Ev.PLAYER_WEAPON, {
-    playerId: player.id,
-    slot,
-    weaponId,
-  });
+  bus.emit(Ev.PLAYER_WEAPON, { playerId: player.id, slot, weaponId });
 
   updateHUD();
   updateWeaponSlotsHUD();
@@ -1965,7 +1946,6 @@ function updatePlayer(dt) {
   camera.rotation.y = player.yaw;
   camera.rotation.x = player.pitch;
 
-  // Screen shake
   if (state.shake > 0.001) {
     camera.position.x += (Math.random() - 0.5) * state.shake;
     camera.position.y += (Math.random() - 0.5) * state.shake;
@@ -2091,7 +2071,6 @@ function updateZombies(dt) {
       z.mesh.rotation.z *= 0.9;
     }
 
-    // ---- BUG FIX: zumbi decapitado agora morre ----
     if (z.dismembered.head) {
       Sfx.playZombieDeath();
       state.zombiesAlive--;
@@ -2125,7 +2104,6 @@ function updateZombies(dt) {
         showDamageFlash();
         addShake(0.15);
 
-        // -------- EVENTO: player tomou dano --------
         bus.emit(Ev.PLAYER_HIT, {
           playerId: player.id,
           attackerId: z.id,
@@ -2255,7 +2233,6 @@ function tryBuyWeapon() {
   else switchToSlot(w.slot);
   Sfx.playBuy();
 
-  // -------- EVENTO: compra --------
   bus.emit(Ev.WEAPON_BUY, {
     playerId: player.id,
     weaponId: w.id,
@@ -2425,7 +2402,6 @@ function startGame() {
 }
 
 function gameOver() {
-  // -------- EVENTO: player morreu --------
   bus.emit(Ev.PLAYER_DIED, {
     playerId: player.id,
     wave: state.wave,
