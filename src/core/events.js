@@ -38,4 +38,5 @@ export const Ev = Object.freeze({
   NET_PLAYER_JOIN: 'net:player_join',
   NET_PLAYER_LEAVE:'net:player_leave',
   NET_LAG:         'net:lag',
+  PING:            'net:ping',
 });
