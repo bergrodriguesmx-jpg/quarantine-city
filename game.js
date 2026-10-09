@@ -157,6 +157,62 @@ const invisible = new THREE.MeshBasicMaterial({ visible: false });
 });
 
 // ============================================================
+// TEXTURA DA CAMISA PT (estrela branca 5 pontas com PT vermelho)
+// ============================================================
+function createPTShirtTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+
+  // Fundo transparente
+  ctx.clearRect(0, 0, 256, 256);
+
+  // Desenha estrela de 5 pontas (branca)
+  const cx = 128, cy = 128;
+  const outerR = 100;
+  const innerR = 40;
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const r = (i % 2 === 0) ? outerR : innerR;
+    const angle = (Math.PI / 5) * i - Math.PI / 2;
+    const x = cx + Math.cos(angle) * r;
+    const y = cy + Math.sin(angle) * r;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fill();
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.stroke();
+
+  // Desenha "PT" em vermelho no centro
+  ctx.fillStyle = '#CC0000';
+  ctx.font = 'bold 60px Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('PT', cx, cy + 4);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.LinearFilter;
+  tex.transparent = true;
+  return tex;
+}
+
+const PT_SHIRT_TEXTURE = createPTShirtTexture();
+const PT_DECAL_MAT = new THREE.MeshBasicMaterial({
+  map: PT_SHIRT_TEXTURE,
+  transparent: true,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+  polygonOffset: true,
+  polygonOffsetFactor: -4,
+});
+
+// ============================================================
 // VIEWMODELS
 // ============================================================
 const weaponGroup = new THREE.Group();
@@ -397,13 +453,13 @@ function resolveWallCollisions(pos, radius) {
 }
 
 // ============================================================
-// ZUMBIS
+// ZUMBIS — camisa PT
 // ============================================================
 const zombies = [];
-const SHIRT_COLORS = [0x8E44AD, 0x2ECC71, 0xE74C3C, 0x3498DB, 0xF39C12, 0xE67E22, 0x16A085, 0xC0392B];
 const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
 const SKIN_COLORS = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
 const HAIR_COLORS = [0x2C1810, 0x1A0F08, 0x4A2818, 0x6B3A1F, 0x3A2A1A];
+const SHIRT_RED = 0xCC1111; // Camisa vermelha fixa (PT)
 const BODY_TYPES = [
   { torsoW: 0.55, torsoD: 0.30, arm: 0.18, leg: 0.22, heightScale: 1.05 },
   { torsoW: 0.70, torsoD: 0.35, arm: 0.22, leg: 0.26, heightScale: 1.00 },
@@ -417,7 +473,7 @@ const BONE_DARKER = new THREE.MeshLambertMaterial({ color: 0xA89F88 });
 function createZombieMesh() {
   const g = new THREE.Group();
   const skinColor = rand(SKIN_COLORS);
-  const shirtColor = rand(SHIRT_COLORS);
+  const shirtColor = SHIRT_RED; // Vermelho fixo
   const pantsColor = rand(PANTS_COLORS);
   const hairColor = rand(HAIR_COLORS);
   const body = rand(BODY_TYPES);
@@ -493,17 +549,29 @@ function createZombieMesh() {
   }
   g.add(headGroup);
 
+  // === TRONCO ===
   const torsoGroup = new THREE.Group();
   torsoGroup.position.y = 1.15;
   const torso = new THREE.Mesh(makeBox(body.torsoW, 0.85, body.torsoD, 5), shirtMat);
   torso.castShadow = true;
   torsoGroup.add(torso);
+
+  // === DECAL DA ESTRELA PT ===
+  // Um plano fino ligeiramente à frente do peito
+  const decalW = body.torsoW * 0.85;
+  const decalH = 0.65;
+  const decalGeo = new THREE.PlaneGeometry(decalW, decalH);
+  const decal = new THREE.Mesh(decalGeo, PT_DECAL_MAT);
+  decal.position.set(0, 0.02, body.torsoD / 2 + 0.008);
+  decal.rotation.y = 0;
+  torsoGroup.add(decal);
+
   const collar = new THREE.Mesh(makeBox(body.torsoW * 0.85, 0.06, body.torsoD * 0.9, 3), MAT.metalDark);
   collar.position.y = 0.43; torsoGroup.add(collar);
   const w1 = new THREE.Mesh(makeBox(0.14, 0.10, 0.02, 2), wound);
-  w1.position.set(0.15, 0.05, body.torsoD / 2 + 0.01); torsoGroup.add(w1);
+  w1.position.set(0.15, 0.25, body.torsoD / 2 + 0.01); torsoGroup.add(w1);
   const w2 = new THREE.Mesh(makeBox(0.10, 0.14, 0.02, 2), wound);
-  w2.position.set(-0.18, -0.15, body.torsoD / 2 + 0.01); torsoGroup.add(w2);
+  w2.position.set(-0.18, -0.28, body.torsoD / 2 + 0.01); torsoGroup.add(w2);
   const ribCage = new THREE.Group();
   for (let i = 0; i < 5; i++) {
     const rib = new THREE.Mesh(new THREE.TorusGeometry(body.torsoW * 0.42, 0.022, 6, 12, Math.PI), BONE_MAT);
@@ -1198,7 +1266,6 @@ function updateTracers(dt) {
 // DAMAGE
 // ============================================================
 function damageZombie(z, damage, isCrit, part, hitDir, hitPoint) {
-  console.log('[DANO]', part, 'dano:', damage.toFixed(1), 'HP antes:', z.health.toFixed(1));
   z.health -= damage;
   const isHead = part === 'head';
 
@@ -1277,9 +1344,6 @@ function attack() {
   triggerSwing();
   if (weapon.type === 'ranged') spawnMuzzleFlash();
 
-  // ============================================================
-  // MELEE — checagem direta
-  // ============================================================
   if (weapon.type === 'melee') {
     const forward = new THREE.Vector3();
     camera.getWorldDirection(forward);
@@ -1288,10 +1352,7 @@ function attack() {
     const range = weapon.range + state.rangeBonus;
     const aimRegion = getAimRegion();
 
-    console.log('[MELEE] Ataque! Zumbis totais:', zombies.length, 'Range:', range.toFixed(2), 'AimRegion:', aimRegion);
-
     const snapshot = [...zombies];
-    let hits = 0;
     for (const z of snapshot) {
       if (z.health <= 0) continue;
 
@@ -1301,7 +1362,6 @@ function attack() {
 
       if (horizDist > range) continue;
 
-      hits++;
       let part;
       if (aimRegion === 'head') part = 'head';
       else if (aimRegion === 'legs') part = Math.random() < 0.5 ? 'legL' : 'legR';
@@ -1324,8 +1384,6 @@ function attack() {
       damageZombie(z, dmg, isCrit, part, hitDir, hitPoint);
     }
 
-    console.log('[MELEE] Zumbis acertados:', hits);
-
     const camPos = camera.position.clone();
     for (const r of ragdolls) {
       if (r.sliceAt(camPos, forward, CONFIG.ragdoll.sliceRange)) {
@@ -1337,7 +1395,6 @@ function attack() {
     return;
   }
 
-  // ARMA DE FOGO
   const origin = camera.position.clone();
   const forward = new THREE.Vector3();
   camera.getWorldDirection(forward);
