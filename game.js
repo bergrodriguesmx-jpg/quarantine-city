@@ -7,11 +7,7 @@ import { Ev } from './src/core/events.js';
 import { nextId } from './src/core/ids.js';
 import { LocalAdapter } from './src/net/adapter.js';
 
-// Em single-player usa LocalAdapter (no-op). Em MP: trocar por MultiplayerAdapter.
 bus.setAdapter(new LocalAdapter());
-// Descomente para debug de eventos no console:
-// bus.setDebug(true);
-// bus.onAny((t, p) => console.log('[EVT]', t, p));
 
 const WEAPONS = {
   knife:    { id: 'knife',    name: 'FACA',           slot: 1, damage: 25, range: 3.2, cooldown: 0.4,  type: 'melee',  ammo: null, maxAmmo: null, cost: 0,    spread: 0,     pellets: 1, auto: false, color: 0xBDC3C7 },
@@ -66,6 +62,18 @@ const state = {
   mouseDown: false,
   aiming: false,
   shake: 0,
+
+  // FASE 2-B
+  downed: false,
+  downedElapsed: 0,
+  downedDuration: 30000,
+  selfReviveAt: 15000,
+  selfReviveHold: 3000,
+  reviveProgress: 0,
+  pingWheelOpen: false,
+  pingAccumX: 0,
+  pingAccumY: 0,
+  pingHighlight: null,
 };
 
 const container = document.getElementById('game-container');
@@ -168,9 +176,6 @@ const invisible = new THREE.MeshBasicMaterial({ visible: false });
   world.wallColliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
 });
 
-// ============================================================
-// TEXTURA DA CAMISA PT
-// ============================================================
 function createPTShirtTexture() {
   const c = document.createElement('canvas');
   c.width = 256; c.height = 256;
@@ -209,9 +214,6 @@ const PT_DECAL_MAT = new THREE.MeshBasicMaterial({
   side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4,
 });
 
-// ============================================================
-// VIEWMODELS
-// ============================================================
 const weaponGroup = new THREE.Group();
 camera.add(weaponGroup);
 scene.add(camera);
@@ -393,9 +395,6 @@ function updateWeaponViewModel(dt) {
   }
 }
 
-// ============================================================
-// PLAYER (com ID único para rede)
-// ============================================================
 const player = {
   id: nextId('p'),
   position: new THREE.Vector3(0, CONFIG.player.height, 0),
@@ -407,18 +406,12 @@ function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function makeBox(w, h, d, s = 5) { return new THREE.BoxGeometry(w, h, d, s, s, s); }
 function makeJoint(r, seg = 10) { return new THREE.SphereGeometry(r, seg, Math.max(6, Math.floor(seg * 0.75))); }
 
-// ============================================================
-// AIM REGION
-// ============================================================
 function getAimRegion() {
   if (player.pitch > 0.15) return 'head';
   if (player.pitch < -0.25) return 'legs';
   return 'torso';
 }
 
-// ============================================================
-// COLISÃO
-// ============================================================
 function circleVsAABB(px, pz, radius, box) {
   const cx = Math.max(box.minX, Math.min(px, box.maxX));
   const cz = Math.max(box.minZ, Math.min(pz, box.maxZ));
@@ -454,9 +447,6 @@ function resolveWallCollisions(pos, radius) {
   resolveCollidersAgainstBoxes(pos, radius, world.furnitureColliders);
 }
 
-// ============================================================
-// ZUMBIS
-// ============================================================
 const zombies = [];
 const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
 const SKIN_COLORS = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
@@ -881,9 +871,6 @@ function spawnZombie() {
   updateHUD();
 }
 
-// ============================================================
-// SANGUE — POOL DE PARTÍCULAS
-// ============================================================
 const bloodGeo = new THREE.BoxGeometry(1, 1, 1);
 const bloodPool = [];
 const bloodActive = [];
@@ -984,9 +971,6 @@ function updateBloodPools(dt) {
   }
 }
 
-// ============================================================
-// DEBRIS
-// ============================================================
 class Debris {
   constructor(mesh, size, mass, life = 35) {
     this.mesh = mesh; this.size = size; this.mass = mass;
@@ -1051,9 +1035,6 @@ class Debris {
   }
 }
 
-// ============================================================
-// RAGDOLL
-// ============================================================
 const ragdolls = [];
 
 class Ragdoll {
@@ -1296,9 +1277,6 @@ function randomDismemberOnDeath(z) {
   }
 }
 
-// ============================================================
-// RAYCAST OTIMIZADO
-// ============================================================
 function rayAABB(origin, dir, min, max, maxDist) {
   let tMin = 0, tMax = maxDist;
   const axes = [
@@ -1382,9 +1360,6 @@ function applyHitReaction(z, part, hitDirWorld) {
   };
 }
 
-// ============================================================
-// HIT MARKER / FX
-// ============================================================
 const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
 
@@ -1532,6 +1507,11 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
 }
 
 function attack() {
+  if (state.downed) {
+    const wid = state.inventory[state.currentSlot] || 'knife';
+    if (wid !== 'pistol') return false;
+  }
+
   const now = performance.now() / 1000;
   const weaponId = state.inventory[state.currentSlot] || 'knife';
   const weapon = WEAPONS[weaponId];
@@ -1793,10 +1773,30 @@ document.addEventListener('keydown', e => {
   if (e.code === 'Digit2') switchToSlot(2);
   if (e.code === 'Digit3') switchToSlot(3);
   if (e.code === 'Digit4') switchToSlot(4);
-  if (e.code === 'KeyE') tryBuyWeapon();
+  if (e.code === 'KeyE' && !state.downed) tryBuyWeapon();
   if (e.code === 'KeyM') Sfx.setMuted(!Sfx.isMuted());
+
+  if (e.code === 'KeyQ' && state.running && !state.downed && !state.levelUpActive && !state.pingWheelOpen) {
+    state.pingWheelOpen = true;
+    state.pingAccumX = 0;
+    state.pingAccumY = 0;
+    state.pingHighlight = null;
+    document.getElementById('ping-wheel').classList.remove('hidden');
+  }
 });
-document.addEventListener('keyup', e => { state.keys[e.code] = false; });
+
+document.addEventListener('keyup', e => {
+  state.keys[e.code] = false;
+
+  if (e.code === 'KeyQ' && state.pingWheelOpen) {
+    state.pingWheelOpen = false;
+    document.getElementById('ping-wheel').classList.add('hidden');
+    if (state.pingHighlight) {
+      emitPing(state.pingHighlight);
+    }
+    state.pingHighlight = null;
+  }
+});
 
 renderer.domElement.addEventListener('click', () => {
   if (!state.running || isMobile() || state.levelUpActive) return;
@@ -1806,6 +1806,14 @@ renderer.domElement.addEventListener('click', () => {
 
 document.addEventListener('mousemove', e => {
   if (document.pointerLockElement !== renderer.domElement) return;
+
+  if (state.pingWheelOpen) {
+    state.pingAccumX += e.movementX;
+    state.pingAccumY += e.movementY;
+    updatePingHighlight();
+    return;
+  }
+
   const sens = state.aiming ? 0.0012 : 0.002;
   player.yaw -= e.movementX * sens;
   player.pitch -= e.movementY * sens;
@@ -1820,6 +1828,7 @@ document.addEventListener('mousedown', e => {
     }
   }
   if (e.button === 2) {
+    if (state.downed) return;
     const weaponId = state.inventory[state.currentSlot] || 'knife';
     const weapon = WEAPONS[weaponId];
     if (weapon.type !== 'melee') {
@@ -1912,7 +1921,10 @@ const _rightV = new THREE.Vector3();
 const _moveV = new THREE.Vector3();
 
 function updatePlayer(dt) {
-  const speed = CONFIG.player.speed * state.speedMult * (state.aiming ? 0.5 : 1);
+  let speedMult = state.aiming ? 0.5 : 1;
+  if (state.downed) speedMult = 0.25;
+  const speed = CONFIG.player.speed * state.speedMult * speedMult;
+
   _fwdV.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   _rightV.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
   let mx = 0, mz = 0;
@@ -1940,8 +1952,9 @@ function updatePlayer(dt) {
   else state.bobTime *= 0.9;
   const bobY = Math.sin(state.bobTime) * (state.aiming ? 0.02 : 0.055);
 
+  const camBaseY = state.downed ? 0.55 : CONFIG.player.height;
   camera.position.copy(player.position);
-  camera.position.y += bobY;
+  camera.position.y = camBaseY + bobY;
   camera.rotation.order = 'YXZ';
   camera.rotation.y = player.yaw;
   camera.rotation.x = player.pitch;
@@ -2096,7 +2109,7 @@ function updateZombies(dt) {
       if (!staggering && dist > CONFIG.zombie.attackRange) {
         _toV.normalize();
         z.mesh.position.addScaledVector(_toV, zs * dt);
-      } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
+      } else if (!staggering && !state.downed && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
         z.lastAttackTime = now;
         const _dmg = CONFIG.zombie.damage * (1 - state.damageReduction);
         state.health -= _dmg;
@@ -2112,7 +2125,7 @@ function updateZombies(dt) {
         });
 
         updateHUD();
-        if (state.health <= 0) gameOver();
+        if (state.health <= 0 && !state.downed) enterDownedState();
       }
     }
 
@@ -2280,13 +2293,24 @@ function animate() {
     updateDoors(dt);
     updateWeaponPickups(dt);
     checkWaveComplete();
-    updateWeaponViewModel(dt);
     updateRagdolls(dt);
     updateFlyingLimbs(dt);
+    updateDownedState(dt);
+    updatePings(dt);
 
-    if (state.mouseDown) {
+    if (state.downed) {
+      weaponGroup.visible = false;
+    } else {
+      weaponGroup.visible = true;
+      updateWeaponViewModel(dt);
+    }
+
+    if (state.mouseDown && !state.downed) {
       const w = WEAPONS[state.inventory[state.currentSlot] || 'knife'];
       if (w.auto) attack();
+    } else if (state.mouseDown && state.downed) {
+      const w = WEAPONS[state.inventory[state.currentSlot] || 'knife'];
+      if (w.auto && (state.inventory[state.currentSlot] === 'pistol')) attack();
     }
 
     const targetFov = state.aiming ? 50 : 78;
@@ -2360,7 +2384,24 @@ function startGame() {
   state.mouseDown = false;
   state.aiming = false;
   state.shake = 0;
-  state.lastAttackTime = 0;
+  state.downed = false;
+  state.downedElapsed = 0;
+  state.reviveProgress = 0;
+  state.pingWheelOpen = false;
+  state.pingHighlight = null;
+  state.pingAccumX = 0;
+  state.pingAccumY = 0;
+  document.body.classList.remove('downed');
+  document.getElementById('downed-overlay').classList.add('hidden');
+  document.getElementById('ping-wheel').classList.add('hidden');
+  pings.forEach(p => {
+    scene.remove(p.group);
+    p.group.traverse(c => {
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) c.material.dispose();
+    });
+  });
+  pings.length = 0;
   updateCrosshair();
 
   world.weaponSpots.forEach(s => {
@@ -2412,6 +2453,9 @@ function gameOver() {
 
   state.running = false;
   state.aiming = false;
+  state.downed = false;
+  document.body.classList.remove('downed');
+  document.getElementById('downed-overlay').classList.add('hidden');
   updateCrosshair();
   if (state.waveIntervalId !== null) {
     clearInterval(state.waveIntervalId);
@@ -2436,11 +2480,11 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
 // ============================================================
 // FASE 2-A — FEEDBACK MP-READY
 // ============================================================
 
-// ---- Stats por jogador (MP-ready: em rede, o servidor manda updates) ----
 const playerStats = new Map();
 playerStats.set(player.id, {
   id: player.id,
@@ -2453,7 +2497,6 @@ playerStats.set(player.id, {
   local: true,
 });
 
-// ---- Helpers ----
 const _projV = new THREE.Vector3();
 function worldToScreen(pos) {
   _projV.set(pos.x, pos.y, pos.z).project(camera);
@@ -2485,7 +2528,6 @@ function nameOf(id) {
   return ensureStats(id).name;
 }
 
-// ---- Damage Numbers ----
 const damageNumbersEl = document.getElementById('damage-numbers');
 
 function spawnDamageNumber(worldPos, amount, kind) {
@@ -2496,7 +2538,6 @@ function spawnDamageNumber(worldPos, amount, kind) {
   el.className = 'dmg-number dmg-' + kind;
   el.textContent = Math.round(amount);
 
-  // Pequeno offset aleatório (importante p/ shotgun com 8 pellets)
   const jitterX = (Math.random() - 0.5) * 30;
   const jitterY = (Math.random() - 0.5) * 15;
   el.style.left = (screen.x + jitterX) + 'px';
@@ -2508,7 +2549,6 @@ function spawnDamageNumber(worldPos, amount, kind) {
   }, 850);
 }
 
-// ---- Kill Feed ----
 const killFeedEl = document.getElementById('kill-feed');
 const KILL_FEED_MAX = 5;
 const KILL_FEED_LIFE = 4200;
@@ -2538,12 +2578,10 @@ function spawnKillFeedEntry(killerId, victimId, weaponId, headshot) {
   }, KILL_FEED_LIFE);
 }
 
-// ---- Hooks nos eventos ----
 bus.on(Ev.DAMAGE, p => {
   const s = ensureStats(p.attackerId);
   s.damage += p.amount;
 
-  // Só mostra número se EU causei o dano (evita spam visual em MP)
   if (p.attackerId !== player.id) return;
   if (!p.pos) return;
 
@@ -2572,11 +2610,9 @@ bus.on(Ev.PLAYER_DIED, p => {
 });
 
 bus.on(Ev.NET_PLAYER_LEAVE, p => {
-  // Em MP: remove jogador do scoreboard quando sair
   if (p && p.id) playerStats.delete(p.id);
 });
 
-// ---- Scoreboard (Tab) ----
 const scoreboardEl = document.getElementById('scoreboard');
 const scoreboardBody = document.getElementById('scoreboard-body');
 let scoreboardOpen = false;
@@ -2620,5 +2656,214 @@ document.addEventListener('keyup', e => {
   }
 });
 
-// Reseta stats no início de cada partida (MP vai resetar via NET_ROOM_JOIN)
 window.addEventListener('beforeunload', () => playerStats.clear());
+
+// ============================================================
+// FASE 2-B — DOWNED STATE / REVIVE / PING WHEEL
+// ============================================================
+
+const pings = [];
+const PING_COLORS = {
+  enemy: 0xff2020,
+  help: 0xffdd00,
+  go: 0x22dd22,
+  careful: 0xff8800,
+};
+
+function enterDownedState() {
+  if (state.downed) return;
+  state.downed = true;
+  state.downedElapsed = 0;
+  state.health = 0;
+  state.reviveProgress = 0;
+  state.aiming = false;
+  state.mouseDown = false;
+  updateCrosshair();
+
+  if (state.pingWheelOpen) {
+    state.pingWheelOpen = false;
+    document.getElementById('ping-wheel').classList.add('hidden');
+  }
+
+  document.body.classList.add('downed');
+  const overlay = document.getElementById('downed-overlay');
+  overlay.classList.remove('hidden');
+  document.getElementById('downed-timer').textContent = '30';
+  document.getElementById('downed-prompt').classList.remove('visible');
+  document.getElementById('downed-progress-wrap').classList.remove('visible');
+  document.getElementById('downed-progress').style.width = '0%';
+
+  Sfx.playPlayerDown();
+  addShake(0.4);
+  updateHUD();
+
+  bus.emit(Ev.PLAYER_DOWN, {
+    playerId: player.id,
+    pos: { x: player.position.x, y: player.position.y, z: player.position.z },
+  });
+}
+
+function exitDownedState(hpFraction) {
+  if (!state.downed) return;
+  state.downed = false;
+  state.downedElapsed = 0;
+  state.reviveProgress = 0;
+  state.health = Math.max(20, Math.round(state.maxHealth * (hpFraction || 0.5)));
+
+  document.body.classList.remove('downed');
+  document.getElementById('downed-overlay').classList.add('hidden');
+  Sfx.playRevive();
+  updateHUD();
+
+  bus.emit(Ev.PLAYER_REVIVE, {
+    playerId: player.id,
+    hp: state.health,
+  });
+}
+
+function updateDownedState(dt) {
+  if (!state.downed) return;
+
+  state.downedElapsed += dt * 1000;
+  const remaining = Math.max(0, state.downedDuration - state.downedElapsed);
+  const timerEl = document.getElementById('downed-timer');
+  timerEl.textContent = Math.ceil(remaining / 1000);
+
+  const prompt = document.getElementById('downed-prompt');
+  const progressWrap = document.getElementById('downed-progress-wrap');
+  const progressBar = document.getElementById('downed-progress');
+
+  if (state.downedElapsed >= state.selfReviveAt) {
+    prompt.classList.add('visible');
+    if (state.keys['KeyE']) {
+      state.reviveProgress += dt * 1000;
+      progressWrap.classList.add('visible');
+      const pct = Math.min(1, state.reviveProgress / state.selfReviveHold);
+      progressBar.style.width = (pct * 100) + '%';
+      if (state.reviveProgress >= state.selfReviveHold) {
+        exitDownedState(0.3);
+        return;
+      }
+    } else {
+      state.reviveProgress = 0;
+      progressWrap.classList.remove('visible');
+      progressBar.style.width = '0%';
+    }
+  } else {
+    prompt.classList.remove('visible');
+    progressWrap.classList.remove('visible');
+  }
+
+  if (remaining <= 0) {
+    exitDownedState(0.5);
+    gameOver();
+  }
+}
+
+function updatePingHighlight() {
+  const x = state.pingAccumX;
+  const y = state.pingAccumY;
+  const mag = Math.hypot(x, y);
+
+  if (mag < 25) {
+    state.pingHighlight = null;
+    document.querySelectorAll('.ping-option').forEach(el => el.classList.remove('highlighted'));
+    return;
+  }
+
+  const angle = Math.atan2(y, x);
+  const pi = Math.PI;
+  let dir;
+  if (angle >= -3 * pi / 4 && angle < -pi / 4) dir = 'top';
+  else if (angle >= -pi / 4 && angle < pi / 4) dir = 'right';
+  else if (angle >= pi / 4 && angle < 3 * pi / 4) dir = 'bottom';
+  else dir = 'left';
+
+  const map = { top: 'enemy', right: 'help', bottom: 'go', left: 'careful' };
+  state.pingHighlight = map[dir];
+
+  document.querySelectorAll('.ping-option').forEach(el => {
+    el.classList.toggle('highlighted', el.classList.contains('ping-' + dir));
+  });
+}
+
+function getPingPosition() {
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  const pos = camera.position.clone();
+  if (dir.y < -0.01) {
+    const t = (0.1 - pos.y) / dir.y;
+    if (t > 0 && t < 60) {
+      pos.addScaledVector(dir, t);
+      pos.y = 0.1;
+      return pos;
+    }
+  }
+  pos.addScaledVector(dir, 15);
+  pos.y = 0.1;
+  return pos;
+}
+
+function emitPing(type) {
+  const pos = getPingPosition();
+  bus.emit(Ev.PING, {
+    playerId: player.id,
+    type,
+    pos: { x: pos.x, y: pos.y, z: pos.z },
+  });
+  spawnPingMarker(pos, type);
+  Sfx.playPing();
+}
+
+function spawnPingMarker(pos, type) {
+  const color = PING_COLORS[type] || 0xffffff;
+  const group = new THREE.Group();
+
+  const pillar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.15, 0.15, 6, 8, 1, true),
+    new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.4,
+      side: THREE.DoubleSide, depthWrite: false,
+    })
+  );
+  pillar.position.y = 3;
+  group.add(pillar);
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.5, 0.75, 24),
+    new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 1,
+      side: THREE.DoubleSide, depthWrite: false,
+    })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.15;
+  group.add(ring);
+
+  group.position.copy(pos);
+  scene.add(group);
+
+  pings.push({ group, pillar, ring, life: 3, maxLife: 3 });
+}
+
+function updatePings(dt) {
+  for (let i = pings.length - 1; i >= 0; i--) {
+    const p = pings[i];
+    p.life -= dt;
+    const t = Math.max(0, p.life / p.maxLife);
+
+    const ringScale = 1 + (1 - t) * 2.2;
+    p.ring.scale.setScalar(ringScale);
+    p.ring.material.opacity = t;
+    p.pillar.material.opacity = t * 0.4;
+
+    if (p.life <= 0) {
+      scene.remove(p.group);
+      p.group.traverse(c => {
+        if (c.geometry) c.geometry.dispose();
+        if (c.material) c.material.dispose();
+      });
+      pings.splice(i, 1);
+    }
+  }
+}
