@@ -7,27 +7,27 @@ import * as Sfx from './audio.js';
 // HABILIDADES
 // ============================================================
 const SKILLS = [
-  { id: 'vitality', icon: '❤', name: 'VITALIDADE', desc: '+20 HP maximo (e cura +20)',
+  { id: 'vitality', icon: 'V', name: 'VITALIDADE', desc: '+20 HP maximo (e cura +20)',
     apply: () => { state.maxHealth += 20; state.health = Math.min(state.maxHealth, state.health + 20); } },
-  { id: 'strength', icon: '💪', name: 'FORCA', desc: '+15% de dano',
+  { id: 'strength', icon: 'F', name: 'FORCA', desc: '+15% de dano',
     apply: () => { state.damageMult += 0.15; } },
-  { id: 'reach', icon: '🎯', name: 'ALCANCE', desc: '+0.3m de alcance',
+  { id: 'reach', icon: 'A', name: 'ALCANCE', desc: '+0.3m de alcance',
     apply: () => { state.rangeBonus += 0.3; } },
-  { id: 'agility', icon: '⚡', name: 'AGILIDADE', desc: '+8% velocidade',
+  { id: 'agility', icon: 'V', name: 'AGILIDADE', desc: '+8% velocidade',
     apply: () => { state.speedMult += 0.08; } },
-  { id: 'precision', icon: '💥', name: 'PRECISAO', desc: '+8% chance de critico',
+  { id: 'precision', icon: 'P', name: 'PRECISAO', desc: '+8% chance de critico',
     apply: () => { state.critChance = Math.min(0.95, state.critChance + 0.08); } },
-  { id: 'vampirism', icon: '🩸', name: 'VAMPIRISMO', desc: '+3 HP por zumbi morto',
+  { id: 'vampirism', icon: 'S', name: 'VAMPIRISMO', desc: '+3 HP por zumbi morto',
     apply: () => { state.lifesteal += 3; } },
-  { id: 'fortune', icon: '💰', name: 'FORTUNA', desc: '+50% moedas',
+  { id: 'fortune', icon: '$', name: 'FORTUNA', desc: '+50% moedas',
     apply: () => { state.coinMult += 0.5; } },
-  { id: 'wisdom', icon: '⭐', name: 'SABEDORIA', desc: '+30% XP',
+  { id: 'wisdom', icon: 'W', name: 'SABEDORIA', desc: '+30% XP',
     apply: () => { state.xpMult += 0.3; } },
-  { id: 'resistance', icon: '🛡', name: 'RESISTENCIA', desc: '-10% dano recebido',
+  { id: 'resistance', icon: 'R', name: 'RESISTENCIA', desc: '-10% dano recebido',
     apply: () => { state.damageReduction = Math.min(0.7, state.damageReduction + 0.1); } },
-  { id: 'fury', icon: '🔥', name: 'FURIA', desc: '-12% tempo entre ataques',
+  { id: 'fury', icon: 'U', name: 'FURIA', desc: '-12% tempo entre ataques',
     apply: () => { state.attackSpeedMult += 0.12; } },
-  { id: 'heavy', icon: '⚔', name: 'GOLPE PESADO', desc: '+0.5x dano em critico',
+  { id: 'heavy', icon: 'H', name: 'GOLPE PESADO', desc: '+0.5x dano em critico',
     apply: () => { state.critDamageBonus += 0.5; } },
 ];
 
@@ -283,7 +283,6 @@ const BODY_TYPES = [
 
 function createZombieMesh() {
   const g = new THREE.Group();
-
   const skinColor  = rand(SKIN_COLORS);
   const shirtColor = rand(SHIRT_COLORS);
   const pantsColor = rand(PANTS_COLORS);
@@ -315,7 +314,6 @@ function createZombieMesh() {
   const hair = new THREE.Mesh(makeBox(0.58, 0.10, 0.58, 3), hairMat);
   hair.position.y = 0.30;
   headGroup.add(hair);
-
   const fringe = new THREE.Mesh(makeBox(0.58, 0.14, 0.08, 3), hairMat);
   fringe.position.set(0, 0.24, 0.28);
   headGroup.add(fringe);
@@ -417,7 +415,6 @@ function createZombieMesh() {
 
   function makeArm(side) {
     const arm = new THREE.Group();
-
     const shoulder = new THREE.Mesh(makeJoint(armW * 0.55), shirtMat);
     arm.add(shoulder);
 
@@ -479,41 +476,32 @@ function createZombieMesh() {
 
   function makeLeg() {
     const leg = new THREE.Group();
-
     const hip = new THREE.Mesh(makeJoint(legW * 0.58), pantsMat);
     leg.add(hip);
-
     const thigh = new THREE.Mesh(makeBox(legW, 0.55, legW, 3), pantsMat);
     thigh.position.y = -0.30;
     thigh.castShadow = true;
     leg.add(thigh);
-
     const knee = new THREE.Mesh(makeJoint(legW * 0.48), pantsMat);
     knee.position.y = -0.60;
     leg.add(knee);
-
     const shin = new THREE.Mesh(makeBox(legW * 0.9, 0.40, legW * 0.9, 3), pantsMat);
     shin.position.y = -0.82;
     shin.castShadow = true;
     leg.add(shin);
-
     const ankle = new THREE.Mesh(makeJoint(legW * 0.42), shoeMat);
     ankle.position.y = -1.04;
     leg.add(ankle);
-
     const shoeBase = new THREE.Mesh(makeBox(legW * 1.15, 0.14, legW * 1.35, 3), shoeMat);
     shoeBase.position.set(0, -1.12, 0.03);
     shoeBase.castShadow = true;
     leg.add(shoeBase);
-
     const shoeTip = new THREE.Mesh(makeBox(legW * 1.15, 0.08, legW * 0.45, 3), shoeMat);
     shoeTip.position.set(0, -1.16, legW * 0.85);
     leg.add(shoeTip);
-
     const sole = new THREE.Mesh(makeBox(legW * 1.18, 0.04, legW * 1.4, 3), soleMat);
     sole.position.set(0, -1.20, 0.03);
     leg.add(sole);
-
     return leg;
   }
 
@@ -1197,6 +1185,17 @@ function showLevelUp() {
   }
 
   const cont = document.getElementById('levelup-choices');
+  const lvlText = document.getElementById('levelup-level');
+  const lvlScreen = document.getElementById('levelup');
+
+  if (!cont || !lvlText || !lvlScreen) {
+    console.error('[LEVELUP] Elementos do DOM nao encontrados! Verifique index.html');
+    if (chosen[0]) chosen[0].apply();
+    state.levelUpActive = false;
+    if (state.pendingLevelUps > 0) setTimeout(showLevelUp, 100);
+    return;
+  }
+
   cont.innerHTML = '';
   chosen.forEach(skill => {
     const card = document.createElement('button');
@@ -1210,8 +1209,9 @@ function showLevelUp() {
     cont.appendChild(card);
   });
 
-  document.getElementById('levelup-level').textContent = state.level;
-  document.getElementById('levelup').classList.remove('hidden');
+  lvlText.textContent = state.level;
+  lvlScreen.classList.remove('hidden');
+  console.log('[LEVELUP] Mostrando escolha de habilidade, nivel', state.level);
 }
 
 function pickSkill(skillId) {
@@ -1242,6 +1242,9 @@ function showWaveBanner(text) {
   }, 1400);
 }
 
+// ============================================================
+// HORDAS — CORRIGIDO
+// ============================================================
 function startWave() {
   if (state.waveIntervalId !== null) {
     clearInterval(state.waveIntervalId);
@@ -1256,18 +1259,24 @@ function startWave() {
   );
   state.zombiesRemainingInWave = count;
   showWaveBanner('HORDA ' + state.wave);
+  updateHUD();
 
-  let spawned = 0;
   state.waveIntervalId = setInterval(() => {
-    if (spawned >= count || !state.running) {
+    if (!state.running) {
+      clearInterval(state.waveIntervalId);
+      state.waveIntervalId = null;
+      return;
+    }
+    if (state.levelUpActive) return;
+    if (state.zombiesRemainingInWave <= 0) {
       clearInterval(state.waveIntervalId);
       state.waveIntervalId = null;
       return;
     }
     spawnZombie();
-    spawned++;
+    state.zombiesRemainingInWave--;
+    updateHUD();
   }, 500);
-  updateHUD();
 }
 
 function checkWaveComplete() {
@@ -1279,6 +1288,9 @@ function checkWaveComplete() {
   }
 }
 
+// ============================================================
+// CONTROLES
+// ============================================================
 document.addEventListener('keydown', e => { state.keys[e.code] = true; });
 document.addEventListener('keyup', e => { state.keys[e.code] = false; });
 
@@ -1372,6 +1384,9 @@ function setupMobile() {
 }
 setupMobile();
 
+// ============================================================
+// LOOP
+// ============================================================
 const clock = new THREE.Clock();
 
 function updatePlayer(dt) {
@@ -1557,6 +1572,9 @@ function animate() {
 }
 animate();
 
+// ============================================================
+// HUD
+// ============================================================
 function updateHUD() {
   const hp = Math.max(0, state.health);
   document.getElementById('hp-fill').style.width = `${(hp / state.maxHealth) * 100}%`;
@@ -1570,6 +1588,9 @@ function updateHUD() {
   document.getElementById('ammo-max').textContent = 'INF';
 }
 
+// ============================================================
+// START / GAME OVER
+// ============================================================
 function startGame() {
   if (state.waveIntervalId !== null) {
     clearInterval(state.waveIntervalId);
@@ -1578,6 +1599,7 @@ function startGame() {
 
   Sfx.initAudio(); Sfx.resumeAudio();
 
+  state.maxHealth = CONFIG.player.maxHealth;
   state.health = state.maxHealth;
   state.coins = 0; state.xp = 0;
   state.level = 1; state.xpToNextLevel = 50;
@@ -1586,10 +1608,6 @@ function startGame() {
   state.running = true; state.betweenWaves = false;
   state.startTime = performance.now();
   state.critChance = CONFIG.crit.baseChance;
-
-  // Reset habilidades
-  state.maxHealth = CONFIG.player.maxHealth;
-  state.health = state.maxHealth;
   state.damageMult = 1.0;
   state.rangeBonus = 0;
   state.speedMult = 1.0;
