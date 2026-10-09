@@ -138,7 +138,6 @@ export function zombieHeadTexture(skinColorHex, isDead = false) {
     ctx.fillRect(20, 13, 7, 1);
     ctx.fillRect(20, 14, 1, 1);
     ctx.fillRect(26, 14, 1, 1);
-
     ctx.fillStyle = 'rgba(80,0,0,0.35)';
     ctx.fillRect(5, 15, 7, 1);
     ctx.fillRect(20, 15, 7, 1);
@@ -146,11 +145,9 @@ export function zombieHeadTexture(skinColorHex, isDead = false) {
     ctx.fillStyle = '#000';
     ctx.fillRect(5, 11, 7, 5);
     ctx.fillRect(20, 11, 7, 5);
-
     ctx.fillStyle = '#FFF';
     ctx.fillRect(6, 12, 1, 1);
     ctx.fillRect(21, 12, 1, 1);
-
     ctx.fillStyle = 'rgba(139,0,0,0.5)';
     ctx.fillRect(4, 10, 9, 1);
     ctx.fillRect(19, 10, 9, 1);
