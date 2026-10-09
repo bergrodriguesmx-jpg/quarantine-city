@@ -36,6 +36,7 @@ const CONFIG = {
   crit: { baseChance: 0.15, damageMultiplier: 2 },
   dismember: { headChance: 0.65, armChance: 0.50, legChance: 0.40, limbSpeed: 16, limbLife: 12 },
   headshotMultiplier: 2.5,
+  shake: { hit: 0.05, kill: 0.12, shoot: 0.03 },
 };
 
 const state = {
@@ -54,6 +55,7 @@ const state = {
   currentSlot: 1,
   mouseDown: false,
   aiming: false,
+  shake: 0,
 };
 
 const container = document.getElementById('game-container');
@@ -157,27 +159,21 @@ const invisible = new THREE.MeshBasicMaterial({ visible: false });
 });
 
 // ============================================================
-// TEXTURA DA CAMISA PT (estrela branca 5 pontas com PT vermelho)
+// TEXTURA DA CAMISA PT
 // ============================================================
 function createPTShirtTexture() {
   const c = document.createElement('canvas');
-  c.width = 256;
-  c.height = 256;
+  c.width = 256; c.height = 256;
   const ctx = c.getContext('2d');
-
   ctx.clearRect(0, 0, 256, 256);
-
-  const cx = 128, cy = 128;
-  const outerR = 100;
-  const innerR = 40;
+  const cx = 128, cy = 128, outerR = 100, innerR = 40;
   ctx.beginPath();
   for (let i = 0; i < 10; i++) {
     const r = (i % 2 === 0) ? outerR : innerR;
     const angle = (Math.PI / 5) * i - Math.PI / 2;
     const x = cx + Math.cos(angle) * r;
     const y = cy + Math.sin(angle) * r;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
   ctx.closePath();
   ctx.fillStyle = '#FFFFFF';
@@ -185,13 +181,11 @@ function createPTShirtTexture() {
   ctx.lineWidth = 6;
   ctx.strokeStyle = '#FFFFFF';
   ctx.stroke();
-
   ctx.fillStyle = '#CC0000';
   ctx.font = 'bold 60px Arial, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('PT', cx, cy + 4);
-
   const tex = new THREE.CanvasTexture(c);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.LinearFilter;
@@ -201,12 +195,8 @@ function createPTShirtTexture() {
 
 const PT_SHIRT_TEXTURE = createPTShirtTexture();
 const PT_DECAL_MAT = new THREE.MeshBasicMaterial({
-  map: PT_SHIRT_TEXTURE,
-  transparent: true,
-  depthWrite: false,
-  side: THREE.DoubleSide,
-  polygonOffset: true,
-  polygonOffsetFactor: -4,
+  map: PT_SHIRT_TEXTURE, transparent: true, depthWrite: false,
+  side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4,
 });
 
 // ============================================================
@@ -367,10 +357,8 @@ function updateWeaponViewModel(dt) {
 
   if (swinging) {
     swingProgress += dt * 5;
-    if (swingProgress >= 1) {
-      swinging = false;
-      swingProgress = 0;
-    } else {
+    if (swingProgress >= 1) { swinging = false; swingProgress = 0; }
+    else {
       const arc = Math.sin(swingProgress * Math.PI);
       currentViewModel.position.set(0.32 - arc * 0.35, -0.32 + arc * 0.12, -0.6 - arc * 0.15);
       currentViewModel.rotation.set(-0.15 - arc * 0.5, -0.35 + arc * 0.7, 0.15 - arc * 0.4);
@@ -383,10 +371,8 @@ function updateWeaponViewModel(dt) {
     const baseRX = aiming ? -0.02 : -0.15;
     const baseRY = aiming ? -0.05 : -0.35;
     const baseRZ = aiming ? 0.02 : 0.15;
-
     const bob = (state.isMoving && !aiming) ? Math.sin(state.bobTime) * 0.015 : 0;
     const bobX = (state.isMoving && !aiming) ? Math.cos(state.bobTime * 0.5) * 0.01 : 0;
-
     const speed = Math.min(1, dt * 14);
     currentViewModel.position.x += (baseX + bobX - currentViewModel.position.x) * speed;
     currentViewModel.position.y += (baseY + bob - currentViewModel.position.y) * speed;
@@ -434,14 +420,9 @@ function circleVsAABB(px, pz, radius, box) {
   return { x: px, z: box.maxZ + radius };
 }
 
-function resolveWallCollisions(pos, radius) {
-  for (const box of world.wallColliders) {
-    if (pos.x + radius < box.minX || pos.x - radius > box.maxX) continue;
-    if (pos.z + radius < box.minZ || pos.z - radius > box.maxZ) continue;
-    const r = circleVsAABB(pos.x, pos.z, radius, box);
-    if (r) { pos.x = r.x; pos.z = r.z; }
-  }
-  for (const box of world.furnitureColliders) {
+function resolveCollidersAgainstBoxes(pos, radius, colliders) {
+  for (let i = 0; i < colliders.length; i++) {
+    const box = colliders[i];
     if (pos.x + radius < box.minX || pos.x - radius > box.maxX) continue;
     if (pos.z + radius < box.minZ || pos.z - radius > box.maxZ) continue;
     const r = circleVsAABB(pos.x, pos.z, radius, box);
@@ -449,8 +430,13 @@ function resolveWallCollisions(pos, radius) {
   }
 }
 
+function resolveWallCollisions(pos, radius) {
+  resolveCollidersAgainstBoxes(pos, radius, world.wallColliders);
+  resolveCollidersAgainstBoxes(pos, radius, world.furnitureColliders);
+}
+
 // ============================================================
-// ZUMBIS — 3 variações
+// ZUMBIS
 // ============================================================
 const zombies = [];
 const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
@@ -468,9 +454,6 @@ const BONE_MAT = new THREE.MeshLambertMaterial({ color: 0xE8E0D0 });
 const BONE_DARK_MAT = new THREE.MeshLambertMaterial({ color: 0xC8BFA8 });
 const BONE_DARKER = new THREE.MeshLambertMaterial({ color: 0xA89F88 });
 
-// ============================================================
-// CABEÇA: HUMANA (default)
-// ============================================================
 function buildHumanHead(headGroup, skinMat, hairMat, wound, hasHat) {
   const skull = new THREE.Mesh(makeBox(0.55, 0.55, 0.55, 5), skinMat);
   skull.castShadow = true;
@@ -514,33 +497,21 @@ function buildHumanHead(headGroup, skinMat, hairMat, wound, hasHat) {
   }
 }
 
-// ============================================================
-// CABEÇA: BURRO (donkey)
-// ============================================================
 function buildDonkeyHead(headGroup, skinMat, wound) {
-  const donkeySkinMat = new THREE.MeshLambertMaterial({ color: 0x9E8B7A }); // cinza-marrom
+  const donkeySkinMat = new THREE.MeshLambertMaterial({ color: 0x9E8B7A });
   const donkeyDarkMat = new THREE.MeshLambertMaterial({ color: 0x6B5D4F });
   const muzzleMat = new THREE.MeshLambertMaterial({ color: 0xB8A796 });
-
-  // Crânio principal (mais achatado que humano)
   const skull = new THREE.Mesh(makeBox(0.55, 0.55, 0.55, 5), donkeySkinMat);
   skull.castShadow = true;
   headGroup.add(skull);
-
-  // Focinho alongado (parte da frente, pra baixo)
   const muzzle = new THREE.Mesh(makeBox(0.32, 0.28, 0.35, 4), muzzleMat);
-  muzzle.position.set(0, -0.08, 0.42);
-  muzzle.castShadow = true;
+  muzzle.position.set(0, -0.08, 0.42); muzzle.castShadow = true;
   headGroup.add(muzzle);
-
-  // Narinas
   const nostrilMat = new THREE.MeshBasicMaterial({ color: 0x2A1F1A });
   const nL = new THREE.Mesh(makeBox(0.05, 0.04, 0.02, 1), nostrilMat);
   nL.position.set(-0.08, -0.02, 0.60); headGroup.add(nL);
   const nR = new THREE.Mesh(makeBox(0.05, 0.04, 0.02, 1), nostrilMat);
   nR.position.set(0.08, -0.02, 0.60); headGroup.add(nR);
-
-  // Boca
   const mouth = new THREE.Mesh(makeBox(0.24, 0.05, 0.02, 2), new THREE.MeshBasicMaterial({ color: 0x2B0000 }));
   mouth.position.set(0, -0.20, 0.60); headGroup.add(mouth);
   const teethGeo = makeBox(0.03, 0.04, 0.02, 1);
@@ -549,8 +520,6 @@ function buildDonkeyHead(headGroup, skinMat, wound) {
     t.position.set(-0.075 + i * 0.05, -0.18, 0.60);
     headGroup.add(t);
   }
-
-  // Olhos laterais (bem separados)
   const eyeW = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
   const pupil = new THREE.MeshBasicMaterial({ color: 0x000000 });
   const eyeGeo = makeBox(0.10, 0.10, 0.02, 2);
@@ -559,69 +528,39 @@ function buildDonkeyHead(headGroup, skinMat, wound) {
   const pupGeo = makeBox(0.05, 0.05, 0.02, 2);
   const pL = new THREE.Mesh(pupGeo, pupil); pL.position.set(-0.20, 0.10, 0.29); headGroup.add(pL);
   const pR = new THREE.Mesh(pupGeo, pupil); pR.position.set(0.20, 0.10, 0.29); headGroup.add(pR);
-
-  // ORELHAS LONGAS (marca registrada do burro)
   function makeEar(side) {
     const ear = new THREE.Group();
-    // Base
     const base = new THREE.Mesh(makeBox(0.10, 0.25, 0.10, 2), donkeySkinMat);
-    base.position.y = 0.15;
-    base.castShadow = true;
-    ear.add(base);
-    // Meio
+    base.position.y = 0.15; base.castShadow = true; ear.add(base);
     const mid = new THREE.Mesh(makeBox(0.09, 0.20, 0.09, 2), donkeySkinMat);
-    mid.position.y = 0.38;
-    mid.rotation.z = side * 0.15;
-    ear.add(mid);
-    // Ponta (mais escura)
+    mid.position.y = 0.38; mid.rotation.z = side * 0.15; ear.add(mid);
     const tip = new THREE.Mesh(makeBox(0.08, 0.12, 0.08, 2), donkeyDarkMat);
-    tip.position.y = 0.55;
-    tip.rotation.z = side * 0.2;
-    ear.add(tip);
-    // Interior da orelha (rosa)
+    tip.position.y = 0.55; tip.rotation.z = side * 0.2; ear.add(tip);
     const innerMat = new THREE.MeshLambertMaterial({ color: 0xE8B8B0 });
     const inner = new THREE.Mesh(makeBox(0.05, 0.20, 0.02, 1), innerMat);
-    inner.position.set(0, 0.25, 0.06);
-    ear.add(inner);
+    inner.position.set(0, 0.25, 0.06); ear.add(inner);
     return ear;
   }
   const earL = makeEar(-1);
-  earL.position.set(-0.18, 0.28, 0);
-  earL.rotation.z = 0.25;
-  earL.rotation.x = -0.15;
+  earL.position.set(-0.18, 0.28, 0); earL.rotation.z = 0.25; earL.rotation.x = -0.15;
   headGroup.add(earL);
   const earR = makeEar(1);
-  earR.position.set(0.18, 0.28, 0);
-  earR.rotation.z = -0.25;
-  earR.rotation.x = -0.15;
+  earR.position.set(0.18, 0.28, 0); earR.rotation.z = -0.25; earR.rotation.x = -0.15;
   headGroup.add(earR);
-
-  // Tufo de crina (alguns fios)
   const maneMat = new THREE.MeshLambertMaterial({ color: 0x3A2A1A });
   for (let i = 0; i < 3; i++) {
     const m = new THREE.Mesh(makeBox(0.06, 0.12, 0.06, 1), maneMat);
     m.position.set(0, 0.32 + i * 0.08, -0.05);
     headGroup.add(m);
   }
-
-  // Ferida (reaproveita o wound mat)
   const woundHead = new THREE.Mesh(makeBox(0.14, 0.08, 0.02, 2), wound);
   woundHead.position.set(-0.20, 0.22, 0.24); headGroup.add(woundHead);
 }
 
-// ============================================================
-// CABEÇA: JUIZ (careca, arredondada)
-// ============================================================
 function buildJudgeHead(headGroup, skinMat, wound) {
-  // Cabeça arredondada (Sphere com seg alta pra ficar suave)
   const headSphere = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12), skinMat);
   headSphere.castShadow = true;
   headGroup.add(headSphere);
-
-  // Careca — sem cabelo. Talvez só uma sombra de barba
-  const stubbleMat = new THREE.MeshLambertMaterial({ color: 0x5A5A5A, transparent: true, opacity: 0.35 });
-
-  // Olhos
   const eyeW = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
   const pupil = new THREE.MeshBasicMaterial({ color: 0x000000 });
   const eyeGeo = makeBox(0.11, 0.10, 0.02, 2);
@@ -630,41 +569,24 @@ function buildJudgeHead(headGroup, skinMat, wound) {
   const pupGeo = makeBox(0.05, 0.05, 0.02, 2);
   const pL = new THREE.Mesh(pupGeo, pupil); pL.position.set(-0.13, 0.06, 0.31); headGroup.add(pL);
   const pR = new THREE.Mesh(pupGeo, pupil); pR.position.set(0.13, 0.06, 0.31); headGroup.add(pR);
-
-  // Sobrancelhas grisalhas (juiz velho)
   const browMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
   const browGeo = makeBox(0.14, 0.03, 0.02, 2);
   const bL = new THREE.Mesh(browGeo, browMat); bL.position.set(-0.13, 0.15, 0.30); headGroup.add(bL);
   const bR = new THREE.Mesh(browGeo, browMat); bR.position.set(0.13, 0.15, 0.30); headGroup.add(bR);
-
-  // Nariz
   const nose = new THREE.Mesh(makeBox(0.08, 0.07, 0.06, 3), skinMat);
   nose.position.set(0, -0.02, 0.31); headGroup.add(nose);
-
-  // Bigode e barba (juiz clássico)
   const mustache = new THREE.Mesh(makeBox(0.24, 0.05, 0.03, 2), browMat);
   mustache.position.set(0, -0.10, 0.30); headGroup.add(mustache);
   const chinBeard = new THREE.Mesh(makeBox(0.20, 0.10, 0.04, 2), browMat);
   chinBeard.position.set(0, -0.22, 0.28); headGroup.add(chinBeard);
-
-  // Boca
   const mouth = new THREE.Mesh(makeBox(0.20, 0.05, 0.02, 2), new THREE.MeshBasicMaterial({ color: 0x2B0000 }));
   mouth.position.set(0, -0.15, 0.31); headGroup.add(mouth);
-
-  // Ferida
   const woundHead = new THREE.Mesh(makeBox(0.12, 0.06, 0.02, 2), wound);
   woundHead.position.set(-0.10, 0.20, 0.26); headGroup.add(woundHead);
 }
 
-// ============================================================
-// ROUPA: JUIZ (toga preta + colarinho branco)
-// ============================================================
 function buildJudgeOutfit(torsoGroup, body, woundMat) {
-  // A camisa preta JÁ é a base (shirtMat preto), então só adiciona
-  // o colarinho branco e a faixa da toga
   const whiteMat = new THREE.MeshLambertMaterial({ color: 0xF5F5F5 });
-
-  // Colarinho branco em V (aba)
   const collarL = new THREE.Mesh(makeBox(0.15, 0.20, 0.04, 2), whiteMat);
   collarL.position.set(-0.12, 0.30, body.torsoD / 2 + 0.008);
   collarL.rotation.z = 0.5;
@@ -673,17 +595,30 @@ function buildJudgeOutfit(torsoGroup, body, woundMat) {
   collarR.position.set(0.12, 0.30, body.torsoD / 2 + 0.008);
   collarR.rotation.z = -0.5;
   torsoGroup.add(collarR);
-
-  // Faixa/gravata do juiz
   const tieMat = new THREE.MeshLambertMaterial({ color: 0xCC1111 });
   const tie = new THREE.Mesh(makeBox(0.06, 0.35, 0.02, 1), tieMat);
   tie.position.set(0, 0.10, body.torsoD / 2 + 0.012);
   torsoGroup.add(tie);
 }
 
-// ============================================================
-// CRIA ZUMBI COM VARIAÇÃO
-// ============================================================
+// -------- Precompute local AABB per part (grande ganho de perf) --------
+function computePartLocalBox(group) {
+  group.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(group.matrixWorld).invert();
+  const box = new THREE.Box3();
+  const tmp = new THREE.Matrix4();
+  group.traverse(c => {
+    if (c.isMesh && c.geometry) {
+      if (!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+      const b = c.geometry.boundingBox.clone();
+      tmp.multiplyMatrices(inv, c.matrixWorld);
+      b.applyMatrix4(tmp);
+      box.union(b);
+    }
+  });
+  return box;
+}
+
 function createZombieMesh() {
   const g = new THREE.Group();
   const skinColor = rand(SKIN_COLORS);
@@ -691,12 +626,11 @@ function createZombieMesh() {
   const hairColor = rand(HAIR_COLORS);
   const body = rand(BODY_TYPES);
 
-  // Sorteia o tipo: 0=PT normal, 1=PT burro, 2=Juiz
   const typeRoll = Math.random();
   let zombieType;
-  if (typeRoll < 0.40) zombieType = 'pt';        // 40% PT
-  else if (typeRoll < 0.70) zombieType = 'pt_donkey'; // 30% PT burro
-  else zombieType = 'judge';                     // 30% Juiz
+  if (typeRoll < 0.40) zombieType = 'pt';
+  else if (typeRoll < 0.70) zombieType = 'pt_donkey';
+  else zombieType = 'judge';
 
   const skinMat = new THREE.MeshLambertMaterial({ color: skinColor });
   const shirtMat = new THREE.MeshLambertMaterial({ color: zombieType === 'judge' ? SHIRT_BLACK : SHIRT_RED });
@@ -705,19 +639,13 @@ function createZombieMesh() {
   const shoeMat = new THREE.MeshLambertMaterial({ color: 0x1A1A1A });
   const wound = new THREE.MeshBasicMaterial({ color: 0xC0392B });
 
-  // ===== CABEÇA =====
   const headGroup = new THREE.Group();
   headGroup.position.y = 1.85;
 
-  if (zombieType === 'pt') {
-    buildHumanHead(headGroup, skinMat, hairMat, wound, Math.random() > 0.7);
-  } else if (zombieType === 'pt_donkey') {
-    buildDonkeyHead(headGroup, skinMat, wound);
-  } else {
-    buildJudgeHead(headGroup, skinMat, wound);
-  }
+  if (zombieType === 'pt') buildHumanHead(headGroup, skinMat, hairMat, wound, Math.random() > 0.7);
+  else if (zombieType === 'pt_donkey') buildDonkeyHead(headGroup, skinMat, wound);
+  else buildJudgeHead(headGroup, skinMat, wound);
 
-  // Ossos internos da cabeça (pra decapitação)
   const skullBone = new THREE.Mesh(makeBox(0.48, 0.48, 0.48, 4), BONE_MAT);
   skullBone.visible = false; headGroup.add(skullBone);
   const jawBone = new THREE.Mesh(makeBox(0.38, 0.14, 0.38, 3), BONE_DARK_MAT);
@@ -739,14 +667,12 @@ function createZombieMesh() {
   }
   g.add(headGroup);
 
-  // ===== TRONCO =====
   const torsoGroup = new THREE.Group();
   torsoGroup.position.y = 1.15;
   const torso = new THREE.Mesh(makeBox(body.torsoW, 0.85, body.torsoD, 5), shirtMat);
   torso.castShadow = true;
   torsoGroup.add(torso);
 
-  // Decal da estrela PT (só nos tipos PT)
   if (zombieType === 'pt' || zombieType === 'pt_donkey') {
     const decalW = body.torsoW * 0.85;
     const decalH = 0.65;
@@ -756,7 +682,6 @@ function createZombieMesh() {
     torsoGroup.add(decal);
   }
 
-  // Colarinho escuro (PT e burro). Juiz tem colarinho branco depois.
   if (zombieType !== 'judge') {
     const collar = new THREE.Mesh(makeBox(body.torsoW * 0.85, 0.06, body.torsoD * 0.9, 3), MAT.metalDark);
     collar.position.y = 0.43; torsoGroup.add(collar);
@@ -783,7 +708,6 @@ function createZombieMesh() {
   torsoGroup.add(ribCage);
   g.add(torsoGroup);
 
-  // Braços
   function makeArm(side) {
     const arm = new THREE.Group();
     const outerMeshes = [], boneMeshes = [];
@@ -811,7 +735,6 @@ function createZombieMesh() {
     const thumb = new THREE.Mesh(makeBox(body.arm * 0.22, 0.11, body.arm * 0.22, 2), skinMat);
     thumb.position.set(side * body.arm * 0.5, -1.02, body.arm * 0.38);
     arm.add(thumb); outerMeshes.push(thumb);
-    // Ossos
     const humerus = new THREE.Mesh(new THREE.CylinderGeometry(body.arm * 0.22, body.arm * 0.20, 0.36, 8), BONE_MAT);
     humerus.position.y = -0.22; humerus.visible = false; arm.add(humerus); boneMeshes.push(humerus);
     const humTop = new THREE.Mesh(new THREE.SphereGeometry(body.arm * 0.30, 8, 8), BONE_MAT);
@@ -832,7 +755,6 @@ function createZombieMesh() {
   const armL = makeArm(-1); armL.position.set(-body.torsoW / 2 - body.arm / 2 + 0.05, 1.5, 0); g.add(armL);
   const armR = makeArm(1); armR.position.set(body.torsoW / 2 + body.arm / 2 - 0.05, 1.5, 0); g.add(armR);
 
-  // Pernas
   function makeLeg() {
     const leg = new THREE.Group();
     const outerMeshes = [], boneMeshes = [];
@@ -881,6 +803,16 @@ function createZombieMesh() {
   g.rotation.x = 0.12;
   g.traverse(c => { c.frustumCulled = false; });
 
+  // ---------- Precompute AABB local por parte (perf!) ----------
+  const localBoxes = {
+    head: computePartLocalBox(headGroup),
+    torso: computePartLocalBox(torsoGroup),
+    armL: computePartLocalBox(armL),
+    armR: computePartLocalBox(armR),
+    legL: computePartLocalBox(legL),
+    legR: computePartLocalBox(legR),
+  };
+
   g.userData = {
     armL, armR, legL, legR,
     head: headGroup, torso: torsoGroup,
@@ -889,6 +821,7 @@ function createZombieMesh() {
     pantsColor, bodyType: body,
     heightScale: body.heightScale,
     zombieType,
+    localBoxes,
   };
   return g;
 }
@@ -923,43 +856,57 @@ function spawnZombie() {
 }
 
 // ============================================================
-// SANGUE
+// SANGUE — POOL DE PARTÍCULAS
 // ============================================================
-const particles = [];
+const bloodGeo = new THREE.BoxGeometry(1, 1, 1);
+const bloodPool = [];
+const bloodActive = [];
+
+function acquireBloodParticle() {
+  let p = bloodPool.pop();
+  if (!p) {
+    p = {
+      mesh: new THREE.Mesh(bloodGeo, new THREE.MeshBasicMaterial({ transparent: true })),
+      vel: new THREE.Vector3(),
+      life: 0, maxLife: 0,
+    };
+  }
+  return p;
+}
 
 function spawnBlood(position, direction = null, count = 16, big = false) {
   for (let i = 0; i < count; i++) {
+    const p = acquireBloodParticle();
     const size = (big ? 0.16 : 0.09) + Math.random() * 0.12;
-    const geo = new THREE.BoxGeometry(size, size, size);
-    const mat = new THREE.MeshBasicMaterial({
-      color: Math.random() > 0.4 ? 0xC0392B : 0x8B0000,
-      transparent: true, opacity: 1,
-    });
-    const p = new THREE.Mesh(geo, mat);
-    p.position.copy(position);
-    let vel;
+    p.mesh.scale.setScalar(size);
+    p.mesh.position.copy(position);
+    p.mesh.material.color.setHex(Math.random() > 0.4 ? 0xC0392B : 0x8B0000);
+    p.mesh.material.opacity = 1;
+
     if (direction) {
-      const dir = direction.clone().normalize();
-      const perp1 = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
-      const perp2 = new THREE.Vector3().crossVectors(dir, perp1).normalize();
+      const dirN = direction.clone().normalize();
+      const perp1 = new THREE.Vector3(-dirN.z, 0, dirN.x).normalize();
+      const perp2 = new THREE.Vector3().crossVectors(dirN, perp1).normalize();
       const a = (Math.random() - 0.5) * 1.8;
       const b = (Math.random() - 0.5) * 1.8;
       const speed = (big ? 9 : 5) + Math.random() * 6;
-      vel = dir.clone().multiplyScalar(speed);
-      vel.addScaledVector(perp1, a * speed * 0.5);
-      vel.addScaledVector(perp2, b * speed * 0.5);
-      vel.y += 3 + Math.random() * 4;
+      p.vel.copy(dirN).multiplyScalar(speed);
+      p.vel.addScaledVector(perp1, a * speed * 0.5);
+      p.vel.addScaledVector(perp2, b * speed * 0.5);
+      p.vel.y += 3 + Math.random() * 4;
     } else {
-      vel = new THREE.Vector3((Math.random() - 0.5) * 8, Math.random() * 5 + 3, (Math.random() - 0.5) * 8);
+      p.vel.set((Math.random() - 0.5) * 8, Math.random() * 5 + 3, (Math.random() - 0.5) * 8);
     }
-    scene.add(p);
-    particles.push({ mesh: p, vel, life: 1.2, maxLife: 1.2 });
+    p.life = 1.2;
+    p.maxLife = 1.2;
+    scene.add(p.mesh);
+    bloodActive.push(p);
   }
 }
 
 function updateParticles(dt) {
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
+  for (let i = bloodActive.length - 1; i >= 0; i--) {
+    const p = bloodActive[i];
     p.vel.y -= 16 * dt;
     p.mesh.position.addScaledVector(p.vel, dt);
     if (p.mesh.position.y < 0.05) {
@@ -971,9 +918,8 @@ function updateParticles(dt) {
     p.mesh.material.opacity = Math.max(0, p.life / p.maxLife);
     if (p.life <= 0) {
       scene.remove(p.mesh);
-      p.mesh.geometry.dispose();
-      p.mesh.material.dispose();
-      particles.splice(i, 1);
+      bloodPool.push(p);
+      bloodActive.splice(i, 1);
     }
   }
 }
@@ -1319,7 +1265,7 @@ function randomDismemberOnDeath(z) {
 }
 
 // ============================================================
-// RAYCAST POR PARTE
+// RAYCAST OTIMIZADO (usa AABB pré-computado)
 // ============================================================
 function rayAABB(origin, dir, min, max, maxDist) {
   let tMin = 0, tMax = maxDist;
@@ -1334,7 +1280,7 @@ function rayAABB(origin, dir, min, max, maxDist) {
     } else {
       let t1 = (mn - o) / d;
       let t2 = (mx - o) / d;
-      if (t1 > t2) [t1, t2] = [t2, t1];
+      if (t1 > t2) { const s = t1; t1 = t2; t2 = s; }
       tMin = Math.max(tMin, t1);
       tMax = Math.min(tMax, t2);
       if (tMin > tMax) return null;
@@ -1344,40 +1290,39 @@ function rayAABB(origin, dir, min, max, maxDist) {
   return tMin >= 0 ? tMin : tMax;
 }
 
-function getZombiePartBoxes(z) {
-  if (z.health <= 0) return [];
+const _tmpBox = new THREE.Box3();
+function getZombiePartBoxes(z, out) {
+  out.length = 0;
+  if (z.health <= 0) return out;
   const ud = z.mesh.userData;
-  const boxes = [];
-  function addBox(key, obj, enabled) {
-    if (!enabled || !obj) return;
-    const box = new THREE.Box3();
-    box.makeEmpty();
-    obj.traverse(c => {
-      if (c.isMesh && c.visible) {
-        if (!c.geometry.boundingBox) c.geometry.computeBoundingBox();
-        const b = c.geometry.boundingBox.clone();
-        b.applyMatrix4(c.matrixWorld);
-        box.union(b);
-      }
-    });
-    if (!box.isEmpty()) boxes.push({ key, box });
+  const lb = ud.localBoxes;
+  if (!lb) return out;
+
+  function addPart(key, group, enabled) {
+    if (!enabled || !group || !lb[key]) return;
+    group.updateMatrixWorld(true);
+    _tmpBox.copy(lb[key]).applyMatrix4(group.matrixWorld);
+    out.push({ key, box: _tmpBox.clone() });
   }
-  addBox('head', ud.head, !z.dismembered.head);
-  addBox('torso', ud.torso, true);
-  addBox('armL', ud.armL, !z.dismembered.armL);
-  addBox('armR', ud.armR, !z.dismembered.armR);
-  addBox('legL', ud.legL, !z.dismembered.legL);
-  addBox('legR', ud.legR, !z.dismembered.legR);
-  return boxes;
+  addPart('head', ud.head, !z.dismembered.head);
+  addPart('torso', ud.torso, true);
+  addPart('armL', ud.armL, !z.dismembered.armL);
+  addPart('armR', ud.armR, !z.dismembered.armR);
+  addPart('legL', ud.legL, !z.dismembered.legL);
+  addPart('legR', ud.legR, !z.dismembered.legR);
+  return out;
 }
 
+const _partBoxesCache = [];
 function raycastZombie(origin, dir, maxDist) {
   let bestZ = null, bestDist = Infinity, bestPart = null, bestPoint = null;
-  for (const z of zombies) {
+  for (let i = 0; i < zombies.length; i++) {
+    const z = zombies[i];
     if (z.health <= 0) continue;
     z.mesh.updateMatrixWorld(true);
-    const boxes = getZombiePartBoxes(z);
-    for (const p of boxes) {
+    const boxes = getZombiePartBoxes(z, _partBoxesCache);
+    for (let b = 0; b < boxes.length; b++) {
+      const p = boxes[b];
       const t = rayAABB(origin, dir, p.box.min, p.box.max, maxDist);
       if (t !== null && t < bestDist) {
         bestDist = t;
@@ -1396,7 +1341,6 @@ function applyHitReaction(z, part, hitDirWorld) {
   const zQuat = z.mesh.quaternion.clone();
   zQuat.invert();
   localDir.applyQuaternion(zQuat);
-
   z.recoil = {
     part,
     dirX: localDir.x,
@@ -1407,7 +1351,7 @@ function applyHitReaction(z, part, hitDirWorld) {
 }
 
 // ============================================================
-// HIT MARKER / FX
+// HIT MARKER / FX (pooleados)
 // ============================================================
 const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
@@ -1424,28 +1368,42 @@ function showDamageFlash() {
   damageFlash.classList.add('active');
   setTimeout(() => damageFlash.classList.remove('active'), 120);
 }
-function spawnMuzzleFlash() {
-  const flash = new THREE.PointLight(0xFFAA33, 4, 7, 2);
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
-  flash.position.copy(camera.position).addScaledVector(dir, 1.4);
-  scene.add(flash);
-  const start = performance.now() / 1000;
-  (function fade() {
-    const t = (performance.now() / 1000 - start) / 0.08;
-    if (t >= 1) { scene.remove(flash); return; }
-    flash.intensity = 4 * (1 - t);
-    requestAnimationFrame(fade);
-  })();
+function addShake(amount) {
+  state.shake = Math.min(0.6, state.shake + amount);
 }
 
+// Muzzle flash pool
+const muzzleLight = new THREE.PointLight(0xFFAA33, 0, 8, 2);
+scene.add(muzzleLight);
+let muzzleLightEnd = 0;
+function spawnMuzzleFlash() {
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  muzzleLight.position.copy(camera.position).addScaledVector(dir, 1.4);
+  muzzleLightEnd = performance.now() / 1000 + 0.08;
+  muzzleLight.intensity = 4;
+}
+
+// Tracer pool
+const tracerPool = [];
 const tracers = [];
 function spawnTracer(from, to) {
-  const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
-  const mat = new THREE.LineBasicMaterial({ color: 0xFFDD33, transparent: true, opacity: 0.9 });
-  const line = new THREE.Line(geo, mat);
-  scene.add(line);
-  tracers.push({ mesh: line, life: 0.08 });
+  let t = tracerPool.pop();
+  if (!t) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const mat = new THREE.LineBasicMaterial({ color: 0xFFDD33, transparent: true, opacity: 0.9 });
+    t = { mesh: new THREE.Line(geo, mat), life: 0 };
+    scene.add(t.mesh);
+  }
+  const arr = t.mesh.geometry.attributes.position.array;
+  arr[0] = from.x; arr[1] = from.y; arr[2] = from.z;
+  arr[3] = to.x; arr[4] = to.y; arr[5] = to.z;
+  t.mesh.geometry.attributes.position.needsUpdate = true;
+  t.mesh.visible = true;
+  t.mesh.material.opacity = 0.9;
+  t.life = 0.08;
+  tracers.push(t);
 }
 function updateTracers(dt) {
   for (let i = tracers.length - 1; i >= 0; i--) {
@@ -1453,23 +1411,24 @@ function updateTracers(dt) {
     t.life -= dt;
     t.mesh.material.opacity = Math.max(0, t.life / 0.08);
     if (t.life <= 0) {
-      scene.remove(t.mesh);
-      t.mesh.geometry.dispose();
-      t.mesh.material.dispose();
+      t.mesh.visible = false;
+      tracerPool.push(t);
       tracers.splice(i, 1);
     }
   }
 }
 
-function damageZombie(z, damage, isCrit, part, hitDir, hitPoint) {
+function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   z.health -= damage;
   const isHead = part === 'head';
 
   spawnBlood(hitPoint, hitDir, (isCrit || isHead) ? 35 : 18, isHead);
   if (isCrit || isHead) spawnBlood(hitPoint, null, 15, true);
 
-  Sfx.playKnifeHitFlesh();
+  if (sourceType === 'melee') Sfx.playKnifeHitFlesh();
+  else Sfx.playBulletImpact();
   showHitMarker(isCrit || isHead);
+  addShake(CONFIG.shake.hit);
 
   applyHitReaction(z, part, hitDir);
 
@@ -1495,6 +1454,7 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint) {
   if (z.health <= 0) {
     Sfx.playZombieDeath();
     Sfx.playCoin();
+    addShake(CONFIG.shake.kill);
     state.coins += Math.round(CONFIG.zombie.coinReward * state.coinMult);
     state.xp += Math.round(CONFIG.zombie.xpReward * state.xpMult);
     if (state.lifesteal > 0) state.health = Math.min(state.maxHealth, state.health + state.lifesteal);
@@ -1517,14 +1477,15 @@ function attack() {
   const weaponId = state.inventory[state.currentSlot] || 'knife';
   const weapon = WEAPONS[weaponId];
   const cd = weapon.cooldown / state.attackSpeedMult;
-  if (now - state.lastAttackTime < cd) return;
-  state.lastAttackTime = now;
+  if (now - state.lastAttackTime < cd) return false;
 
   if (weapon.type === 'ranged' && weapon.ammo !== null) {
-    if (weapon.ammo <= 0) return;
+    if (weapon.ammo <= 0) { state.lastAttackTime = now; return false; }
     weapon.ammo--;
     updateHUD();
   }
+
+  state.lastAttackTime = now;
 
   if (weapon.type === 'melee') Sfx.playKnifeSwing();
   else if (weaponId === 'pistol') Sfx.playPistol();
@@ -1535,24 +1496,24 @@ function attack() {
   else if (weaponId === 'launcher') Sfx.playLauncher();
 
   triggerSwing();
-  if (weapon.type === 'ranged') spawnMuzzleFlash();
+  if (weapon.type === 'ranged') {
+    spawnMuzzleFlash();
+    addShake(CONFIG.shake.shoot);
+  }
 
   if (weapon.type === 'melee') {
     const forward = new THREE.Vector3();
     camera.getWorldDirection(forward);
-    forward.y = 0;
-    forward.normalize();
+    forward.y = 0; forward.normalize();
     const range = weapon.range + state.rangeBonus;
     const aimRegion = getAimRegion();
 
-    const snapshot = [...zombies];
-    for (const z of snapshot) {
+    for (let i = 0; i < zombies.length; i++) {
+      const z = zombies[i];
       if (z.health <= 0) continue;
-
       const dx = z.mesh.position.x - player.position.x;
       const dz = z.mesh.position.z - player.position.z;
       const horizDist = Math.sqrt(dx * dx + dz * dz);
-
       if (horizDist > range) continue;
 
       let part;
@@ -1561,20 +1522,17 @@ function attack() {
       else part = 'torso';
 
       const hitPoint = z.mesh.position.clone();
-      hitPoint.y += (part === 'head') ? 1.85 :
-                    (part === 'legL' || part === 'legR') ? 0.5 : 1.15;
+      hitPoint.y += (part === 'head') ? 1.85 : (part === 'legL' || part === 'legR') ? 0.5 : 1.15;
 
       const isCrit = rollCrit();
       const baseDmg = weapon.damage * state.damageMult;
       const critMult = CONFIG.crit.damageMultiplier + state.critDamageBonus;
       const headMult = part === 'head' ? CONFIG.headshotMultiplier : 1;
       const dmg = baseDmg * headMult * (isCrit ? critMult : 1);
-
       const hitDir = horizDist > 0.001
         ? new THREE.Vector3(dx / horizDist, 0, dz / horizDist)
         : forward.clone();
-
-      damageZombie(z, dmg, isCrit, part, hitDir, hitPoint);
+      damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, 'melee');
     }
 
     const camPos = camera.position.clone();
@@ -1585,14 +1543,13 @@ function attack() {
         break;
       }
     }
-    return;
+    return true;
   }
 
   const origin = camera.position.clone();
   const forward = new THREE.Vector3();
   camera.getWorldDirection(forward);
   const range = weapon.range + state.rangeBonus;
-
   const baseSpread = state.aiming ? weapon.spread * 0.25 : weapon.spread;
 
   for (let i = 0; i < weapon.pellets; i++) {
@@ -1606,18 +1563,18 @@ function attack() {
     const result = raycastZombie(origin, dir, range);
     if (result.zombie) {
       spawnTracer(origin.clone().addScaledVector(dir, 0.8), result.point);
-
       const isCrit = rollCrit();
       const baseDmg = weapon.damage * state.damageMult;
       const critMult = CONFIG.crit.damageMultiplier + state.critDamageBonus;
       const headMult = result.part === 'head' ? CONFIG.headshotMultiplier : 1;
       const dmg = baseDmg * headMult * (isCrit ? critMult : 1);
       const hd = dir.clone(); hd.y = 0; hd.normalize();
-      damageZombie(result.zombie, dmg, isCrit, result.part, hd, result.point);
+      damageZombie(result.zombie, dmg, isCrit, result.part, hd, result.point, 'ranged');
     } else {
       spawnTracer(origin.clone().addScaledVector(dir, 0.8), origin.clone().addScaledVector(dir, range));
     }
   }
+  return true;
 }
 
 function rollCrit() { return Math.random() < state.critChance; }
@@ -1744,8 +1701,7 @@ function updateWeaponSlotsHUD() {
 }
 
 function updateCrosshair() {
-  if (state.aiming) document.body.classList.add('aiming');
-  else document.body.classList.remove('aiming');
+  document.body.classList.toggle('aiming', state.aiming);
 }
 
 document.addEventListener('keydown', e => {
@@ -1755,6 +1711,7 @@ document.addEventListener('keydown', e => {
   if (e.code === 'Digit3') switchToSlot(3);
   if (e.code === 'Digit4') switchToSlot(4);
   if (e.code === 'KeyE') tryBuyWeapon();
+  if (e.code === 'KeyM') Sfx.setMuted(!Sfx.isMuted());
 });
 document.addEventListener('keyup', e => { state.keys[e.code] = false; });
 
@@ -1795,10 +1752,7 @@ document.addEventListener('mouseup', e => {
     updateCrosshair();
   }
 });
-
-document.addEventListener('contextmenu', e => {
-  if (state.running) e.preventDefault();
-});
+document.addEventListener('contextmenu', e => { if (state.running) e.preventDefault(); });
 
 function isMobile() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || 'ontouchstart' in window;
@@ -1869,11 +1823,16 @@ setupMobile();
 
 const clock = new THREE.Clock();
 let shadowFrame = 0;
+let shadowDirty = true;
+
+const _fwdV = new THREE.Vector3();
+const _rightV = new THREE.Vector3();
+const _moveV = new THREE.Vector3();
 
 function updatePlayer(dt) {
   const speed = CONFIG.player.speed * state.speedMult * (state.aiming ? 0.5 : 1);
-  const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-  const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+  _fwdV.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  _rightV.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
   let mx = 0, mz = 0;
   if (isMobile()) { mx = mobile.moveX; mz = mobile.moveY; }
   else {
@@ -1882,12 +1841,12 @@ function updatePlayer(dt) {
     if (state.keys['KeyA']) mx -= 1;
     if (state.keys['KeyD']) mx += 1;
   }
-  const v = new THREE.Vector3();
-  v.addScaledVector(fwd, -mz);
-  v.addScaledVector(right, mx);
-  state.isMoving = v.length() > 0.05;
-  if (v.length() > 0) v.normalize();
-  player.position.addScaledVector(v, speed * dt);
+  _moveV.set(0, 0, 0);
+  _moveV.addScaledVector(_fwdV, -mz);
+  _moveV.addScaledVector(_rightV, mx);
+  state.isMoving = _moveV.lengthSq() > 0.0025;
+  if (state.isMoving) _moveV.normalize();
+  player.position.addScaledVector(_moveV, speed * dt);
 
   resolveWallCollisions(player.position, CONFIG.player.radius);
 
@@ -1904,6 +1863,17 @@ function updatePlayer(dt) {
   camera.rotation.order = 'YXZ';
   camera.rotation.y = player.yaw;
   camera.rotation.x = player.pitch;
+
+  // Screen shake
+  if (state.shake > 0.001) {
+    camera.position.x += (Math.random() - 0.5) * state.shake;
+    camera.position.y += (Math.random() - 0.5) * state.shake;
+    camera.rotation.z = (Math.random() - 0.5) * state.shake * 0.5;
+    state.shake *= Math.pow(0.001, dt);
+  } else {
+    camera.rotation.z = 0;
+    state.shake = 0;
+  }
 }
 
 function resolvePlayerZombieCollision() {
@@ -1926,21 +1896,10 @@ function resolvePlayerZombieCollision() {
 }
 
 function resolveZombieWallCollision(z) {
-  const p = z.mesh.position;
-  for (const box of world.wallColliders) {
-    if (p.x + 0.4 < box.minX || p.x - 0.4 > box.maxX) continue;
-    if (p.z + 0.4 < box.minZ || p.z - 0.4 > box.maxZ) continue;
-    const r = circleVsAABB(p.x, p.z, CONFIG.zombie.radius, box);
-    if (r) { p.x = r.x; p.z = r.z; }
-  }
-  for (const box of world.furnitureColliders) {
-    if (p.x + 0.4 < box.minX || p.x - 0.4 > box.maxX) continue;
-    if (p.z + 0.4 < box.minZ || p.z - 0.4 > box.maxZ) continue;
-    const r = circleVsAABB(p.x, p.z, CONFIG.zombie.radius, box);
-    if (r) { p.x = r.x; p.z = r.z; }
-  }
+  resolveWallCollisions(z.mesh.position, CONFIG.zombie.radius);
 }
 
+const _toV = new THREE.Vector3();
 function updateZombies(dt) {
   const now = performance.now() / 1000;
   groanTimer -= dt;
@@ -1948,24 +1907,22 @@ function updateZombies(dt) {
     groanTimer = 1.5 + Math.random() * 3;
     Sfx.playGroan();
   }
-  zombies.forEach(z => {
-    if (z.health <= 0) return;
+  for (let i = zombies.length - 1; i >= 0; i--) {
+    const z = zombies[i];
+    if (z.health <= 0) continue;
     z.emergeTime += dt;
     const emerge = Math.min(1, z.emergeTime / 1.5);
     const isWounded = z.health / z.maxHealth < 0.5;
     const ud = z.mesh.userData;
-    const to = new THREE.Vector3().subVectors(player.position, z.mesh.position);
-    to.y = 0;
-    const dist = to.length();
+    _toV.subVectors(player.position, z.mesh.position);
+    _toV.y = 0;
+    const dist = _toV.length();
 
-    {
-      const _dx = player.position.x - z.mesh.position.x;
-      const _dz = player.position.z - z.mesh.position.z;
-      z.mesh.rotation.y = Math.atan2(_dx, _dz);
-    }
+    const _dx = player.position.x - z.mesh.position.x;
+    const _dz = player.position.z - z.mesh.position.z;
+    z.mesh.rotation.y = Math.atan2(_dx, _dz);
 
     const staggering = z.hitReactEndTime > now;
-
     let sm = emerge;
     if (z.dismembered.legL || z.dismembered.legR) sm *= 0.55;
     if (z.dismembered.legL && z.dismembered.legR) sm *= 0.3;
@@ -2004,26 +1961,22 @@ function updateZombies(dt) {
 
     if (z.recoil) {
       const el = now - z.recoil.startTime;
-      if (el >= z.recoil.duration) {
-        z.recoil = null;
-      } else {
+      if (el >= z.recoil.duration) z.recoil = null;
+      else {
         const t = el / z.recoil.duration;
         const curve = Math.sin(t * Math.PI);
         const amp = curve * 1.3;
         const { part, dirX, dirZ } = z.recoil;
-
         let obj = null;
         if (part === 'head' && !z.dismembered.head) obj = ud.head;
         else if (part === 'armL' && !z.dismembered.armL) obj = ud.armL;
         else if (part === 'armR' && !z.dismembered.armR) obj = ud.armR;
         else if (part === 'legL' && !z.dismembered.legL) obj = ud.legL;
         else if (part === 'legR' && !z.dismembered.legR) obj = ud.legR;
-
         if (obj) {
           obj.rotation.x += dirZ * amp;
           obj.rotation.z += dirX * amp;
         }
-
         if (part === 'head' || part === 'torso') {
           z.mesh.rotation.x += dirZ * amp * 0.4;
           z.mesh.rotation.z += dirX * amp * 0.35;
@@ -2037,26 +1990,39 @@ function updateZombies(dt) {
       z.mesh.rotation.z *= 0.9;
     }
 
-    if (z.dismembered.head) { z.health = 0; return; }
+    // ==== BUG FIX: zumbi decapitado agora morre corretamente ====
+    if (z.dismembered.head) {
+      // Matar oficialmente
+      Sfx.playZombieDeath();
+      state.zombiesAlive--;
+      const idx = zombies.indexOf(z);
+      if (idx >= 0) zombies.splice(idx, 1);
+      startRagdoll(z.mesh, new THREE.Vector3(_dx, 0, _dz).normalize(), 1.0, z.dismembered);
+      updateHUD();
+      shadowDirty = true;
+      continue;
+    }
 
     if (emerge >= 0.5) {
       const zs = CONFIG.zombie.speed * (isWounded ? 0.6 : 1);
       if (!staggering && dist > CONFIG.zombie.attackRange) {
-        to.normalize();
-        z.mesh.position.addScaledVector(to, zs * dt);
+        _toV.normalize();
+        z.mesh.position.addScaledVector(_toV, zs * dt);
       } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
         z.lastAttackTime = now;
         state.health -= CONFIG.zombie.damage * (1 - state.damageReduction);
         Sfx.playPlayerHurt();
         showDamageFlash();
+        addShake(0.15);
         updateHUD();
         if (state.health <= 0) gameOver();
       }
     }
 
     resolveZombieWallCollision(z);
-  });
+  }
 
+  // Colisão zumbi-zumbi
   for (let i = 0; i < zombies.length; i++) {
     for (let j = i + 1; j < zombies.length; j++) {
       const a = zombies[i], b = zombies[j];
@@ -2169,7 +2135,7 @@ function tryBuyWeapon() {
   nearWeapon.ring.material.dispose();
   if (state.currentSlot === w.slot) buildViewModel(nearWeapon.weaponId);
   else switchToSlot(w.slot);
-  Sfx.playCoin();
+  Sfx.playBuy();
   updateHUD();
   updateWeaponSlotsHUD();
 }
@@ -2187,9 +2153,20 @@ function updateFlyingLimbs(dt) {
   }
 }
 
+let lastTimeText = '';
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
+  const now = performance.now() / 1000;
+
+  // Muzzle light decay
+  if (muzzleLight.intensity > 0) {
+    const remain = muzzleLightEnd - now;
+    if (remain <= 0) muzzleLight.intensity = 0;
+    else muzzleLight.intensity = 4 * (remain / 0.08);
+  }
+
   if (state.running && !state.levelUpActive) {
     updatePlayer(dt);
     resolvePlayerZombieCollision();
@@ -2222,7 +2199,11 @@ function animate() {
     const elapsed = Math.floor((performance.now() - state.startTime) / 1000);
     const m = Math.floor(elapsed / 60);
     const s = (elapsed % 60).toString().padStart(2, '0');
-    document.getElementById('timer').textContent = `${m}:${s}`;
+    const t = `${m}:${s}`;
+    if (t !== lastTimeText) {
+      document.getElementById('timer').textContent = t;
+      lastTimeText = t;
+    }
   } else if (!state.running) {
     updateParticles(dt);
     updateBloodPools(dt);
@@ -2275,6 +2256,7 @@ function startGame() {
   state.currentSlot = 1;
   state.mouseDown = false;
   state.aiming = false;
+  state.shake = 0;
   state.lastAttackTime = 0;
   updateCrosshair();
 
@@ -2296,11 +2278,12 @@ function startGame() {
   ragdolls.length = 0;
   flyingLimbs.forEach(l => l.dispose());
   flyingLimbs.length = 0;
-  particles.forEach(p => scene.remove(p.mesh));
-  particles.length = 0;
+  // Clear pooled particles
+  bloodActive.forEach(p => scene.remove(p.mesh));
+  bloodActive.length = 0;
   bloodPools.forEach(b => scene.remove(b.mesh));
   bloodPools.length = 0;
-  tracers.forEach(t => scene.remove(t.mesh));
+  tracers.forEach(t => { t.mesh.visible = false; tracerPool.push(t); });
   tracers.length = 0;
 
   player.position.set(0, CONFIG.player.height, 0);
