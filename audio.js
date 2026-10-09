@@ -9,7 +9,6 @@ export function resumeAudio() {
   if (ctx && ctx.state === 'suspended') ctx.resume();
 }
 
-// Ruído branco
 function makeNoise(duration, decay = 2) {
   const buffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
   const data = buffer.getChannelData(0);
@@ -19,9 +18,6 @@ function makeNoise(duration, decay = 2) {
   return buffer;
 }
 
-// ============================================================
-// FACA — lamina cortando o ar (whoosh)
-// ============================================================
 export function playKnifeSwing() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -39,11 +35,9 @@ export function playKnifeSwing() {
   src.start(t);
 }
 
-// FACA — splash de carne (wet squish)
 export function playKnifeHitFlesh() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  // Thud grave
   const o = ctx.createOscillator();
   o.type = 'sine';
   o.frequency.setValueAtTime(140, t);
@@ -53,7 +47,6 @@ export function playKnifeHitFlesh() {
   g1.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
   o.connect(g1).connect(ctx.destination);
   o.start(t); o.stop(t + 0.2);
-  // Squish úmido (ruído filtrado)
   const src = ctx.createBufferSource();
   src.buffer = makeNoise(0.12, 2);
   const filter = ctx.createBiquadFilter();
@@ -67,13 +60,9 @@ export function playKnifeHitFlesh() {
   src.start(t);
 }
 
-// ============================================================
-// PISTOLA — crack curto e agudo
-// ============================================================
 export function playPistol() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  // Crack agudo (ataque)
   const o = ctx.createOscillator();
   o.type = 'square';
   o.frequency.setValueAtTime(800, t);
@@ -83,7 +72,6 @@ export function playPistol() {
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
   o.connect(g).connect(ctx.destination);
   o.start(t); o.stop(t + 0.1);
-  // Ruído seco
   const src = ctx.createBufferSource();
   src.buffer = makeNoise(0.08, 4);
   const filter = ctx.createBiquadFilter();
@@ -96,9 +84,6 @@ export function playPistol() {
   src.start(t);
 }
 
-// ============================================================
-// REVOLVER — crack grave com reverb
-// ============================================================
 export function playRevolver() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -123,9 +108,6 @@ export function playRevolver() {
   src.start(t);
 }
 
-// ============================================================
-// SMG — chatter rápido (som de metralhadora)
-// ============================================================
 export function playSMG() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -150,9 +132,6 @@ export function playSMG() {
   src.start(t);
 }
 
-// ============================================================
-// RIFLE — crack poderoso com eco
-// ============================================================
 export function playRifle() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -178,13 +157,9 @@ export function playRifle() {
   src.start(t);
 }
 
-// ============================================================
-// SHOTGUN — boom de escopeta
-// ============================================================
 export function playShotgun() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  // Boom grave
   const o = ctx.createOscillator();
   o.type = 'sawtooth';
   o.frequency.setValueAtTime(150, t);
@@ -194,7 +169,6 @@ export function playShotgun() {
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
   o.connect(g).connect(ctx.destination);
   o.start(t); o.stop(t + 0.3);
-  // Explosão de ruído
   const src = ctx.createBufferSource();
   src.buffer = makeNoise(0.3, 2);
   const filter = ctx.createBiquadFilter();
@@ -208,13 +182,9 @@ export function playShotgun() {
   src.start(t);
 }
 
-// ============================================================
-// LANÇA-FOGUETES — whoosh + explosão
-// ============================================================
 export function playLauncher() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  // Whoosh inicial
   const src = ctx.createBufferSource();
   src.buffer = makeNoise(0.5, 1.5);
   const filter = ctx.createBiquadFilter();
@@ -226,7 +196,6 @@ export function playLauncher() {
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
   src.connect(filter).connect(g).connect(ctx.destination);
   src.start(t);
-  // Explosão grave
   const o = ctx.createOscillator();
   o.type = 'sawtooth';
   o.frequency.setValueAtTime(120, t + 0.3);
@@ -239,9 +208,6 @@ export function playLauncher() {
   o.start(t + 0.3); o.stop(t + 0.9);
 }
 
-// ============================================================
-// RECARGA / OUTROS
-// ============================================================
 export function playReload() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -342,9 +308,4 @@ export function playPlayerHurt() {
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
   o.connect(g).connect(ctx.destination);
   o.start(t); o.stop(t + 0.25);
-}
-
-export function playHit() {
-  // Mantido pra compatibilidade — não usar mais
-  playKnifeHitFlesh();
 }
