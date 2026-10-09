@@ -2,6 +2,16 @@ import * as THREE from 'three';
 import * as Textures from './textures.js';
 import { buildWorld } from './scenery.js';
 import * as Sfx from './audio.js';
+import * as bus from './src/core/bus.js';
+import { Ev } from './src/core/events.js';
+import { nextId } from './src/core/ids.js';
+import { LocalAdapter } from './src/net/adapter.js';
+
+// Em single-player usa LocalAdapter (no-op). Em MP: trocar por MultiplayerAdapter.
+bus.setAdapter(new LocalAdapter());
+// Descomente para debug de eventos no console:
+// bus.setDebug(true);
+// bus.onAny((t, p) => console.log('[EVT]', t, p));
 
 const WEAPONS = {
   knife:    { id: 'knife',    name: 'FACA',           slot: 1, damage: 25, range: 3.2, cooldown: 0.4,  type: 'melee',  ammo: null, maxAmmo: null, cost: 0,    spread: 0,     pellets: 1, auto: false, color: 0xBDC3C7 },
@@ -383,7 +393,16 @@ function updateWeaponViewModel(dt) {
   }
 }
 
-const player = { position: new THREE.Vector3(0, CONFIG.player.height, 0), yaw: 0, pitch: 0 };
+// ============================================================
+// PLAYER (com ID único para rede)
+// ============================================================
+const player = {
+  id: nextId('p'),
+  position: new THREE.Vector3(0, CONFIG.player.height, 0),
+  yaw: 0,
+  pitch: 0,
+};
+
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function makeBox(w, h, d, s = 5) { return new THREE.BoxGeometry(w, h, d, s, s, s); }
 function makeJoint(r, seg = 10) { return new THREE.SphereGeometry(r, seg, Math.max(6, Math.floor(seg * 0.75))); }
@@ -803,7 +822,6 @@ function createZombieMesh() {
   g.rotation.x = 0.12;
   g.traverse(c => { c.frustumCulled = false; });
 
-  // ---------- Precompute AABB local por parte (perf!) ----------
   const localBoxes = {
     head: computePartLocalBox(headGroup),
     torso: computePartLocalBox(torsoGroup),
@@ -842,7 +860,8 @@ function spawnZombie() {
   mesh.position.set(x, 0, z);
   scene.add(mesh);
 
-  zombies.push({
+  const z = {
+    id: nextId('z'),
     mesh, health: CONFIG.zombie.maxHealth, maxHealth: CONFIG.zombie.maxHealth,
     lastAttackTime: 0, walkPhase: Math.random() * Math.PI * 2,
     hitReactEndTime: 0, hitDirection: new THREE.Vector3(),
@@ -850,8 +869,17 @@ function spawnZombie() {
     emergeTime: 0,
     recoil: null,
     anim: { armLX: 0, armRX: 0, legLX: 0, legRX: 0, headRZ: 0, headRY: 0, bodyLean: 0.12 },
-  });
+  };
+  zombies.push(z);
   state.zombiesAlive++;
+
+  // -------- EVENTO: zumbi spawnou --------
+  bus.emit(Ev.ZOMBIE_SPAWNED, {
+    id: z.id,
+    type: mesh.userData.zombieType,
+    pos: { x: mesh.position.x, y: 0, z: mesh.position.z },
+  });
+
   updateHUD();
 }
 
@@ -1236,6 +1264,13 @@ function detachLimb(z, key, hitDir) {
   flyingLimbs.push(piece);
   spawnBlood(wp, dir, 35, true);
   spawnBlood(wp, null, 15, true);
+
+  // -------- EVENTO: membro destacado --------
+  bus.emit(Ev.DISMEMBER, {
+    zombieId: z.id,
+    part: key,
+    pos: { x: wp.x, y: wp.y, z: wp.z },
+  });
 }
 
 function randomDismemberOnDeath(z) {
@@ -1422,6 +1457,19 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   z.health -= damage;
   const isHead = part === 'head';
 
+  // -------- EVENTO: dano causado --------
+  bus.emit(Ev.DAMAGE, {
+    attackerId: player.id,
+    victimId: z.id,
+    amount: damage,
+    part,
+    isCrit,
+    headshot: isHead,
+    sourceType,
+    weaponId: state.inventory[state.currentSlot],
+    pos: { x: hitPoint.x, y: hitPoint.y, z: hitPoint.z },
+  });
+
   spawnBlood(hitPoint, hitDir, (isCrit || isHead) ? 35 : 18, isHead);
   if (isCrit || isHead) spawnBlood(hitPoint, null, 15, true);
 
@@ -1455,9 +1503,27 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     Sfx.playZombieDeath();
     Sfx.playCoin();
     addShake(CONFIG.shake.kill);
-    state.coins += Math.round(CONFIG.zombie.coinReward * state.coinMult);
-    state.xp += Math.round(CONFIG.zombie.xpReward * state.xpMult);
+
+    const coinGain = Math.round(CONFIG.zombie.coinReward * state.coinMult);
+    const xpGain = Math.round(CONFIG.zombie.xpReward * state.xpMult);
+
+    state.coins += coinGain;
+    state.xp += xpGain;
     if (state.lifesteal > 0) state.health = Math.min(state.maxHealth, state.health + state.lifesteal);
+
+    // -------- EVENTOS de morte / kill / economia --------
+    bus.emit(Ev.DEATH, { id: z.id, killerId: player.id, part });
+    bus.emit(Ev.KILL, {
+      killerId: player.id,
+      victimId: z.id,
+      victimType: z.mesh.userData.zombieType,
+      headshot: isHead,
+      weaponId: state.inventory[state.currentSlot],
+    });
+    if (isHead) bus.emit(Ev.HEADSHOT, { playerId: player.id, victimId: z.id });
+    bus.emit(Ev.COIN_GAIN, { playerId: player.id, amount: coinGain, total: state.coins });
+    bus.emit(Ev.XP_GAIN, { playerId: player.id, amount: xpGain, total: state.xp });
+
     checkLevelUp();
     randomDismemberOnDeath(z);
     const overkill = Math.min(2, Math.max(0.7, -z.health / CONFIG.zombie.maxHealth + 1));
@@ -1486,6 +1552,18 @@ function attack() {
   }
 
   state.lastAttackTime = now;
+
+  // -------- EVENTO: ataque disparado --------
+  bus.emit(Ev.ATTACK, {
+    playerId: player.id,
+    weaponId,
+    weaponType: weapon.type,
+    ammo: weapon.ammo,
+    aiming: state.aiming,
+    pos: { x: player.position.x, y: player.position.y, z: player.position.z },
+    yaw: player.yaw,
+    pitch: player.pitch,
+  });
 
   if (weapon.type === 'melee') Sfx.playKnifeSwing();
   else if (weaponId === 'pistol') Sfx.playPistol();
@@ -1586,6 +1664,10 @@ function checkLevelUp() {
     state.level++;
     state.xpToNextLevel = Math.floor(state.xpToNextLevel * 1.4);
     state.pendingLevelUps++;
+
+    // -------- EVENTO: level up --------
+    bus.emit(Ev.LEVEL_UP, { playerId: player.id, level: state.level });
+
     leveled = true;
   }
   if (leveled) {
@@ -1621,6 +1703,10 @@ function showLevelUp() {
 function pickSkill(skillId) {
   const skill = SKILLS.find(s => s.id === skillId);
   if (skill) skill.apply();
+
+  // -------- EVENTO: skill escolhida --------
+  bus.emit(Ev.SKILL_PICK, { playerId: player.id, skillId, level: state.level });
+
   document.getElementById('levelup').classList.add('hidden');
   if (state.pendingLevelUps > 0) setTimeout(showLevelUp, 220);
   else {
@@ -1654,6 +1740,10 @@ function startWave() {
   );
   state.zombiesRemainingInWave = count;
   showWaveBanner('HORDA ' + state.wave);
+
+  // -------- EVENTO: horda começou --------
+  bus.emit(Ev.WAVE_START, { wave: state.wave, count });
+
   updateHUD();
   state.waveIntervalId = setInterval(() => {
     if (!state.running) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; return; }
@@ -1669,6 +1759,10 @@ function checkWaveComplete() {
   if (state.betweenWaves) return;
   if (state.zombiesAlive === 0 && state.zombiesRemainingInWave <= 0) {
     state.betweenWaves = true;
+
+    // -------- EVENTO: horda limpa --------
+    bus.emit(Ev.WAVE_CLEAR, { wave: state.wave });
+
     showWaveBanner('PROXIMA EM 5s');
     setTimeout(() => { if (state.running) startWave(); }, CONFIG.wave.breakTime * 1000);
   }
@@ -1684,6 +1778,14 @@ function switchToSlot(slot) {
     updateCrosshair();
   }
   buildViewModel(weaponId);
+
+  // -------- EVENTO: troca de arma --------
+  bus.emit(Ev.PLAYER_WEAPON, {
+    playerId: player.id,
+    slot,
+    weaponId,
+  });
+
   updateHUD();
   updateWeaponSlotsHUD();
 }
@@ -1823,7 +1925,6 @@ setupMobile();
 
 const clock = new THREE.Clock();
 let shadowFrame = 0;
-let shadowDirty = true;
 
 const _fwdV = new THREE.Vector3();
 const _rightV = new THREE.Vector3();
@@ -1990,16 +2091,24 @@ function updateZombies(dt) {
       z.mesh.rotation.z *= 0.9;
     }
 
-    // ==== BUG FIX: zumbi decapitado agora morre corretamente ====
+    // ---- BUG FIX: zumbi decapitado agora morre ----
     if (z.dismembered.head) {
-      // Matar oficialmente
       Sfx.playZombieDeath();
       state.zombiesAlive--;
       const idx = zombies.indexOf(z);
       if (idx >= 0) zombies.splice(idx, 1);
+
+      bus.emit(Ev.DEATH, { id: z.id, killerId: player.id, part: 'head' });
+      bus.emit(Ev.KILL, {
+        killerId: player.id,
+        victimId: z.id,
+        victimType: z.mesh.userData.zombieType,
+        headshot: true,
+        weaponId: state.inventory[state.currentSlot],
+      });
+
       startRagdoll(z.mesh, new THREE.Vector3(_dx, 0, _dz).normalize(), 1.0, z.dismembered);
       updateHUD();
-      shadowDirty = true;
       continue;
     }
 
@@ -2010,10 +2119,20 @@ function updateZombies(dt) {
         z.mesh.position.addScaledVector(_toV, zs * dt);
       } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
         z.lastAttackTime = now;
-        state.health -= CONFIG.zombie.damage * (1 - state.damageReduction);
+        const _dmg = CONFIG.zombie.damage * (1 - state.damageReduction);
+        state.health -= _dmg;
         Sfx.playPlayerHurt();
         showDamageFlash();
         addShake(0.15);
+
+        // -------- EVENTO: player tomou dano --------
+        bus.emit(Ev.PLAYER_HIT, {
+          playerId: player.id,
+          attackerId: z.id,
+          amount: _dmg,
+          pos: { x: z.mesh.position.x, y: 1, z: z.mesh.position.z },
+        });
+
         updateHUD();
         if (state.health <= 0) gameOver();
       }
@@ -2022,7 +2141,6 @@ function updateZombies(dt) {
     resolveZombieWallCollision(z);
   }
 
-  // Colisão zumbi-zumbi
   for (let i = 0; i < zombies.length; i++) {
     for (let j = i + 1; j < zombies.length; j++) {
       const a = zombies[i], b = zombies[j];
@@ -2136,6 +2254,15 @@ function tryBuyWeapon() {
   if (state.currentSlot === w.slot) buildViewModel(nearWeapon.weaponId);
   else switchToSlot(w.slot);
   Sfx.playBuy();
+
+  // -------- EVENTO: compra --------
+  bus.emit(Ev.WEAPON_BUY, {
+    playerId: player.id,
+    weaponId: w.id,
+    cost: w.cost,
+    slot: w.slot,
+  });
+
   updateHUD();
   updateWeaponSlotsHUD();
 }
@@ -2160,7 +2287,6 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
 
-  // Muzzle light decay
   if (muzzleLight.intensity > 0) {
     const remain = muzzleLightEnd - now;
     if (remain <= 0) muzzleLight.intensity = 0;
@@ -2278,7 +2404,6 @@ function startGame() {
   ragdolls.length = 0;
   flyingLimbs.forEach(l => l.dispose());
   flyingLimbs.length = 0;
-  // Clear pooled particles
   bloodActive.forEach(p => scene.remove(p.mesh));
   bloodActive.length = 0;
   bloodPools.forEach(b => scene.remove(b.mesh));
@@ -2300,6 +2425,15 @@ function startGame() {
 }
 
 function gameOver() {
+  // -------- EVENTO: player morreu --------
+  bus.emit(Ev.PLAYER_DIED, {
+    playerId: player.id,
+    wave: state.wave,
+    level: state.level,
+    coins: state.coins,
+    xp: state.xp,
+  });
+
   state.running = false;
   state.aiming = false;
   updateCrosshair();
