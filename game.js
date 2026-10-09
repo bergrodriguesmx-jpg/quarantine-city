@@ -463,7 +463,6 @@ function createZombieMesh() {
     hatTop.position.y = 0.15; hatGroup.add(hatTop);
     hatGroup.position.y = 0.34; headGroup.add(hatGroup);
   }
-  // Crânio interno
   const skullBone = new THREE.Mesh(makeBox(0.48, 0.48, 0.48, 4), BONE_MAT);
   skullBone.visible = false; headGroup.add(skullBone);
   const jawBone = new THREE.Mesh(makeBox(0.38, 0.14, 0.38, 3), BONE_DARK_MAT);
@@ -537,7 +536,6 @@ function createZombieMesh() {
     const thumb = new THREE.Mesh(makeBox(body.arm * 0.22, 0.11, body.arm * 0.22, 2), skinMat);
     thumb.position.set(side * body.arm * 0.5, -1.02, body.arm * 0.38);
     arm.add(thumb); outerMeshes.push(thumb);
-    // Ossos
     const humerus = new THREE.Mesh(new THREE.CylinderGeometry(body.arm * 0.22, body.arm * 0.20, 0.36, 8), BONE_MAT);
     humerus.position.y = -0.22; humerus.visible = false; arm.add(humerus); boneMeshes.push(humerus);
     const humTop = new THREE.Mesh(new THREE.SphereGeometry(body.arm * 0.30, 8, 8), BONE_MAT);
@@ -579,7 +577,6 @@ function createZombieMesh() {
     const tip = new THREE.Mesh(makeBox(body.leg * 1.15, 0.08, body.leg * 0.45, 2), shoeMat);
     tip.position.set(0, -1.14, body.leg * 0.85);
     leg.add(tip); outerMeshes.push(tip);
-    // Ossos
     const femur = new THREE.Mesh(new THREE.CylinderGeometry(body.leg * 0.22, body.leg * 0.20, 0.50, 8), BONE_MAT);
     femur.position.y = -0.30; femur.visible = false; leg.add(femur); boneMeshes.push(femur);
     const femTop = new THREE.Mesh(new THREE.SphereGeometry(body.leg * 0.28, 8, 8), BONE_MAT);
@@ -1037,7 +1034,7 @@ function randomDismemberOnDeath(z) {
 }
 
 // ============================================================
-// RAYCAST POR PARTE — hitbox individual
+// RAYCAST POR PARTE
 // ============================================================
 function rayAABB(origin, dir, min, max, maxDist) {
   let tMin = 0, tMax = maxDist;
@@ -1109,11 +1106,10 @@ function raycastZombie(origin, dir, maxDist) {
 }
 
 // ============================================================
-// REAÇÃO FÍSICA (Dying Light style)
+// REAÇÃO FÍSICA (Dying Light)
 // ============================================================
 function applyHitReaction(z, part, hitDirWorld) {
   const now = performance.now() / 1000;
-  // Transforma direção do tiro para o frame local do zumbi
   const localDir = hitDirWorld.clone();
   const zQuat = z.mesh.quaternion.clone();
   zQuat.invert();
@@ -1121,8 +1117,8 @@ function applyHitReaction(z, part, hitDirWorld) {
 
   z.recoil = {
     part,
-    dirX: localDir.x, // lado
-    dirZ: localDir.z, // frente/trás (negativo = tiro veio da frente)
+    dirX: localDir.x,
+    dirZ: localDir.z,
     startTime: now,
     duration: 0.55,
   };
@@ -1196,10 +1192,8 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint) {
   Sfx.playKnifeHitFlesh();
   showHitMarker(isCrit || isHead);
 
-  // Reação física individual (aplica no membro atingido)
   applyHitReaction(z, part, hitDir);
 
-  // Desmembramento (crítico ou headshot)
   if (isCrit || isHead) {
     let limb = null;
     const roll = Math.random();
@@ -1267,7 +1261,6 @@ function attack() {
   triggerSwing();
   if (weapon.type === 'ranged') spawnMuzzleFlash();
 
-  // MELEE: varre zona + usa raycast pra descobrir a parte atingida
   if (weapon.type === 'melee') {
     const camOrigin = camera.position.clone();
     const camDir = new THREE.Vector3();
@@ -1275,33 +1268,49 @@ function attack() {
     const forward = camDir.clone();
     forward.y = 0; forward.normalize();
     const range = weapon.range + state.rangeBonus;
+    const aimRegion = getAimRegion();
 
     [...zombies].forEach(z => {
       if (z.health <= 0) return;
       const to = new THREE.Vector3().subVectors(z.mesh.position, player.position);
       to.y = 0;
-      if (to.length() > range) return;
+      const horizDist = to.length();
+      if (horizDist > range) return;
       to.normalize();
-      if (forward.dot(to) < 0.4) return;
+      if (forward.dot(to) < 0.3) return;
 
-      // Descobre a parte
       z.mesh.updateMatrixWorld(true);
       const boxes = getZombiePartBoxes(z);
-      let part = 'torso';
+      let part = null;
       let bestT = Infinity;
+      let hitPoint = null;
       for (const p of boxes) {
-        const t = rayAABB(camOrigin, camDir, p.box.min, p.box.max, range);
-        if (t !== null && t < bestT) { bestT = t; part = p.key; }
+        const t = rayAABB(camOrigin, camDir, p.box.min, p.box.max, range + 1.5);
+        if (t !== null && t < bestT) {
+          bestT = t;
+          part = p.key;
+          hitPoint = camOrigin.clone().addScaledVector(camDir, t);
+        }
       }
-      const hitPoint = z.mesh.position.clone();
-      hitPoint.y += (part === 'head' ? 1.85 : part === 'torso' ? 1.15 : 0.7);
+
+      if (!part) {
+        part = aimRegion;
+        hitPoint = z.mesh.position.clone();
+        hitPoint.y += part === 'head' ? 1.85 : part === 'legs' ? 0.5 : 1.15;
+      }
 
       const isCrit = rollCrit();
       const baseDmg = weapon.damage * state.damageMult;
       const critMult = CONFIG.crit.damageMultiplier + state.critDamageBonus;
       const headMult = part === 'head' ? CONFIG.headshotMultiplier : 1;
       const dmg = baseDmg * headMult * (isCrit ? critMult : 1);
-      damageZombie(z, dmg, isCrit, part, to.clone(), hitPoint);
+
+      const hitDir = new THREE.Vector3().subVectors(z.mesh.position, player.position);
+      hitDir.y = 0;
+      if (hitDir.lengthSq() > 0.0001) hitDir.normalize();
+      else hitDir.set(forward.x, 0, forward.z);
+
+      damageZombie(z, dmg, isCrit, part, hitDir, hitPoint);
     });
 
     const camPos = camera.position.clone();
@@ -1315,13 +1324,11 @@ function attack() {
     return;
   }
 
-  // ARMA DE FOGO
   const origin = camera.position.clone();
   const forward = new THREE.Vector3();
   camera.getWorldDirection(forward);
   const range = weapon.range + state.rangeBonus;
 
-  // ADS: spread reduzido
   const baseSpread = state.aiming ? weapon.spread * 0.25 : weapon.spread;
 
   for (let i = 0; i < weapon.pellets; i++) {
@@ -1450,7 +1457,13 @@ function checkWaveComplete() {
 function switchToSlot(slot) {
   if (!state.inventory[slot] || state.currentSlot === slot) return;
   state.currentSlot = slot;
-  buildViewModel(state.inventory[slot]);
+  const weaponId = state.inventory[slot];
+  const weapon = WEAPONS[weaponId];
+  if (weapon.type === 'melee' && state.aiming) {
+    state.aiming = false;
+    updateCrosshair();
+  }
+  buildViewModel(weaponId);
   updateHUD();
   updateWeaponSlotsHUD();
 }
@@ -1490,7 +1503,6 @@ renderer.domElement.addEventListener('click', () => {
 
 document.addEventListener('mousemove', e => {
   if (document.pointerLockElement !== renderer.domElement) return;
-  // Reduz sensibilidade quando mirando
   const sens = state.aiming ? 0.0012 : 0.002;
   player.yaw -= e.movementX * sens;
   player.pitch -= e.movementY * sens;
@@ -1505,8 +1517,12 @@ document.addEventListener('mousedown', e => {
     }
   }
   if (e.button === 2) {
-    state.aiming = true;
-    updateCrosshair();
+    const weaponId = state.inventory[state.currentSlot] || 'knife';
+    const weapon = WEAPONS[weaponId];
+    if (weapon.type !== 'melee') {
+      state.aiming = true;
+      updateCrosshair();
+    }
   }
 });
 document.addEventListener('mouseup', e => {
@@ -1517,7 +1533,6 @@ document.addEventListener('mouseup', e => {
   }
 });
 
-// Previne menu de contexto no botão direito
 document.addEventListener('contextmenu', e => {
   if (state.running) e.preventDefault();
 });
@@ -1683,7 +1698,6 @@ function updateZombies(dt) {
 
     const staggering = z.hitReactEndTime > now;
 
-    // === BASE ANIMATIONS (walk) ===
     let sm = emerge;
     if (z.dismembered.legL || z.dismembered.legR) sm *= 0.55;
     if (z.dismembered.legL && z.dismembered.legR) sm *= 0.3;
@@ -1706,7 +1720,6 @@ function updateZombies(dt) {
     const targetLean = isWounded ? 0.20 + (dist < 3 ? 0.1 : 0) : 0.12 + (dist < 3 ? 0.08 : 0);
     z.anim.bodyLean += (targetLean - z.anim.bodyLean) * 0.05;
 
-    // === APPLY TO PARTS ===
     if (ud.legL) ud.legL.rotation.x = legLX;
     if (ud.legR) ud.legR.rotation.x = legRX;
     if (ud.armL) ud.armL.rotation.x = z.anim.armLX;
@@ -1715,14 +1728,12 @@ function updateZombies(dt) {
     ud.head.rotation.y = z.anim.headRY;
     z.mesh.rotation.x = z.anim.bodyLean;
 
-    // === STAGGER (por dano recente geral) ===
     if (staggering) {
       const lean = (z.hitReactEndTime - now) / CONFIG.zombie.knockbackStagger;
       z.mesh.rotation.x -= lean * 0.45;
       z.mesh.position.addScaledVector(z.hitDirection, -dt * 4 * lean);
     }
 
-    // === HIT REACTION (Dying Light — parte individual) ===
     if (z.recoil) {
       const el = now - z.recoil.startTime;
       if (el >= z.recoil.duration) {
@@ -1739,21 +1750,19 @@ function updateZombies(dt) {
         else if (part === 'armR' && !z.dismembered.armR) obj = ud.armR;
         else if (part === 'legL' && !z.dismembered.legL) obj = ud.legL;
         else if (part === 'legR' && !z.dismembered.legR) obj = ud.legR;
-        else if (part === 'torso') obj = null; // torso não gira, o corpo inteiro que reage
 
         if (obj) {
           obj.rotation.x += dirZ * amp;
           obj.rotation.z += dirX * amp;
         }
 
-        // Corpo inteiro reage junto
         if (part === 'head' || part === 'torso') {
           z.mesh.rotation.x += dirZ * amp * 0.4;
           z.mesh.rotation.z += dirX * amp * 0.35;
         }
         if (part === 'legL' || part === 'legR') {
           z.mesh.rotation.z += dirX * amp * 0.55;
-          z.mesh.position.y = Math.abs(dirX * curve) * 0.02; // pequeno "tropeço"
+          z.mesh.position.y = Math.abs(dirX * curve) * 0.02;
         }
       }
     } else {
@@ -1932,7 +1941,6 @@ function animate() {
       if (w.auto) attack();
     }
 
-    // FOV do ADS
     const targetFov = state.aiming ? 50 : 78;
     camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 15);
     camera.updateProjectionMatrix();
