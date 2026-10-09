@@ -1239,6 +1239,19 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint) {
 }
 
 // ============================================================
+// AIM REGION (baseado na pitch da câmera)
+// ============================================================
+function getAimRegion() {
+  if (player.pitch > 0.15) return 'head';
+  if (player.pitch < -0.25) return 'legs';
+  return 'torso';
+}
+
+// ============================================================
+// ATTACK
+// ============================================================
+function attack() {
+// ============================================================
 // ATTACK
 // ============================================================
 function attack() {
