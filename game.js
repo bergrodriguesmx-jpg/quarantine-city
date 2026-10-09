@@ -10,7 +10,7 @@ import { LocalAdapter } from './src/net/adapter.js';
 bus.setAdapter(new LocalAdapter());
 
 // ============================================================
-// CACHE GLOBAL
+// CACHE GLOBAL DE GEOMETRIAS E MATERIAIS
 // ============================================================
 const geoCache = new Map();
 const matCache = new Map();
@@ -53,7 +53,7 @@ function matB(color, opts) {
 }
 
 // ============================================================
-// WEAPONS — rebalanceado (realismo + recarga)
+// WEAPONS
 // ============================================================
 const WEAPONS = {
   knife: {
@@ -109,7 +109,6 @@ const SKILLS = [
   { id: 'heavy', icon: 'H', name: 'GOLPE PESADO', desc: '+0.5x dano critico', apply: () => { state.critDamageBonus += 0.5; } },
 ];
 
-// Variantes com identidade própria. `scale` influencia velocidade (menor = mais rápido)
 const ZOMBIE_VARIANTS = {
   normal:  { hpMul: 1.0,  speedMul: 1.0,  dmgMul: 1.0, xpMul: 1.0, coinMul: 1.0,  scale: 1.00, ranged: false, forcedType: null,    weight: 68, attackRange: 1.6, cooldown: 1.2 },
   runner:  { hpMul: 0.5,  speedMul: 2.3,  dmgMul: 0.7, xpMul: 1.4, coinMul: 1.6,  scale: 0.80, ranged: false, forcedType: 'pt',    weight: 20, attackRange: 1.4, cooldown: 0.85 },
@@ -359,7 +358,6 @@ function buildViewModel(weaponId) {
     const sc = new THREE.Mesh(geoCyl(0.03, 0.03, 0.22, 10), MAT.metalDark); sc.rotation.x = Math.PI / 2; sc.position.set(0, 0.14, -0.05); g.add(sc);
     const sfr = new THREE.Mesh(geoCyl(0.038, 0.038, 0.03, 10), MAT.metalDark); sfr.rotation.x = Math.PI / 2; sfr.position.set(0, 0.14, -0.17); g.add(sfr);
     const lens = new THREE.Mesh(new THREE.CircleGeometry(0.03, 10), matB(0x4A90D9)); lens.rotation.y = Math.PI; lens.position.set(0, 0.14, -0.185); g.add(lens);
-    // Bolt handle (ferrolho)
     const bolt = new THREE.Mesh(geoCyl(0.012, 0.012, 0.08, 6), MAT.metalDark);
     bolt.rotation.z = Math.PI / 2; bolt.position.set(0.05, 0.10, 0.05); g.add(bolt);
   } else if (weaponId === 'shotgun') {
@@ -394,7 +392,6 @@ function triggerSwing() { swinging = true; swingProgress = 0; }
 
 function updateWeaponViewModel(dt) {
   if (!currentViewModel) return;
-  // Recarregando: desce a arma
   if (state.reload.active) {
     const t = Math.min(1, (performance.now() / 1000 - state.reload.startTime) / state.reload.duration);
     const dip = Math.sin(t * Math.PI);
@@ -463,7 +460,6 @@ function circleVsAABB(px, pz, radius, box) {
   if (m === ezU) return { x: px, z: box.minZ - radius };
   return { x: px, z: box.maxZ + radius };
 }
-
 function resolveCollidersAgainstBoxes(pos, radius, colliders) {
   for (let i = 0; i < colliders.length; i++) {
     const box = colliders[i];
@@ -767,7 +763,7 @@ function spawnZombie(forceVariant) {
   const baseHP = CONFIG.zombie.maxHealth * variant.hpMul * waveScale;
   const baseDamage = CONFIG.zombie.damage * variant.dmgMul * waveScale;
 
-  // ============ MENOR = MAIS RÁPIDO ============
+  // MENOR = MAIS RÁPIDO
   const sizeSpeedFactor = Math.pow(1 / Math.max(0.5, variant.scale), 0.7);
   const finalSpeed = CONFIG.zombie.speed * variant.speedMul * sizeSpeedFactor;
 
@@ -879,7 +875,7 @@ function updateBloodPools(dt) {
 }
 
 // ============================================================
-// DEBRIS
+// DEBRIS — com lastGlobalHit + settle mais rápido
 // ============================================================
 class Debris {
   constructor(mesh, size, mass, life = 35) {
@@ -889,7 +885,8 @@ class Debris {
     this.settled = false; this.settleTimer = 0;
     this.life = life; this.maxLife = life;
     this.key = 'piece';
-    this.lastHitZombie = new Map(); // zombieId -> cooldown
+    this.lastHitZombie = new Map();
+    this.lastGlobalHit = 0;
   }
   applyImpulse(imp) { this.velocity.addScaledVector(imp, 1 / this.mass); }
   applyTorque(t) { this.angularVelocity.addScaledVector(t, 1 / this.mass); }
@@ -912,7 +909,7 @@ class Debris {
         this.velocity.x *= 0.65; this.velocity.z *= 0.65;
         this.angularVelocity.multiplyScalar(0.7);
         const sSq = this.velocity.lengthSq(), aSq = this.angularVelocity.lengthSq();
-        if (sSq < 0.5 && aSq < 1.0) {
+        if (sSq < 0.12 && aSq < 0.35) {
           this.settleTimer += dt;
           if (this.settleTimer > 0.4) { this.settled = true; this.velocity.set(0, 0, 0); this.angularVelocity.set(0, 0, 0); }
         } else this.settleTimer = 0;
@@ -1149,50 +1146,88 @@ function randomDismemberOnDeath(z) {
 }
 
 // ============================================================
-// FÍSICA DE PEDAÇOS vs ZUMBIS
+// FÍSICA DE PEDAÇOS vs ZUMBIS (CORRIGIDA)
 // ============================================================
 const _debrisDir = new THREE.Vector3();
 function checkDebrisZombieCollision() {
   const now = performance.now() / 1000;
   const allPieces = [];
   for (const l of flyingLimbs) allPieces.push(l);
-  for (const r of ragdolls) for (const p of r.pieces) allPieces.push(p);
+  for (const r of ragdolls) {
+    if (r.state === 'fading') continue;
+    for (const p of r.pieces) allPieces.push(p);
+  }
 
   for (const piece of allPieces) {
+    // 1. Peças paradas ou no chão NÃO interagem
     if (piece.settled) continue;
+    const y = piece.mesh.position.y;
+    if (y < 0.55) continue;
+    if (y > 2.1) continue;
+
+    // 2. Precisa ter velocidade mínima
     const speed2 = piece.velocity.lengthSq();
-    if (speed2 < CONFIG.debris.minHitSpeed2) continue;
+    if (speed2 < CONFIG.debris.minHitSpeed2 * CONFIG.debris.minHitSpeed2) continue;
+
+    // 3. Cooldown global do pedaço
+    if (now - (piece.lastGlobalHit || 0) < 0.18) continue;
+
     for (const z of zombies) {
       if (z.health <= 0) continue;
+
+      // 4. Distância horizontal
       const dx = z.mesh.position.x - piece.mesh.position.x;
       const dz = z.mesh.position.z - piece.mesh.position.z;
-      const dy = (z.mesh.position.y + 1.0) - piece.mesh.position.y;
       const d2 = dx * dx + dz * dz;
       const minD = CONFIG.debris.pushRadiusBonus + z.radius;
-      if (d2 < minD * minD && d2 > 0.001 && Math.abs(dy) < 1.5) {
-        // cooldown por zumbi para não spam
-        const last = piece.lastHitZombie.get(z.id) || 0;
-        if (now - last < 0.35) continue;
-        piece.lastHitZombie.set(z.id, now);
+      if (d2 >= minD * minD || d2 < 0.001) continue;
 
-        const d = Math.sqrt(d2);
-        const nx = dx / d, nz = dz / d;
-        _debrisDir.set(nx, 0, nz);
-        applyHitReaction(z, 'torso', _debrisDir);
-        z.hitReactEndTime = now + CONFIG.debris.staggerTime;
-        z.hitDirection.copy(_debrisDir);
+      // 5. Cooldown por zumbi
+      const last = piece.lastHitZombie.get(z.id) || 0;
+      if (now - last < 0.5) continue;
 
-        // Empurrão adicional
-        z.mesh.position.x += nx * 0.15;
-        z.mesh.position.z += nz * 0.15;
+      // 6. Altura do zumbi cobre o pedaço?
+      const zTopY = 2.0 * z.scale;
+      if (y > zTopY) continue;
 
-        // Empurra o pedaço em direção oposta
-        const bounce = Math.min(6, speed2 * 0.3);
-        piece.velocity.x = nx * bounce + (Math.random() - 0.5) * 3;
-        piece.velocity.z = nz * bounce + (Math.random() - 0.5) * 3;
-        piece.velocity.y = Math.max(1, piece.velocity.y * 0.5);
-        piece.angularVelocity.multiplyScalar(1.5);
-      }
+      // 7. O pedaço está indo NA DIREÇÃO do zumbi?
+      const d = Math.sqrt(d2);
+      const nx = dx / d, nz = dz / d;
+      const vel = piece.velocity;
+      const velMag = Math.sqrt(speed2);
+      const dot = (vel.x * nx + vel.z * nz) / velMag;
+      if (dot < 0.15) continue;
+
+      // ============ IMPACTO CONFIRMADO ============
+      piece.lastHitZombie.set(z.id, now);
+      piece.lastGlobalHit = now;
+
+      // Força = velocidade × massa clampada
+      const force = Math.min(3.0, Math.sqrt(speed2) * Math.min(2, piece.mass) * 0.12);
+      _debrisDir.set(nx, 0, nz);
+
+      // Cambaleio proporcional à força
+      const stagger = 0.15 + force * 0.18;
+      applyHitReaction(z, 'torso', _debrisDir);
+      z.hitReactEndTime = now + stagger;
+      z.hitDirection.copy(_debrisDir);
+
+      // Empurrão no zumbi — inversamente proporcional à escala
+      const pushZ = force * 0.09 / Math.max(0.5, z.scale);
+      z.mesh.position.x += nx * pushZ;
+      z.mesh.position.z += nz * pushZ;
+
+      // Ricochete no pedaço
+      const bounce = Math.min(5, force * 2.0);
+      piece.velocity.x = -nx * bounce + (Math.random() - 0.5) * 2.5;
+      piece.velocity.z = -nz * bounce + (Math.random() - 0.5) * 2.5;
+      piece.velocity.y = Math.max(1.5, piece.velocity.y * 0.5);
+      piece.angularVelocity.multiplyScalar(1.8);
+      piece.settled = false;
+      piece.settleTimer = 0;
+
+      if (force > 0.9) Sfx.playDebrisImpact();
+      if (force > 1.5) addShake(0.03 * force);
     }
   }
 }
@@ -1428,11 +1463,7 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     if (state.lifesteal > 0) state.health = Math.min(state.maxHealth, state.health + state.lifesteal);
 
     bus.emit(Ev.DEATH, { id: z.id, killerId: player.id, part });
-    bus.emit(Ev.KILL, {
-      killerId: player.id, victimId: z.id,
-      victimType: z.mesh.userData.zombieType,
-      headshot: isHead, weaponId: state.inventory[state.currentSlot],
-    });
+    bus.emit(Ev.KILL, { killerId: player.id, victimId: z.id, victimType: z.mesh.userData.zombieType, headshot: isHead, weaponId: state.inventory[state.currentSlot] });
     if (isHead) bus.emit(Ev.HEADSHOT, { playerId: player.id, victimId: z.id });
     bus.emit(Ev.COIN_GAIN, { playerId: player.id, amount: z.coinReward, total: state.coins });
     bus.emit(Ev.XP_GAIN, { playerId: player.id, amount: z.xpReward, total: state.xp });
@@ -1462,17 +1493,14 @@ function startReload(wid) {
   const am = state.ammo[wid];
   if (!w || !am) return;
   if (am.mag >= w.magSize || am.reserve <= 0) return;
-
   state.reload.active = true;
   state.reload.wid = wid;
   state.reload.startTime = performance.now() / 1000;
   state.reload.duration = w.reloadTime;
   state.reload.endTime = state.reload.startTime + w.reloadTime;
-
   if (state.aiming) { state.aiming = false; updateCrosshair(); }
   Sfx.playReload();
 }
-
 function cancelReload() {
   state.reload.active = false;
   state.reload.wid = null;
@@ -1480,7 +1508,6 @@ function cancelReload() {
   state.reload.endTime = 0;
   state.reload.duration = 0;
 }
-
 function updateReload(now) {
   if (!state.reload.active) return;
   if (now >= state.reload.endTime) {
@@ -1524,7 +1551,6 @@ function attack() {
     }
     am.mag--;
     if (am.mag === 0 && am.reserve > 0) {
-      // Auto reload depois de esvaziar
       setTimeout(() => { if (state.running) startReload(weaponId); }, 250);
     }
     updateHUD();
@@ -1695,7 +1721,6 @@ function showWaveBanner(text) {
   waveBanner.classList.remove('hidden'); waveBanner.classList.add('show');
   setTimeout(() => { waveBanner.classList.remove('show'); setTimeout(() => waveBanner.classList.add('hidden'), 350); }, 1400);
 }
-
 function startWave() {
   if (state.waveIntervalId !== null) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; }
   state.wave++;
@@ -1705,7 +1730,6 @@ function startWave() {
   state.zombiesRemainingInWave = count + (isBossWave ? 1 : 0);
   showWaveBanner((isBossWave ? 'HORDA CHEFE ' : 'HORDA ') + state.wave);
   bus.emit(Ev.WAVE_START, { wave: state.wave, count, boss: isBossWave });
-
   let spawnedBoss = false;
   updateHUD();
   state.waveIntervalId = setInterval(() => {
@@ -1717,7 +1741,6 @@ function startWave() {
     updateHUD();
   }, 500);
 }
-
 function checkWaveComplete() {
   if (state.betweenWaves) return;
   if (state.zombiesAlive === 0 && state.zombiesRemainingInWave <= 0) {
@@ -1734,7 +1757,6 @@ function checkWaveComplete() {
     }, CONFIG.wave.breakTime * 1000);
   }
 }
-
 function switchToSlot(slot) {
   if (!state.inventory[slot] || state.currentSlot === slot) return;
   cancelReload();
@@ -1761,7 +1783,7 @@ function updateWeaponSlotsHUD() {
 function updateCrosshair() { document.body.classList.toggle('aiming', state.aiming); }
 
 // ============================================================
-// DOWNED STATE
+// DOWNED
 // ============================================================
 function enterDownedState() {
   if (state.downed) return;
@@ -2090,7 +2112,6 @@ function updatePlayer(dt) {
   let speedMult = state.aiming ? 0.5 : 1;
   if (state.downed) speedMult = 0.25;
   const speed = CONFIG.player.speed * state.speedMult * speedMult;
-
   _fwdV.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   _rightV.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
   let mx = 0, mz = 0;
@@ -2105,12 +2126,10 @@ function updatePlayer(dt) {
   state.isMoving = _moveV.lengthSq() > 0.0025;
   if (state.isMoving) _moveV.normalize();
   player.position.addScaledVector(_moveV, speed * dt);
-
   resolveWallCollisions(player.position, CONFIG.player.radius);
   const lim = CONFIG.arena.size / 2 - 1;
   player.position.x = Math.max(-lim, Math.min(lim, player.position.x));
   player.position.z = Math.max(-lim, Math.min(lim, player.position.z));
-
   if (state.isMoving) state.bobTime += dt * 9; else state.bobTime *= 0.9;
   const bobY = Math.sin(state.bobTime) * (state.aiming ? 0.02 : 0.055);
   const camBaseY = state.downed ? 0.55 : CONFIG.player.height;
@@ -2119,7 +2138,6 @@ function updatePlayer(dt) {
   camera.rotation.order = 'YXZ';
   camera.rotation.y = player.yaw;
   camera.rotation.x = player.pitch;
-
   if (state.shake > 0.001) {
     camera.position.x += (Math.random() - 0.5) * state.shake;
     camera.position.y += (Math.random() - 0.5) * state.shake;
@@ -2175,7 +2193,6 @@ function updateZombies(dt) {
     let sm = emerge;
     if (z.dismembered.legL || z.dismembered.legR) sm *= 0.55;
     if (z.dismembered.legL && z.dismembered.legR) sm *= 0.3;
-    // Velocidade da passada proporcional à velocidade real (size-speed)
     const ws = (isWounded ? 3.2 : 5) * sm * (z.speed / CONFIG.zombie.speed) * 0.7;
     z.walkPhase += dt * ws;
 
@@ -2282,7 +2299,7 @@ function updateZombies(dt) {
     resolveWallCollisions(z.mesh.position, z.radius);
   }
 
-  // Colisão zumbi-zumbi usando raios individuais
+  // Colisão zumbi-zumbi com massas ponderadas
   for (let i = 0; i < zombies.length; i++) {
     for (let j = i + 1; j < zombies.length; j++) {
       const a = zombies[i], b = zombies[j];
@@ -2293,7 +2310,6 @@ function updateZombies(dt) {
       const minD = a.radius + b.radius;
       if (d2 < minD * minD && d2 > 0.0001) {
         const d = Math.sqrt(d2);
-        // Push proporcional à massa (raio)
         const massA = a.scale * a.scale, massB = b.scale * b.scale;
         const totalMass = massA + massB;
         const pushA = (minD - d) * (massB / totalMass);
@@ -2307,7 +2323,7 @@ function updateZombies(dt) {
 }
 
 // ============================================================
-// DOORS / PICKUPS / RAGDOLLS / LIMBS
+// DOORS / PICKUPS / RAGDOLLS
 // ============================================================
 function updateDoors(dt) {
   for (const door of world.doors) {
