@@ -777,6 +777,37 @@ class Ragdoll {
 
 const flyingLimbs = [];
 
+// ============================================================
+// DESMEMBRAMENTO ALEATÓRIO NA MORTE
+// ============================================================
+function randomDismemberOnDeath(z) {
+  const roll = Math.random();
+  let partsToLose = 0;
+  if (roll < 0.25) partsToLose = 0;
+  else if (roll < 0.60) partsToLose = 1;
+  else if (roll < 0.85) partsToLose = 2;
+  else partsToLose = 3;
+
+  const available = [];
+  if (!z.dismembered.head) available.push('head');
+  if (!z.dismembered.armL) available.push('armL');
+  if (!z.dismembered.armR) available.push('armR');
+  if (!z.dismembered.legL) available.push('legL');
+  if (!z.dismembered.legR) available.push('legR');
+
+  for (let i = 0; i < partsToLose && available.length > 0; i++) {
+    const idx = Math.floor(Math.random() * available.length);
+    const part = available.splice(idx, 1)[0];
+    const dir = new THREE.Vector3(
+      (Math.random() - 0.5) * 2,
+      0,
+      (Math.random() - 0.5) * 2
+    ).normalize();
+    detachLimb(z, part, dir);
+    if (part === 'head') z.health = 0;
+  }
+}
+
 function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
   if (ragdolls.length >= CONFIG.ragdoll.maxActive) {
     const oldest = ragdolls.shift();
@@ -961,6 +992,9 @@ function damageZombie(z, damage, isCrit, aimRegion, hitDir) {
     state.xp += Math.round(CONFIG.zombie.xpReward * state.xpMult);
     if (state.lifesteal > 0) state.health = Math.min(state.maxHealth, state.health + state.lifesteal);
     checkLevelUp();
+
+    randomDismemberOnDeath(z);
+
     const overkill = Math.min(2, Math.max(0.7, -z.health / CONFIG.zombie.maxHealth + 1));
     startRagdoll(z.mesh, hitDir, isCrit ? overkill * 1.4 : overkill, z.dismembered);
     const idx = zombies.indexOf(z);
