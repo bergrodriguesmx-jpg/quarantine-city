@@ -25,21 +25,18 @@ export class BaseAdapter {
 }
 
 // -------- Adaptador LOCAL (single-player): não faz nada --------
-// Toda a arquitetura funciona igual, só que "ninguém escuta" externamente.
 export class LocalAdapter extends BaseAdapter {
   onLocalEmit() {}
 }
 
 // -------- Adaptador MULTIPLAYER (pronto p/ ligar) --------
-// Basta: new MultiplayerAdapter(websocket, { clientId, roomId })
-// e chamar bus.setAdapter(adapter).
 export class MultiplayerAdapter extends BaseAdapter {
   constructor(socket, opts = {}) {
     super();
     this.socket = socket;
     this.clientId = opts.clientId || null;
     this.roomId = opts.roomId || null;
-    this.sendRate = opts.sendRate || 30;   // Hz (batched inputs)
+    this.sendRate = opts.sendRate || 30;
     this._queue = [];
     this._flushTimer = null;
     this._bindSocket();
@@ -57,16 +54,11 @@ export class MultiplayerAdapter extends BaseAdapter {
         emitRemote(msg.t, msg.p || {});
       }
     });
-    this.socket.addEventListener('open', () => {
-      // Depois: emitir handshake aqui
-    });
     this.socket.addEventListener('close', () => this._stopFlush());
   }
 
   onLocalEmit(type, payload) {
-    // Server-authoritative: NÃO manda pro servidor (ele vai nos dizer a verdade)
     if (this.isServerAuthoritative(type)) return;
-    // Client-origin: enfileira para enviar
     if (this.isClientOrigin(type)) {
       this._queue.push({ t: type, p: payload });
     }
