@@ -2436,3 +2436,189 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+// ============================================================
+// FASE 2-A — FEEDBACK MP-READY
+// ============================================================
+
+// ---- Stats por jogador (MP-ready: em rede, o servidor manda updates) ----
+const playerStats = new Map();
+playerStats.set(player.id, {
+  id: player.id,
+  name: 'VOCÊ',
+  kills: 0,
+  headshots: 0,
+  damage: 0,
+  coins: 0,
+  deaths: 0,
+  local: true,
+});
+
+// ---- Helpers ----
+const _projV = new THREE.Vector3();
+function worldToScreen(pos) {
+  _projV.set(pos.x, pos.y, pos.z).project(camera);
+  return {
+    x: (_projV.x * 0.5 + 0.5) * window.innerWidth,
+    y: (-_projV.y * 0.5 + 0.5) * window.innerHeight,
+    visible: _projV.z < 1 && _projV.z > -1,
+  };
+}
+
+function ensureStats(id) {
+  let s = playerStats.get(id);
+  if (!s) {
+    s = {
+      id,
+      name: id === player.id ? 'VOCÊ' : (id.startsWith('p-') ? 'JOGADOR' : 'INIMIGO'),
+      kills: 0, headshots: 0, damage: 0, coins: 0, deaths: 0,
+      local: id === player.id,
+    };
+    playerStats.set(id, s);
+  }
+  return s;
+}
+
+function nameOf(id) {
+  if (typeof id !== 'string') return '???';
+  if (id.startsWith('z-')) return 'ZUMBI';
+  if (id === player.id) return 'VOCÊ';
+  return ensureStats(id).name;
+}
+
+// ---- Damage Numbers ----
+const damageNumbersEl = document.getElementById('damage-numbers');
+
+function spawnDamageNumber(worldPos, amount, kind) {
+  const screen = worldToScreen(worldPos);
+  if (!screen.visible) return;
+
+  const el = document.createElement('div');
+  el.className = 'dmg-number dmg-' + kind;
+  el.textContent = Math.round(amount);
+
+  // Pequeno offset aleatório (importante p/ shotgun com 8 pellets)
+  const jitterX = (Math.random() - 0.5) * 30;
+  const jitterY = (Math.random() - 0.5) * 15;
+  el.style.left = (screen.x + jitterX) + 'px';
+  el.style.top  = (screen.y + jitterY) + 'px';
+
+  damageNumbersEl.appendChild(el);
+  setTimeout(() => {
+    if (el.parentNode) el.parentNode.removeChild(el);
+  }, 850);
+}
+
+// ---- Kill Feed ----
+const killFeedEl = document.getElementById('kill-feed');
+const KILL_FEED_MAX = 5;
+const KILL_FEED_LIFE = 4200;
+
+function spawnKillFeedEntry(killerId, victimId, weaponId, headshot) {
+  const entry = document.createElement('div');
+  entry.className = 'kill-entry';
+
+  const weapon = (WEAPONS[weaponId] && WEAPONS[weaponId].name) || weaponId || '';
+  const weaponShort = weapon.split('-')[0];
+
+  entry.innerHTML =
+    `<span class="killer">${nameOf(killerId)}</span>` +
+    `<span class="weapon">${weaponShort}</span>` +
+    (headshot ? `<span class="hs-badge">HS</span>` : '') +
+    `<span class="victim">${nameOf(victimId)}</span>`;
+
+  killFeedEl.insertBefore(entry, killFeedEl.firstChild);
+  while (killFeedEl.children.length > KILL_FEED_MAX) {
+    killFeedEl.removeChild(killFeedEl.lastChild);
+  }
+  setTimeout(() => {
+    entry.classList.add('fading');
+    setTimeout(() => {
+      if (entry.parentNode) entry.parentNode.removeChild(entry);
+    }, 400);
+  }, KILL_FEED_LIFE);
+}
+
+// ---- Hooks nos eventos ----
+bus.on(Ev.DAMAGE, p => {
+  const s = ensureStats(p.attackerId);
+  s.damage += p.amount;
+
+  // Só mostra número se EU causei o dano (evita spam visual em MP)
+  if (p.attackerId !== player.id) return;
+  if (!p.pos) return;
+
+  let kind = 'normal';
+  if (p.headshot) kind = 'headshot';
+  else if (p.isCrit) kind = 'crit';
+  spawnDamageNumber(p.pos, p.amount, kind);
+});
+
+bus.on(Ev.KILL, p => {
+  const ks = ensureStats(p.killerId);
+  ks.kills++;
+  if (p.headshot) ks.headshots++;
+
+  spawnKillFeedEntry(p.killerId, p.victimId, p.weaponId, p.headshot);
+});
+
+bus.on(Ev.COIN_GAIN, p => {
+  const s = playerStats.get(p.playerId);
+  if (s) s.coins = p.total;
+});
+
+bus.on(Ev.PLAYER_DIED, p => {
+  const s = playerStats.get(p.playerId);
+  if (s) s.deaths++;
+});
+
+bus.on(Ev.NET_PLAYER_LEAVE, p => {
+  // Em MP: remove jogador do scoreboard quando sair
+  if (p && p.id) playerStats.delete(p.id);
+});
+
+// ---- Scoreboard (Tab) ----
+const scoreboardEl = document.getElementById('scoreboard');
+const scoreboardBody = document.getElementById('scoreboard-body');
+let scoreboardOpen = false;
+
+function renderScoreboard() {
+  const list = [...playerStats.values()].sort((a, b) => {
+    if (b.kills !== a.kills) return b.kills - a.kills;
+    return b.damage - a.damage;
+  });
+
+  scoreboardBody.innerHTML = '';
+  list.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.className = s.local ? 'local-row' : '';
+    tr.innerHTML =
+      `<td>${s.name}</td>` +
+      `<td>${s.kills}</td>` +
+      `<td>${s.headshots}</td>` +
+      `<td>${Math.round(s.damage)}</td>` +
+      `<td>${s.coins}</td>`;
+    scoreboardBody.appendChild(tr);
+  });
+}
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Tab' && state.running) {
+    e.preventDefault();
+    if (!scoreboardOpen) {
+      scoreboardOpen = true;
+      renderScoreboard();
+      scoreboardEl.classList.remove('hidden');
+    }
+  }
+});
+
+document.addEventListener('keyup', e => {
+  if (e.code === 'Tab' && scoreboardOpen) {
+    e.preventDefault();
+    scoreboardOpen = false;
+    scoreboardEl.classList.add('hidden');
+  }
+});
+
+// Reseta stats no início de cada partida (MP vai resetar via NET_ROOM_JOIN)
+window.addEventListener('beforeunload', () => playerStats.clear());
