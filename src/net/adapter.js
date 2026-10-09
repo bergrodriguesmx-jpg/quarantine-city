@@ -1,5 +1,5 @@
-import { Ev } from '../core/events.js';
-import { emitRemote } from '../core/bus.js';
+import { Ev } from './events.js';
+import { emitRemote } from './bus.js';
 
 // ============================================================
 // CLASSIFICAÇÃO DE EVENTOS
@@ -15,7 +15,6 @@ const CLIENT_ORIGIN = new Set([
 ]);
 
 // Eventos onde o SERVIDOR é autoridade.
-// Cliente só prevê localmente; o servidor manda a "verdade" via emitRemote.
 const SERVER_AUTHORITY = new Set([
   Ev.DAMAGE,
   Ev.DEATH,
@@ -47,8 +46,6 @@ export class BaseAdapter {
 // ============================================================
 // LOCAL ADAPTER — Single-player (no-op)
 // ============================================================
-// A arquitetura funciona igual em SP; ninguém escuta externamente.
-// O jogo local continua emitindo eventos normalmente.
 export class LocalAdapter extends BaseAdapter {
   onLocalEmit() {}
 }
@@ -56,16 +53,6 @@ export class LocalAdapter extends BaseAdapter {
 // ============================================================
 // MULTIPLAYER ADAPTER — Pronto para ligar ao servidor
 // ============================================================
-// Uso:
-//   const ws = new WebSocket('ws://localhost:3000');
-//   const adapter = new MultiplayerAdapter(ws, { clientId, roomId });
-//   bus.setAdapter(adapter);
-//
-// Características:
-//   - Batching de inputs a `sendRate` Hz (padrão 30)
-//   - Auto-parse de mensagens (array ou objeto)
-//   - Server-authoritative events NÃO são enviados (o servidor manda)
-//   - Client-origin events são enviados em batch
 export class MultiplayerAdapter extends BaseAdapter {
   constructor(socket, opts = {}) {
     super();
@@ -81,30 +68,21 @@ export class MultiplayerAdapter extends BaseAdapter {
 
   _bindSocket() {
     if (!this.socket) return;
-
     this.socket.addEventListener('message', e => {
       let msg;
       try { msg = JSON.parse(e.data); }
       catch { return; }
-
-      // Aceita tanto objeto único quanto array em batch
       if (Array.isArray(msg)) {
-        for (const m of msg) {
-          if (m && m.t) emitRemote(m.t, m.p || {});
-        }
+        for (const m of msg) if (m && m.t) emitRemote(m.t, m.p || {});
       } else if (msg && msg.t) {
         emitRemote(msg.t, msg.p || {});
       }
     });
-
     this.socket.addEventListener('close', () => this._stopFlush());
   }
 
   onLocalEmit(type, payload) {
-    // Server-authoritative: não envia (o servidor vai nos dizer a verdade)
     if (this.isServerAuthoritative(type)) return;
-
-    // Client-origin: enfileira para enviar no próximo flush
     if (this.isClientOrigin(type)) {
       this._queue.push({ t: type, p: payload });
     }
@@ -124,12 +102,11 @@ export class MultiplayerAdapter extends BaseAdapter {
 
   _flush() {
     if (!this._queue.length) return;
-    if (!this.socket || this.socket.readyState !== 1) return; // 1 = OPEN
+    if (!this.socket || this.socket.readyState !== 1) return;
     try {
       this.socket.send(JSON.stringify(this._queue));
       this._queue.length = 0;
     } catch (err) {
-      // Se falhar, mantém na fila (tenta no próximo tick)
       console.warn('[MultiplayerAdapter] send falhou:', err);
     }
   }
