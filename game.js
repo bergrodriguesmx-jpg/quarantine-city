@@ -1623,4 +1623,342 @@ function updateZombies(dt) {
     Sfx.playGroan();
   }
   zombies.forEach(z => {
-    if
+    if (z.health <= 0) return;
+    z.emergeTime += dt;
+    const emerge = Math.min(1, z.emergeTime / 1.5);
+    const isWounded = z.health / z.maxHealth < 0.5;
+    const to = new THREE.Vector3().subVectors(player.position, z.mesh.position);
+    to.y = 0;
+    const dist = to.length();
+    z.mesh.lookAt(player.position.x, z.mesh.position.y, player.position.z);
+
+    const staggering = z.hitReactEndTime > now;
+    if (staggering) {
+      const lean = (z.hitReactEndTime - now) / CONFIG.zombie.knockbackStagger;
+      z.mesh.rotateX(-lean * 0.45);
+      z.mesh.position.addScaledVector(z.hitDirection, -dt * 4 * lean);
+    } else {
+      let sm = emerge;
+      if (z.dismembered.legL || z.dismembered.legR) sm *= 0.55;
+      if (z.dismembered.legL && z.dismembered.legR) sm *= 0.3;
+      const ws = (isWounded ? 3.2 : 5) * sm;
+      z.walkPhase += dt * ws;
+
+      const legSwing = Math.sin(z.walkPhase) * 0.6;
+      if (z.mesh.userData.legL && !z.dismembered.legL) z.mesh.userData.legL.rotation.x = legSwing;
+      if (z.mesh.userData.legR && !z.dismembered.legR) z.mesh.userData.legR.rotation.x = -legSwing;
+
+      const reaching = dist < 3.5;
+      if (z.mesh.userData.armL && !z.dismembered.armL) {
+        const target = reaching ? -1.5 + Math.sin(z.walkPhase) * 0.08 : -legSwing * 0.7;
+        const cur = z.mesh.userData.armL.rotation.x;
+        z.mesh.userData.armL.rotation.x = cur + (target - cur) * 0.15;
+      }
+      if (z.mesh.userData.armR && !z.dismembered.armR) {
+        const target = reaching ? -1.5 + Math.cos(z.walkPhase) * 0.08 : legSwing * 0.7;
+        const cur = z.mesh.userData.armR.rotation.x;
+        z.mesh.userData.armR.rotation.x = cur + (target - cur) * 0.15;
+      }
+      const targetLean = isWounded ? 0.20 + (dist < 3 ? 0.1 : 0) : 0.12 + (dist < 3 ? 0.08 : 0);
+      z.mesh.rotation.x += (targetLean - z.mesh.rotation.x) * 0.05;
+    }
+
+    if (z.dismembered.head) { z.health = 0; return; }
+
+    if (emerge >= 0.5) {
+      const zs = CONFIG.zombie.speed * (isWounded ? 0.6 : 1);
+      if (!staggering && dist > CONFIG.zombie.attackRange) {
+        to.normalize();
+        z.mesh.position.addScaledVector(to, zs * dt);
+      } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
+        z.lastAttackTime = now;
+        state.health -= CONFIG.zombie.damage * (1 - state.damageReduction);
+        Sfx.playPlayerHurt();
+        showDamageFlash();
+        updateHUD();
+        if (state.health <= 0) gameOver();
+      }
+    }
+
+    resolveZombieWallCollision(z);
+  });
+
+  for (let i = 0; i < zombies.length; i++) {
+    for (let j = i + 1; j < zombies.length; j++) {
+      const a = zombies[i], b = zombies[j];
+      if (a.health <= 0 || b.health <= 0) continue;
+      const dx = b.mesh.position.x - a.mesh.position.x;
+      const dz = b.mesh.position.z - a.mesh.position.z;
+      const d2 = dx * dx + dz * dz;
+      const minD = CONFIG.zombie.radius * 2;
+      if (d2 < minD * minD && d2 > 0.0001) {
+        const d = Math.sqrt(d2);
+        const push = (minD - d) / 2;
+        const nx = dx / d, nz = dz / d;
+        a.mesh.position.x -= nx * push; a.mesh.position.z -= nz * push;
+        b.mesh.position.x += nx * push; b.mesh.position.z += nz * push;
+      }
+    }
+  }
+}
+
+function updateDoors(dt) {
+  for (const door of world.doors) {
+    const dx = player.position.x - door.worldX;
+    const dz = player.position.z - door.worldZ;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const shouldOpen = dist < 2.2;
+    const target = shouldOpen ? -Math.PI / 2 : 0;
+    door.currentAngle += (target - door.currentAngle) * Math.min(1, dt * 6);
+    door.group.rotation.y = door.currentAngle;
+  }
+}
+
+let nearWeapon = null;
+const promptEl = document.getElementById('prompt');
+const promptText = document.getElementById('prompt-text');
+
+function spawnWeaponPickup(weaponId, x, z, y = 0.9) {
+  const w = WEAPONS[weaponId];
+  const geo = new THREE.BoxGeometry(0.3, 0.15, 0.6, 2, 2, 2);
+  const mat = new THREE.MeshLambertMaterial({ color: w.color, emissive: w.color, emissiveIntensity: 0.3 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x, y, z);
+  scene.add(mesh);
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.35, 0.04, 8, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffdd00 })
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.copy(mesh.position);
+  ring.position.y += 0.1;
+  scene.add(ring);
+  world.weaponSpots.push({ x, y, z, mesh, ring, weaponId, bought: false, baseY: y });
+}
+
+function setupWeaponSpawns() {
+  const houses = [
+    { x: -14, z: -14 }, { x: 14, z: -14 }, { x: -14, z: 14 }, { x: 14, z: 14 },
+    { x: -28, z: -8 }, { x: 28, z: -8 }, { x: -28, z: 8 }, { x: 28, z: 8 },
+    { x: -8, z: -28 }, { x: 8, z: -28 }, { x: -8, z: 28 }, { x: 8, z: 28 },
+  ];
+  const pool = ['pistol', 'pistol', 'smg', 'shotgun', 'revolver', 'rifle', 'launcher'];
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  houses.forEach((h, i) => {
+    spawnWeaponPickup(shuffled[i % shuffled.length], h.x, h.z + 0.5, 0.95);
+  });
+}
+
+function updateWeaponPickups(dt) {
+  const t = performance.now() / 1000;
+  world.weaponSpots.forEach(s => {
+    if (s.bought) return;
+    s.mesh.rotation.y += dt * 1.5;
+    s.mesh.position.y = s.baseY + Math.sin(t * 2) * 0.08;
+    s.ring.rotation.z += dt * 2;
+    s.ring.position.y = s.mesh.position.y + 0.1;
+  });
+
+  let closest = null, closestDist = 2.0;
+  world.weaponSpots.forEach(s => {
+    if (s.bought) return;
+    const dx = player.position.x - s.x;
+    const dz = player.position.z - s.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d < closestDist) { closestDist = d; closest = s; }
+  });
+  nearWeapon = closest;
+
+  if (closest) {
+    const w = WEAPONS[closest.weaponId];
+    const can = state.coins >= w.cost;
+    const color = can ? '#ffdd00' : '#ff4444';
+    promptEl.classList.remove('hidden');
+    promptText.innerHTML = `Comprar <span style="color:${color}">${w.name}</span> — <span style="color:${color}">$${w.cost}</span>`;
+  } else {
+    promptEl.classList.add('hidden');
+  }
+}
+
+function tryBuyWeapon() {
+  if (!nearWeapon || nearWeapon.bought) return;
+  const w = WEAPONS[nearWeapon.weaponId];
+  if (state.coins < w.cost) { Sfx.playPlayerHurt(); return; }
+  state.coins -= w.cost;
+  state.inventory[w.slot] = nearWeapon.weaponId;
+  nearWeapon.bought = true;
+  scene.remove(nearWeapon.mesh);
+  scene.remove(nearWeapon.ring);
+  nearWeapon.mesh.geometry.dispose();
+  nearWeapon.mesh.material.dispose();
+  nearWeapon.ring.geometry.dispose();
+  nearWeapon.ring.material.dispose();
+  if (state.currentSlot === w.slot) buildViewModel(nearWeapon.weaponId);
+  else switchToSlot(w.slot);
+  Sfx.playCoin();
+  updateHUD();
+  updateWeaponSlotsHUD();
+}
+
+function updateRagdolls(dt) {
+  for (let i = ragdolls.length - 1; i >= 0; i--) {
+    const r = ragdolls[i];
+    if (r.update(dt)) { r.dispose(); ragdolls.splice(i, 1); }
+  }
+}
+function updateFlyingLimbs(dt) {
+  for (let i = flyingLimbs.length - 1; i >= 0; i--) {
+    const l = flyingLimbs[i];
+    if (l.update(dt)) { l.dispose(); flyingLimbs.splice(i, 1); }
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.1);
+  if (state.running && !state.levelUpActive) {
+    updatePlayer(dt);
+    resolvePlayerZombieCollision();
+    updateZombies(dt);
+    updateParticles(dt);
+    updateBloodPools(dt);
+    updateTracers(dt);
+    updateDoors(dt);
+    updateWeaponPickups(dt);
+    checkWaveComplete();
+    updateWeaponViewModel(dt);
+    updateRagdolls(dt);
+    updateFlyingLimbs(dt);
+
+    if (state.mouseDown) {
+      const w = WEAPONS[state.inventory[state.currentSlot] || 'knife'];
+      if (w.auto) attack();
+    }
+
+    // Atualiza shadow map a cada 4 frames (performance)
+    shadowFrame++;
+    if (shadowFrame >= 4) {
+      renderer.shadowMap.needsUpdate = true;
+      shadowFrame = 0;
+    }
+
+    const elapsed = Math.floor((performance.now() - state.startTime) / 1000);
+    const m = Math.floor(elapsed / 60);
+    const s = (elapsed % 60).toString().padStart(2, '0');
+    document.getElementById('timer').textContent = `${m}:${s}`;
+  } else if (!state.running) {
+    updateParticles(dt);
+    updateBloodPools(dt);
+    updateTracers(dt);
+    updateRagdolls(dt);
+    updateFlyingLimbs(dt);
+  }
+  renderer.render(scene, camera);
+}
+animate();
+
+function updateHUD() {
+  const hp = Math.max(0, state.health);
+  document.getElementById('hp-fill').style.width = `${(hp / state.maxHealth) * 100}%`;
+  document.getElementById('hp-text').textContent = `${Math.ceil(hp)} / ${state.maxHealth}`;
+  document.getElementById('xp-fill').style.width = `${(state.xp / state.xpToNextLevel) * 100}%`;
+  document.getElementById('coins').textContent = state.coins;
+  document.getElementById('wave').textContent = state.wave;
+  document.getElementById('level').textContent = state.level;
+  document.getElementById('zombies').textContent = state.zombiesAlive;
+  const w = WEAPONS[state.inventory[state.currentSlot] || 'knife'];
+  document.getElementById('weapon-name').textContent = w.name;
+  const ammoEl = document.getElementById('ammo-current');
+  if (w.ammo === null) ammoEl.textContent = '∞';
+  else { ammoEl.textContent = w.ammo + ' / ' + w.maxAmmo; ammoEl.style.color = w.ammo <= 0 ? '#ff4444' : '#fff'; }
+}
+
+function startGame() {
+  if (state.waveIntervalId !== null) {
+    clearInterval(state.waveIntervalId);
+    state.waveIntervalId = null;
+  }
+  Sfx.initAudio(); Sfx.resumeAudio();
+  state.maxHealth = CONFIG.player.maxHealth;
+  state.health = state.maxHealth;
+  state.coins = 0; state.xp = 0;
+  state.level = 1; state.xpToNextLevel = 50;
+  state.wave = 0; state.zombiesAlive = 0;
+  state.zombiesRemainingInWave = 0;
+  state.running = true; state.betweenWaves = false;
+  state.startTime = performance.now();
+  state.critChance = CONFIG.crit.baseChance;
+  state.damageMult = 1.0; state.rangeBonus = 0;
+  state.speedMult = 1.0; state.lifesteal = 0;
+  state.coinMult = 1.0; state.xpMult = 1.0;
+  state.damageReduction = 0;
+  state.attackSpeedMult = 1.0; state.critDamageBonus = 0;
+  state.levelUpActive = false; state.pendingLevelUps = 0;
+  state.inventory = { 1: 'knife', 2: null, 3: null, 4: null };
+  state.currentSlot = 1;
+  state.mouseDown = false;
+  state.lastAttackTime = 0;
+
+  world.weaponSpots.forEach(s => {
+    scene.remove(s.mesh);
+    scene.remove(s.ring);
+    s.mesh.geometry.dispose();
+    s.mesh.material.dispose();
+    s.ring.geometry.dispose();
+    s.ring.material.dispose();
+  });
+  world.weaponSpots = [];
+  Object.values(WEAPONS).forEach(w => { if (w.maxAmmo !== null) w.ammo = w.maxAmmo; });
+  setupWeaponSpawns();
+
+  zombies.forEach(z => scene.remove(z.mesh));
+  zombies.length = 0;
+  ragdolls.forEach(r => r.dispose());
+  ragdolls.length = 0;
+  flyingLimbs.forEach(l => l.dispose());
+  flyingLimbs.length = 0;
+  particles.forEach(p => scene.remove(p.mesh));
+  particles.length = 0;
+  bloodPools.forEach(b => scene.remove(b.mesh));
+  bloodPools.length = 0;
+  tracers.forEach(t => scene.remove(t.mesh));
+  tracers.length = 0;
+
+  player.position.set(0, CONFIG.player.height, 0);
+  player.yaw = 0; player.pitch = 0;
+
+  buildViewModel('knife');
+  updateWeaponSlotsHUD();
+
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('gameover').classList.add('hidden');
+  document.getElementById('hud').classList.remove('hidden');
+  updateHUD();
+  startWave();
+}
+
+function gameOver() {
+  state.running = false;
+  if (state.waveIntervalId !== null) {
+    clearInterval(state.waveIntervalId);
+    state.waveIntervalId = null;
+  }
+  document.getElementById('final-wave').textContent = state.wave;
+  document.getElementById('final-level').textContent = state.level;
+  document.getElementById('final-coins').textContent = state.coins;
+  document.getElementById('gameover').classList.remove('hidden');
+  document.getElementById('hud').classList.add('hidden');
+  document.getElementById('prompt').classList.add('hidden');
+  if (document.exitPointerLock) document.exitPointerLock();
+}
+
+document.getElementById('btn-start').addEventListener('click', startGame);
+document.getElementById('btn-restart').addEventListener('click', startGame);
+document.getElementById('btn-multiplayer').addEventListener('click', () => alert('Multijogador em breve!'));
+document.getElementById('btn-wiki').addEventListener('click', () => window.open('https://zumbiblocks2.wiki.gg/', '_blank'));
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
