@@ -39,7 +39,6 @@ export function setVolume(v) {
   if (masterGain) masterGain.gain.value = muted ? 0 : Math.max(0, Math.min(1, v));
 }
 
-// -------- Buffer de ruído compartilhado (evita alocações) --------
 function getNoiseBuffer() {
   if (!noiseBuffer && ctx) {
     const len = Math.floor(ctx.sampleRate * 1.0);
@@ -88,7 +87,6 @@ function playOsc(t, type, freqStart, freqEnd, peak, decay, duration) {
   return { o, g };
 }
 
-// -------- Efeitos --------
 export function playKnifeSwing() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -239,4 +237,28 @@ export function playBuy() {
   if (!ctx) return;
   const t = ctx.currentTime;
   playOsc(t, 'triangle', 660, 990, 0.2, 0.12, 0.13);
+}
+
+// ============================================
+// FASE 2-B — DOWNED / REVIVE / PING
+// ============================================
+
+export function playPlayerDown() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  playOsc(t, 'sawtooth', 260, 40, 0.4, 0.9, 1.0);
+  playNoise(t, 0.35, 'lowpass', 400, 0.35, 0.3);
+}
+
+export function playRevive() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  playOsc(t, 'sine', 330, 990, 0.25, 0.5, 0.55);
+  playOsc(t + 0.12, 'sine', 660, 1320, 0.2, 0.4, 0.45);
+}
+
+export function playPing() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  playOsc(t, 'sine', 1200, 1600, 0.15, 0.1, 0.13);
 }
