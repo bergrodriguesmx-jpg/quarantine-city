@@ -186,9 +186,7 @@ canvas { display: block; }
   opacity: 0;
   pointer-events: none;
 }
-#hit-marker.active {
-  animation: hitPop 0.25s ease-out;
-}
+#hit-marker.active { animation: hitPop 0.25s ease-out; }
 #hit-marker.critical {
   color: #ff2200;
   font-size: 44px;
@@ -233,6 +231,77 @@ canvas { display: block; }
 #wave-banner.show {
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
+}
+
+/* ===== LEVEL UP ===== */
+#levelup { z-index: 90; }
+.levelup-container {
+  text-align: center;
+  max-width: 900px;
+  padding: 30px;
+  animation: levelupPop 0.4s ease-out;
+}
+@keyframes levelupPop {
+  0% { opacity: 0; transform: scale(0.7); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.levelup-container h2 {
+  color: #ffdd00;
+  font-size: 3rem;
+  margin-bottom: 4px;
+  text-shadow: 0 0 20px #ffdd00, 3px 3px #000;
+  letter-spacing: 4px;
+}
+.levelup-subtitle {
+  color: #888;
+  font-size: 0.9rem;
+  letter-spacing: 4px;
+  margin-bottom: 30px;
+}
+.levelup-choices {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.skill-card {
+  width: 220px;
+  padding: 24px 16px;
+  background: #0b0b0b;
+  border: 3px solid #555;
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  transition: 0.2s;
+  text-align: center;
+}
+.skill-card:hover {
+  border-color: #cc0000;
+  background: #1a0a0a;
+  box-shadow: 0 0 25px rgba(204, 0, 0, 0.8);
+  transform: translateY(-6px) scale(1.03);
+}
+.skill-card:active { transform: translateY(-2px) scale(0.99); }
+.skill-icon {
+  font-size: 3rem;
+  line-height: 1;
+  filter: drop-shadow(0 0 8px rgba(255,255,255,0.4));
+}
+.skill-name {
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: #ffdd00;
+  letter-spacing: 2px;
+  text-shadow: 2px 2px #000;
+}
+.skill-desc {
+  font-size: 0.85rem;
+  color: #ccc;
+  line-height: 1.4;
 }
 
 #mobile-controls {
