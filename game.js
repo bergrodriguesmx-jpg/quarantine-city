@@ -350,6 +350,15 @@ function makeBox(w, h, d, s = 5) { return new THREE.BoxGeometry(w, h, d, s, s, s
 function makeJoint(r, seg = 10) { return new THREE.SphereGeometry(r, seg, Math.max(6, Math.floor(seg * 0.75))); }
 
 // ============================================================
+// AIM REGION (baseado na pitch da câmera)
+// ============================================================
+function getAimRegion() {
+  if (player.pitch > 0.15) return 'head';
+  if (player.pitch < -0.25) return 'legs';
+  return 'torso';
+}
+
+// ============================================================
 // COLISÃO
 // ============================================================
 function circleVsAABB(px, pz, radius, box) {
@@ -1239,19 +1248,6 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint) {
 }
 
 // ============================================================
-// AIM REGION (baseado na pitch da câmera)
-// ============================================================
-function getAimRegion() {
-  if (player.pitch > 0.15) return 'head';
-  if (player.pitch < -0.25) return 'legs';
-  return 'torso';
-}
-
-// ============================================================
-// ATTACK
-// ============================================================
-function attack() {
-// ============================================================
 // ATTACK
 // ============================================================
 function attack() {
@@ -1280,7 +1276,7 @@ function attack() {
   if (weapon.type === 'ranged') spawnMuzzleFlash();
 
   // ============================================================
-  // MELEE — simples e direto: acerta QUALQUER zumbi no range horizontal
+  // MELEE — checagem direta: acerta QUALQUER zumbi no range horizontal
   // ============================================================
   if (weapon.type === 'melee') {
     const forward = new THREE.Vector3();
@@ -1328,7 +1324,6 @@ function attack() {
 
     console.log('[MELEE] Zumbis acertados:', hits);
 
-    // Fatiar ragdolls
     const camPos = camera.position.clone();
     for (const r of ragdolls) {
       if (r.sliceAt(camPos, forward, CONFIG.ragdoll.sliceRange)) {
@@ -1372,6 +1367,8 @@ function attack() {
     }
   }
 }
+
+function rollCrit() { return Math.random() < state.critChance; }
 
 // ============================================================
 // LEVEL UP
