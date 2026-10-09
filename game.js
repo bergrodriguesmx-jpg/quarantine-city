@@ -8,6 +8,7 @@ import { nextId } from './ids.js';
 import { LocalAdapter } from './adapter.js';
 
 bus.setAdapter(new LocalAdapter());
+
 // ============================================================
 // CACHE GLOBAL DE GEOMETRIAS E MATERIAIS (evita vazamento)
 // ============================================================
@@ -290,7 +291,6 @@ const MAT = {
 function buildViewModel(weaponId) {
   if (currentViewModel) {
     weaponGroup.remove(currentViewModel);
-    currentViewModel.traverse(c => { /* geoms cached, não dispose */ });
     currentViewModel = null;
   }
   const g = new THREE.Group();
@@ -570,8 +570,10 @@ function buildDonkeyHead(headGroup, skinMat, wound) {
   const muzzle = new THREE.Mesh(geoBox(0.32, 0.28, 0.35, 1), muzzleMat);
   muzzle.position.set(0, -0.08, 0.42); headGroup.add(muzzle);
   const nostrilMat = matB(0x2A1F1A);
-  headGroup.add(Object.assign(new THREE.Mesh(geoBox(0.05, 0.04, 0.02, 1), nostrilMat), { position: new THREE.Vector3(-0.08, -0.02, 0.60) }));
-  headGroup.add(Object.assign(new THREE.Mesh(geoBox(0.05, 0.04, 0.02, 1), nostrilMat), { position: new THREE.Vector3(0.08, -0.02, 0.60) }));
+  const nL = new THREE.Mesh(geoBox(0.05, 0.04, 0.02, 1), nostrilMat);
+  nL.position.set(-0.08, -0.02, 0.60); headGroup.add(nL);
+  const nR = new THREE.Mesh(geoBox(0.05, 0.04, 0.02, 1), nostrilMat);
+  nR.position.set(0.08, -0.02, 0.60); headGroup.add(nR);
   const mouth = new THREE.Mesh(geoBox(0.24, 0.05, 0.02, 1), matB(0x2B0000));
   mouth.position.set(0, -0.20, 0.60); headGroup.add(mouth);
   const teethGeo = geoBox(0.03, 0.04, 0.02, 1);
@@ -665,7 +667,6 @@ function computePartLocalBox(group) {
 }
 
 function pickVariant() {
-  // Boss não entra no sorteio normal (é forçado em wave múltipla de 5)
   const entries = Object.entries(ZOMBIE_VARIANTS).filter(([k]) => k !== 'boss');
   const total = entries.reduce((s, [, v]) => s + v.weight, 0);
   let r = Math.random() * total;
@@ -1089,7 +1090,6 @@ class Debris {
   }
   dispose() {
     scene.remove(this.mesh);
-    // Geometrias/materiais compartilhados - não dispose individualmente
   }
 }
 
@@ -1993,7 +1993,6 @@ function updateDownedState(dt) {
 
   state.downedElapsed += dt * 1000;
 
-  // HP do caído zerou → morte real
   if (state.downedHP <= 0) {
     exitDownedState(0);
     gameOver();
@@ -2150,7 +2149,6 @@ function renderShop() {
   shopCoinsEl.textContent = '$ ' + state.coins;
   shopItemsEl.innerHTML = '';
 
-  // Ammo packs for owned weapons
   const owned = Object.values(state.inventory).filter(x => x && x !== 'knife');
   if (owned.length === 0) {
     const el = document.createElement('div');
@@ -2218,7 +2216,6 @@ document.addEventListener('keydown', e => {
     document.getElementById('ping-wheel').classList.remove('hidden');
   }
 
-  // E: compra arma perto ou abre loja
   if (e.code === 'KeyE' && state.running && !state.downed && !state.levelUpActive) {
     if (state.shopOpen) { closeShop(); return; }
     if (nearWeapon && !nearWeapon.bought) {
@@ -2373,7 +2370,6 @@ function setupMobile() {
 
   rev.addEventListener('touchstart', e => {
     e.preventDefault();
-    // Simula tecla E para revive
     if (state.downed) state.keys['KeyE'] = true;
   }, { passive: false });
   rev.addEventListener('touchend', e => {
@@ -2482,7 +2478,6 @@ function resolvePlayerZombieCollision() {
 // ZOMBIE UPDATE
 // ============================================================
 const _toV = new THREE.Vector3();
-let groanTimer = 0;
 
 function updateZombies(dt) {
   const now = performance.now() / 1000;
@@ -2588,11 +2583,9 @@ function updateZombies(dt) {
     }
 
     if (emerge >= 0.5) {
-      // Spitter: ranged attack
       if (z.isRanged && !staggering) {
         if (dist < z.rangedRange && now - z.lastRangedShot > z.rangedCooldown) {
           z.lastRangedShot = now;
-          // Spit projectile (simple: direct damage with delay)
           setTimeout(() => {
             if (state.downed || !state.running) return;
             const dm = z.damage * (1 - state.damageReduction);
@@ -2617,7 +2610,6 @@ function updateZombies(dt) {
         z.mesh.position.addScaledVector(_toV, z.speed * dt);
       } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
         z.lastAttackTime = now;
-        // === Zumbi ataca jogador (downed ou não) ===
         if (state.downed) {
           state.downedHP -= z.damage * 0.8;
         } else {
@@ -2639,11 +2631,9 @@ function updateZombies(dt) {
       }
     }
 
-    // Zombie vs wall
     resolveWallCollisions(z.mesh.position, CONFIG.zombie.radius);
   }
 
-  // Zombie-zombie collision (O(n²) but capped at 40)
   for (let i = 0; i < zombies.length; i++) {
     for (let j = i + 1; j < zombies.length; j++) {
       const a = zombies[i], b = zombies[j];
@@ -2750,7 +2740,6 @@ function tryBuyWeapon() {
   if (state.coins < w.cost) { Sfx.playPlayerHurt(); return; }
   state.coins -= w.cost;
   state.inventory[w.slot] = nearWeapon.weaponId;
-  // Full ammo on purchase
   state.ammo[w.id] = { mag: w.magSize, reserve: w.reserveMax };
 
   nearWeapon.bought = true;
@@ -2875,7 +2864,6 @@ function animate() {
       lastTimeText = t;
     }
 
-    // Esconder botão revive mobile quando não está caído
     const revBtn = document.getElementById('btn-revive');
     if (revBtn) revBtn.classList.toggle('visible', state.downed);
   } else if (!state.running) {
@@ -2970,7 +2958,6 @@ function startGame() {
   pings.forEach(p => { scene.remove(p.group); p.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); }); });
   pings.length = 0;
 
-  // Clean weapon spots
   world.weaponSpots.forEach(s => {
     scene.remove(s.mesh);
     scene.remove(s.ring);
@@ -2981,15 +2968,7 @@ function startGame() {
   world.weaponSpots = [];
   setupWeaponSpawns();
 
-  // Clean zombies (dispose meshes)
-  zombies.forEach(z => {
-    scene.remove(z.mesh);
-    z.mesh.traverse(c => {
-      if (c.geometry && !geoCache.has(c.geometry.uuid)) {
-        // Only dispose non-cached geometries (custom ones like cone, circle, plane, etc.)
-      }
-    });
-  });
+  zombies.forEach(z => { scene.remove(z.mesh); });
   zombies.length = 0;
   ragdolls.forEach(r => r.dispose());
   ragdolls.length = 0;
