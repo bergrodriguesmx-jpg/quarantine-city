@@ -29,9 +29,10 @@
     </div>
 
     <div id="hud-ammo">
-      <span id="ammo-current">-</span>
-      <span id="ammo-sep">/</span>
-      <span id="ammo-max">-</span>
+      <span id="weapon-name">FACA</span>
+      <div class="ammo-nums">
+        <span id="ammo-current">INF</span>
+      </div>
     </div>
 
     <div id="hud-info">
@@ -42,6 +43,13 @@
     </div>
 
     <div id="xp-bar"><div id="xp-fill"></div></div>
+
+    <div id="weapon-slots">
+      <div class="slot" data-slot="1"><span class="slot-num">1</span><span class="slot-name">FACA</span></div>
+      <div class="slot empty" data-slot="2"><span class="slot-num">2</span><span class="slot-name">-</span></div>
+      <div class="slot empty" data-slot="3"><span class="slot-num">3</span><span class="slot-name">-</span></div>
+      <div class="slot empty" data-slot="4"><span class="slot-num">4</span><span class="slot-name">-</span></div>
+    </div>
 
     <div id="crosshair">
       <div class="ch-line ch-top"></div>
@@ -56,7 +64,12 @@
 
   <div id="wave-banner" class="hidden">HORDA 1</div>
 
-  <!-- LEVEL UP -->
+  <!-- Prompt de compra -->
+  <div id="prompt" class="hidden">
+    <span class="prompt-key">E</span>
+    <span id="prompt-text">Comprar</span>
+  </div>
+
   <div id="levelup" class="menu-overlay hidden">
     <div class="levelup-container">
       <h2>NIVEL <span id="levelup-level">2</span></h2>
