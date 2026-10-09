@@ -827,7 +827,10 @@ class Ragdoll {
     ];
 
     for (const def of defs) {
+      if (missingParts[def.key]) continue;
       const obj = def.obj;
+      if (!obj) continue;
+
       const wp = new THREE.Vector3();
       const wq = new THREE.Quaternion();
       obj.getWorldPosition(wp);
@@ -842,6 +845,7 @@ class Ragdoll {
 
       obj.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(obj);
+      if (box.isEmpty()) { obj.visible = false; continue; }
       const center = box.getCenter(new THREE.Vector3());
 
       const wrapper = new THREE.Group();
@@ -1034,7 +1038,7 @@ function randomDismemberOnDeath(z) {
 }
 
 // ============================================================
-// RAYCAST POR PARTE
+// RAYCAST POR PARTE (usado só para ARMAS DE FOGO)
 // ============================================================
 function rayAABB(origin, dir, min, max, maxDist) {
   let tMin = 0, tMax = maxDist;
@@ -1261,43 +1265,49 @@ function attack() {
   triggerSwing();
   if (weapon.type === 'ranged') spawnMuzzleFlash();
 
+  // ============================================================
+  // MELEE — checagem direta por distância + cone (NUNCA falha)
+  // ============================================================
   if (weapon.type === 'melee') {
-    const camOrigin = camera.position.clone();
     const camDir = new THREE.Vector3();
     camera.getWorldDirection(camDir);
     const forward = camDir.clone();
-    forward.y = 0; forward.normalize();
+    forward.y = 0;
+    forward.normalize();
     const range = weapon.range + state.rangeBonus;
     const aimRegion = getAimRegion();
 
-    [...zombies].forEach(z => {
-      if (z.health <= 0) return;
-      const to = new THREE.Vector3().subVectors(z.mesh.position, player.position);
-      to.y = 0;
-      const horizDist = to.length();
-      if (horizDist > range) return;
-      to.normalize();
-      if (forward.dot(to) < 0.3) return;
+    const snapshot = [...zombies];
+    for (const z of snapshot) {
+      if (z.health <= 0) continue;
 
-      z.mesh.updateMatrixWorld(true);
-      const boxes = getZombiePartBoxes(z);
-      let part = null;
-      let bestT = Infinity;
-      let hitPoint = null;
-      for (const p of boxes) {
-        const t = rayAABB(camOrigin, camDir, p.box.min, p.box.max, range + 1.5);
-        if (t !== null && t < bestT) {
-          bestT = t;
-          part = p.key;
-          hitPoint = camOrigin.clone().addScaledVector(camDir, t);
-        }
+      // Vetor horizontal do player ao zumbi
+      const dx = z.mesh.position.x - player.position.x;
+      const dz = z.mesh.position.z - player.position.z;
+      const horizDist = Math.sqrt(dx * dx + dz * dz);
+
+      // Fora de alcance? skip
+      if (horizDist > range) continue;
+
+      // Fora do cone frontal? skip (mas se estiver MUITO perto, sempre acerta)
+      let dot = 1;
+      if (horizDist > 0.4) {
+        const nx = dx / horizDist;
+        const nz = dz / horizDist;
+        dot = forward.x * nx + forward.z * nz;
+        if (dot < 0.1) continue; // cone bem generoso (~84°)
       }
 
-      if (!part) {
-        part = aimRegion;
-        hitPoint = z.mesh.position.clone();
-        hitPoint.y += part === 'head' ? 1.85 : part === 'legs' ? 0.5 : 1.15;
-      }
+      // ===== ACERTOU =====
+      // Determina a parte conforme a mira (pitch)
+      let part;
+      if (aimRegion === 'head') part = 'head';
+      else if (aimRegion === 'legs') part = Math.random() < 0.5 ? 'legL' : 'legR';
+      else part = 'torso';
+
+      const hitPoint = z.mesh.position.clone();
+      hitPoint.y += (part === 'head') ? 1.85 :
+                    (part === 'legL' || part === 'legR') ? 0.5 : 1.15;
 
       const isCrit = rollCrit();
       const baseDmg = weapon.damage * state.damageMult;
@@ -1305,14 +1315,14 @@ function attack() {
       const headMult = part === 'head' ? CONFIG.headshotMultiplier : 1;
       const dmg = baseDmg * headMult * (isCrit ? critMult : 1);
 
-      const hitDir = new THREE.Vector3().subVectors(z.mesh.position, player.position);
-      hitDir.y = 0;
-      if (hitDir.lengthSq() > 0.0001) hitDir.normalize();
-      else hitDir.set(forward.x, 0, forward.z);
+      const hitDir = horizDist > 0.001
+        ? new THREE.Vector3(dx / horizDist, 0, dz / horizDist)
+        : forward.clone();
 
       damageZombie(z, dmg, isCrit, part, hitDir, hitPoint);
-    });
+    }
 
+    // Fatiar ragdolls
     const camPos = camera.position.clone();
     for (const r of ragdolls) {
       if (r.sliceAt(camPos, forward, CONFIG.ragdoll.sliceRange)) {
@@ -1324,6 +1334,9 @@ function attack() {
     return;
   }
 
+  // ============================================================
+  // ARMA DE FOGO
+  // ============================================================
   const origin = camera.position.clone();
   const forward = new THREE.Vector3();
   camera.getWorldDirection(forward);
