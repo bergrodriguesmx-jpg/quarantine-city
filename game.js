@@ -165,10 +165,8 @@ function createPTShirtTexture() {
   c.height = 256;
   const ctx = c.getContext('2d');
 
-  // Fundo transparente
   ctx.clearRect(0, 0, 256, 256);
 
-  // Desenha estrela de 5 pontas (branca)
   const cx = 128, cy = 128;
   const outerR = 100;
   const innerR = 40;
@@ -188,7 +186,6 @@ function createPTShirtTexture() {
   ctx.strokeStyle = '#FFFFFF';
   ctx.stroke();
 
-  // Desenha "PT" em vermelho no centro
   ctx.fillStyle = '#CC0000';
   ctx.font = 'bold 60px Arial, sans-serif';
   ctx.textAlign = 'center';
@@ -453,13 +450,14 @@ function resolveWallCollisions(pos, radius) {
 }
 
 // ============================================================
-// ZUMBIS — camisa PT
+// ZUMBIS — 3 variações
 // ============================================================
 const zombies = [];
 const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
 const SKIN_COLORS = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
 const HAIR_COLORS = [0x2C1810, 0x1A0F08, 0x4A2818, 0x6B3A1F, 0x3A2A1A];
-const SHIRT_RED = 0xCC1111; // Camisa vermelha fixa (PT)
+const SHIRT_RED = 0xCC1111;
+const SHIRT_BLACK = 0x1A1A1A;
 const BODY_TYPES = [
   { torsoW: 0.55, torsoD: 0.30, arm: 0.18, leg: 0.22, heightScale: 1.05 },
   { torsoW: 0.70, torsoD: 0.35, arm: 0.22, leg: 0.26, heightScale: 1.00 },
@@ -470,26 +468,10 @@ const BONE_MAT = new THREE.MeshLambertMaterial({ color: 0xE8E0D0 });
 const BONE_DARK_MAT = new THREE.MeshLambertMaterial({ color: 0xC8BFA8 });
 const BONE_DARKER = new THREE.MeshLambertMaterial({ color: 0xA89F88 });
 
-function createZombieMesh() {
-  const g = new THREE.Group();
-  const skinColor = rand(SKIN_COLORS);
-  const shirtColor = SHIRT_RED; // Vermelho fixo
-  const pantsColor = rand(PANTS_COLORS);
-  const hairColor = rand(HAIR_COLORS);
-  const body = rand(BODY_TYPES);
-  const hasHat = Math.random() > 0.7;
-
-  const skinMat = new THREE.MeshLambertMaterial({ color: skinColor });
-  const shirtMat = new THREE.MeshLambertMaterial({ color: shirtColor });
-  const pantsMat = new THREE.MeshLambertMaterial({ color: pantsColor });
-  const hairMat = new THREE.MeshLambertMaterial({ color: hairColor });
-  const shoeMat = new THREE.MeshLambertMaterial({ color: 0x1A1A1A });
-  const eyeW = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
-  const pupil = new THREE.MeshBasicMaterial({ color: 0x000000 });
-  const wound = new THREE.MeshBasicMaterial({ color: 0xC0392B });
-
-  const headGroup = new THREE.Group();
-  headGroup.position.y = 1.85;
+// ============================================================
+// CABEÇA: HUMANA (default)
+// ============================================================
+function buildHumanHead(headGroup, skinMat, hairMat, wound, hasHat) {
   const skull = new THREE.Mesh(makeBox(0.55, 0.55, 0.55, 5), skinMat);
   skull.castShadow = true;
   headGroup.add(skull);
@@ -500,6 +482,8 @@ function createZombieMesh() {
   const earGeo = makeBox(0.06, 0.14, 0.10, 2);
   const earL = new THREE.Mesh(earGeo, skinMat); earL.position.set(-0.31, 0, 0); headGroup.add(earL);
   const earR = new THREE.Mesh(earGeo, skinMat); earR.position.set(0.31, 0, 0); headGroup.add(earR);
+  const eyeW = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
+  const pupil = new THREE.MeshBasicMaterial({ color: 0x000000 });
   const eyeGeo = makeBox(0.13, 0.11, 0.02, 2);
   const eL = new THREE.Mesh(eyeGeo, eyeW); eL.position.set(-0.13, 0.08, 0.285); headGroup.add(eL);
   const eR = new THREE.Mesh(eyeGeo, eyeW); eR.position.set(0.13, 0.08, 0.285); headGroup.add(eR);
@@ -528,6 +512,212 @@ function createZombieMesh() {
     hatTop.position.y = 0.15; hatGroup.add(hatTop);
     hatGroup.position.y = 0.34; headGroup.add(hatGroup);
   }
+}
+
+// ============================================================
+// CABEÇA: BURRO (donkey)
+// ============================================================
+function buildDonkeyHead(headGroup, skinMat, wound) {
+  const donkeySkinMat = new THREE.MeshLambertMaterial({ color: 0x9E8B7A }); // cinza-marrom
+  const donkeyDarkMat = new THREE.MeshLambertMaterial({ color: 0x6B5D4F });
+  const muzzleMat = new THREE.MeshLambertMaterial({ color: 0xB8A796 });
+
+  // Crânio principal (mais achatado que humano)
+  const skull = new THREE.Mesh(makeBox(0.55, 0.55, 0.55, 5), donkeySkinMat);
+  skull.castShadow = true;
+  headGroup.add(skull);
+
+  // Focinho alongado (parte da frente, pra baixo)
+  const muzzle = new THREE.Mesh(makeBox(0.32, 0.28, 0.35, 4), muzzleMat);
+  muzzle.position.set(0, -0.08, 0.42);
+  muzzle.castShadow = true;
+  headGroup.add(muzzle);
+
+  // Narinas
+  const nostrilMat = new THREE.MeshBasicMaterial({ color: 0x2A1F1A });
+  const nL = new THREE.Mesh(makeBox(0.05, 0.04, 0.02, 1), nostrilMat);
+  nL.position.set(-0.08, -0.02, 0.60); headGroup.add(nL);
+  const nR = new THREE.Mesh(makeBox(0.05, 0.04, 0.02, 1), nostrilMat);
+  nR.position.set(0.08, -0.02, 0.60); headGroup.add(nR);
+
+  // Boca
+  const mouth = new THREE.Mesh(makeBox(0.24, 0.05, 0.02, 2), new THREE.MeshBasicMaterial({ color: 0x2B0000 }));
+  mouth.position.set(0, -0.20, 0.60); headGroup.add(mouth);
+  const teethGeo = makeBox(0.03, 0.04, 0.02, 1);
+  for (let i = 0; i < 4; i++) {
+    const t = new THREE.Mesh(teethGeo, new THREE.MeshBasicMaterial({ color: 0xE8E0D0 }));
+    t.position.set(-0.075 + i * 0.05, -0.18, 0.60);
+    headGroup.add(t);
+  }
+
+  // Olhos laterais (bem separados)
+  const eyeW = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
+  const pupil = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  const eyeGeo = makeBox(0.10, 0.10, 0.02, 2);
+  const eL = new THREE.Mesh(eyeGeo, eyeW); eL.position.set(-0.20, 0.10, 0.28); headGroup.add(eL);
+  const eR = new THREE.Mesh(eyeGeo, eyeW); eR.position.set(0.20, 0.10, 0.28); headGroup.add(eR);
+  const pupGeo = makeBox(0.05, 0.05, 0.02, 2);
+  const pL = new THREE.Mesh(pupGeo, pupil); pL.position.set(-0.20, 0.10, 0.29); headGroup.add(pL);
+  const pR = new THREE.Mesh(pupGeo, pupil); pR.position.set(0.20, 0.10, 0.29); headGroup.add(pR);
+
+  // ORELHAS LONGAS (marca registrada do burro)
+  function makeEar(side) {
+    const ear = new THREE.Group();
+    // Base
+    const base = new THREE.Mesh(makeBox(0.10, 0.25, 0.10, 2), donkeySkinMat);
+    base.position.y = 0.15;
+    base.castShadow = true;
+    ear.add(base);
+    // Meio
+    const mid = new THREE.Mesh(makeBox(0.09, 0.20, 0.09, 2), donkeySkinMat);
+    mid.position.y = 0.38;
+    mid.rotation.z = side * 0.15;
+    ear.add(mid);
+    // Ponta (mais escura)
+    const tip = new THREE.Mesh(makeBox(0.08, 0.12, 0.08, 2), donkeyDarkMat);
+    tip.position.y = 0.55;
+    tip.rotation.z = side * 0.2;
+    ear.add(tip);
+    // Interior da orelha (rosa)
+    const innerMat = new THREE.MeshLambertMaterial({ color: 0xE8B8B0 });
+    const inner = new THREE.Mesh(makeBox(0.05, 0.20, 0.02, 1), innerMat);
+    inner.position.set(0, 0.25, 0.06);
+    ear.add(inner);
+    return ear;
+  }
+  const earL = makeEar(-1);
+  earL.position.set(-0.18, 0.28, 0);
+  earL.rotation.z = 0.25;
+  earL.rotation.x = -0.15;
+  headGroup.add(earL);
+  const earR = makeEar(1);
+  earR.position.set(0.18, 0.28, 0);
+  earR.rotation.z = -0.25;
+  earR.rotation.x = -0.15;
+  headGroup.add(earR);
+
+  // Tufo de crina (alguns fios)
+  const maneMat = new THREE.MeshLambertMaterial({ color: 0x3A2A1A });
+  for (let i = 0; i < 3; i++) {
+    const m = new THREE.Mesh(makeBox(0.06, 0.12, 0.06, 1), maneMat);
+    m.position.set(0, 0.32 + i * 0.08, -0.05);
+    headGroup.add(m);
+  }
+
+  // Ferida (reaproveita o wound mat)
+  const woundHead = new THREE.Mesh(makeBox(0.14, 0.08, 0.02, 2), wound);
+  woundHead.position.set(-0.20, 0.22, 0.24); headGroup.add(woundHead);
+}
+
+// ============================================================
+// CABEÇA: JUIZ (careca, arredondada)
+// ============================================================
+function buildJudgeHead(headGroup, skinMat, wound) {
+  // Cabeça arredondada (Sphere com seg alta pra ficar suave)
+  const headSphere = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12), skinMat);
+  headSphere.castShadow = true;
+  headGroup.add(headSphere);
+
+  // Careca — sem cabelo. Talvez só uma sombra de barba
+  const stubbleMat = new THREE.MeshLambertMaterial({ color: 0x5A5A5A, transparent: true, opacity: 0.35 });
+
+  // Olhos
+  const eyeW = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
+  const pupil = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  const eyeGeo = makeBox(0.11, 0.10, 0.02, 2);
+  const eL = new THREE.Mesh(eyeGeo, eyeW); eL.position.set(-0.13, 0.06, 0.30); headGroup.add(eL);
+  const eR = new THREE.Mesh(eyeGeo, eyeW); eR.position.set(0.13, 0.06, 0.30); headGroup.add(eR);
+  const pupGeo = makeBox(0.05, 0.05, 0.02, 2);
+  const pL = new THREE.Mesh(pupGeo, pupil); pL.position.set(-0.13, 0.06, 0.31); headGroup.add(pL);
+  const pR = new THREE.Mesh(pupGeo, pupil); pR.position.set(0.13, 0.06, 0.31); headGroup.add(pR);
+
+  // Sobrancelhas grisalhas (juiz velho)
+  const browMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
+  const browGeo = makeBox(0.14, 0.03, 0.02, 2);
+  const bL = new THREE.Mesh(browGeo, browMat); bL.position.set(-0.13, 0.15, 0.30); headGroup.add(bL);
+  const bR = new THREE.Mesh(browGeo, browMat); bR.position.set(0.13, 0.15, 0.30); headGroup.add(bR);
+
+  // Nariz
+  const nose = new THREE.Mesh(makeBox(0.08, 0.07, 0.06, 3), skinMat);
+  nose.position.set(0, -0.02, 0.31); headGroup.add(nose);
+
+  // Bigode e barba (juiz clássico)
+  const mustache = new THREE.Mesh(makeBox(0.24, 0.05, 0.03, 2), browMat);
+  mustache.position.set(0, -0.10, 0.30); headGroup.add(mustache);
+  const chinBeard = new THREE.Mesh(makeBox(0.20, 0.10, 0.04, 2), browMat);
+  chinBeard.position.set(0, -0.22, 0.28); headGroup.add(chinBeard);
+
+  // Boca
+  const mouth = new THREE.Mesh(makeBox(0.20, 0.05, 0.02, 2), new THREE.MeshBasicMaterial({ color: 0x2B0000 }));
+  mouth.position.set(0, -0.15, 0.31); headGroup.add(mouth);
+
+  // Ferida
+  const woundHead = new THREE.Mesh(makeBox(0.12, 0.06, 0.02, 2), wound);
+  woundHead.position.set(-0.10, 0.20, 0.26); headGroup.add(woundHead);
+}
+
+// ============================================================
+// ROUPA: JUIZ (toga preta + colarinho branco)
+// ============================================================
+function buildJudgeOutfit(torsoGroup, body, woundMat) {
+  // A camisa preta JÁ é a base (shirtMat preto), então só adiciona
+  // o colarinho branco e a faixa da toga
+  const whiteMat = new THREE.MeshLambertMaterial({ color: 0xF5F5F5 });
+
+  // Colarinho branco em V (aba)
+  const collarL = new THREE.Mesh(makeBox(0.15, 0.20, 0.04, 2), whiteMat);
+  collarL.position.set(-0.12, 0.30, body.torsoD / 2 + 0.008);
+  collarL.rotation.z = 0.5;
+  torsoGroup.add(collarL);
+  const collarR = new THREE.Mesh(makeBox(0.15, 0.20, 0.04, 2), whiteMat);
+  collarR.position.set(0.12, 0.30, body.torsoD / 2 + 0.008);
+  collarR.rotation.z = -0.5;
+  torsoGroup.add(collarR);
+
+  // Faixa/gravata do juiz
+  const tieMat = new THREE.MeshLambertMaterial({ color: 0xCC1111 });
+  const tie = new THREE.Mesh(makeBox(0.06, 0.35, 0.02, 1), tieMat);
+  tie.position.set(0, 0.10, body.torsoD / 2 + 0.012);
+  torsoGroup.add(tie);
+}
+
+// ============================================================
+// CRIA ZUMBI COM VARIAÇÃO
+// ============================================================
+function createZombieMesh() {
+  const g = new THREE.Group();
+  const skinColor = rand(SKIN_COLORS);
+  const pantsColor = rand(PANTS_COLORS);
+  const hairColor = rand(HAIR_COLORS);
+  const body = rand(BODY_TYPES);
+
+  // Sorteia o tipo: 0=PT normal, 1=PT burro, 2=Juiz
+  const typeRoll = Math.random();
+  let zombieType;
+  if (typeRoll < 0.40) zombieType = 'pt';        // 40% PT
+  else if (typeRoll < 0.70) zombieType = 'pt_donkey'; // 30% PT burro
+  else zombieType = 'judge';                     // 30% Juiz
+
+  const skinMat = new THREE.MeshLambertMaterial({ color: skinColor });
+  const shirtMat = new THREE.MeshLambertMaterial({ color: zombieType === 'judge' ? SHIRT_BLACK : SHIRT_RED });
+  const pantsMat = new THREE.MeshLambertMaterial({ color: zombieType === 'judge' ? 0x1A1A1A : pantsColor });
+  const hairMat = new THREE.MeshLambertMaterial({ color: hairColor });
+  const shoeMat = new THREE.MeshLambertMaterial({ color: 0x1A1A1A });
+  const wound = new THREE.MeshBasicMaterial({ color: 0xC0392B });
+
+  // ===== CABEÇA =====
+  const headGroup = new THREE.Group();
+  headGroup.position.y = 1.85;
+
+  if (zombieType === 'pt') {
+    buildHumanHead(headGroup, skinMat, hairMat, wound, Math.random() > 0.7);
+  } else if (zombieType === 'pt_donkey') {
+    buildDonkeyHead(headGroup, skinMat, wound);
+  } else {
+    buildJudgeHead(headGroup, skinMat, wound);
+  }
+
+  // Ossos internos da cabeça (pra decapitação)
   const skullBone = new THREE.Mesh(makeBox(0.48, 0.48, 0.48, 4), BONE_MAT);
   skullBone.visible = false; headGroup.add(skullBone);
   const jawBone = new THREE.Mesh(makeBox(0.38, 0.14, 0.38, 3), BONE_DARK_MAT);
@@ -549,29 +739,36 @@ function createZombieMesh() {
   }
   g.add(headGroup);
 
-  // === TRONCO ===
+  // ===== TRONCO =====
   const torsoGroup = new THREE.Group();
   torsoGroup.position.y = 1.15;
   const torso = new THREE.Mesh(makeBox(body.torsoW, 0.85, body.torsoD, 5), shirtMat);
   torso.castShadow = true;
   torsoGroup.add(torso);
 
-  // === DECAL DA ESTRELA PT ===
-  // Um plano fino ligeiramente à frente do peito
-  const decalW = body.torsoW * 0.85;
-  const decalH = 0.65;
-  const decalGeo = new THREE.PlaneGeometry(decalW, decalH);
-  const decal = new THREE.Mesh(decalGeo, PT_DECAL_MAT);
-  decal.position.set(0, 0.02, body.torsoD / 2 + 0.008);
-  decal.rotation.y = 0;
-  torsoGroup.add(decal);
+  // Decal da estrela PT (só nos tipos PT)
+  if (zombieType === 'pt' || zombieType === 'pt_donkey') {
+    const decalW = body.torsoW * 0.85;
+    const decalH = 0.65;
+    const decalGeo = new THREE.PlaneGeometry(decalW, decalH);
+    const decal = new THREE.Mesh(decalGeo, PT_DECAL_MAT);
+    decal.position.set(0, 0.02, body.torsoD / 2 + 0.008);
+    torsoGroup.add(decal);
+  }
 
-  const collar = new THREE.Mesh(makeBox(body.torsoW * 0.85, 0.06, body.torsoD * 0.9, 3), MAT.metalDark);
-  collar.position.y = 0.43; torsoGroup.add(collar);
+  // Colarinho escuro (PT e burro). Juiz tem colarinho branco depois.
+  if (zombieType !== 'judge') {
+    const collar = new THREE.Mesh(makeBox(body.torsoW * 0.85, 0.06, body.torsoD * 0.9, 3), MAT.metalDark);
+    collar.position.y = 0.43; torsoGroup.add(collar);
+  } else {
+    buildJudgeOutfit(torsoGroup, body, wound);
+  }
+
   const w1 = new THREE.Mesh(makeBox(0.14, 0.10, 0.02, 2), wound);
   w1.position.set(0.15, 0.25, body.torsoD / 2 + 0.01); torsoGroup.add(w1);
   const w2 = new THREE.Mesh(makeBox(0.10, 0.14, 0.02, 2), wound);
   w2.position.set(-0.18, -0.28, body.torsoD / 2 + 0.01); torsoGroup.add(w2);
+
   const ribCage = new THREE.Group();
   for (let i = 0; i < 5; i++) {
     const rib = new THREE.Mesh(new THREE.TorusGeometry(body.torsoW * 0.42, 0.022, 6, 12, Math.PI), BONE_MAT);
@@ -586,6 +783,7 @@ function createZombieMesh() {
   torsoGroup.add(ribCage);
   g.add(torsoGroup);
 
+  // Braços
   function makeArm(side) {
     const arm = new THREE.Group();
     const outerMeshes = [], boneMeshes = [];
@@ -613,6 +811,7 @@ function createZombieMesh() {
     const thumb = new THREE.Mesh(makeBox(body.arm * 0.22, 0.11, body.arm * 0.22, 2), skinMat);
     thumb.position.set(side * body.arm * 0.5, -1.02, body.arm * 0.38);
     arm.add(thumb); outerMeshes.push(thumb);
+    // Ossos
     const humerus = new THREE.Mesh(new THREE.CylinderGeometry(body.arm * 0.22, body.arm * 0.20, 0.36, 8), BONE_MAT);
     humerus.position.y = -0.22; humerus.visible = false; arm.add(humerus); boneMeshes.push(humerus);
     const humTop = new THREE.Mesh(new THREE.SphereGeometry(body.arm * 0.30, 8, 8), BONE_MAT);
@@ -633,6 +832,7 @@ function createZombieMesh() {
   const armL = makeArm(-1); armL.position.set(-body.torsoW / 2 - body.arm / 2 + 0.05, 1.5, 0); g.add(armL);
   const armR = makeArm(1); armR.position.set(body.torsoW / 2 + body.arm / 2 - 0.05, 1.5, 0); g.add(armR);
 
+  // Pernas
   function makeLeg() {
     const leg = new THREE.Group();
     const outerMeshes = [], boneMeshes = [];
@@ -685,8 +885,10 @@ function createZombieMesh() {
     armL, armR, legL, legR,
     head: headGroup, torso: torsoGroup,
     skullBone, jawBone, sk1, sk2, ribCage, skTeeth,
-    skinColor, shirtColor, pantsColor, bodyType: body,
+    skinColor, shirtColor: zombieType === 'judge' ? SHIRT_BLACK : SHIRT_RED,
+    pantsColor, bodyType: body,
     heightScale: body.heightScale,
+    zombieType,
   };
   return g;
 }
@@ -1188,9 +1390,6 @@ function raycastZombie(origin, dir, maxDist) {
   return { zombie: bestZ, part: bestPart, distance: bestDist, point: bestPoint };
 }
 
-// ============================================================
-// REAÇÃO FÍSICA
-// ============================================================
 function applyHitReaction(z, part, hitDirWorld) {
   const now = performance.now() / 1000;
   const localDir = hitDirWorld.clone();
@@ -1262,9 +1461,6 @@ function updateTracers(dt) {
   }
 }
 
-// ============================================================
-// DAMAGE
-// ============================================================
 function damageZombie(z, damage, isCrit, part, hitDir, hitPoint) {
   z.health -= damage;
   const isHead = part === 'head';
@@ -1316,9 +1512,6 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint) {
   }
 }
 
-// ============================================================
-// ATTACK
-// ============================================================
 function attack() {
   const now = performance.now() / 1000;
   const weaponId = state.inventory[state.currentSlot] || 'knife';
@@ -1429,9 +1622,6 @@ function attack() {
 
 function rollCrit() { return Math.random() < state.critChance; }
 
-// ============================================================
-// LEVEL UP
-// ============================================================
 function checkLevelUp() {
   let leveled = false;
   while (state.xp >= state.xpToNextLevel) {
