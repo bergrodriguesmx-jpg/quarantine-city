@@ -3,50 +3,53 @@ import * as Textures from './textures.js';
 import * as Scenery from './scenery.js';
 import * as Sfx from './audio.js';
 
+// ============================================================
+// HABILIDADES
+// ============================================================
+const SKILLS = [
+  { id: 'vitality', icon: '❤', name: 'VITALIDADE', desc: '+20 HP maximo (e cura +20)',
+    apply: () => { state.maxHealth += 20; state.health = Math.min(state.maxHealth, state.health + 20); } },
+  { id: 'strength', icon: '💪', name: 'FORCA', desc: '+15% de dano',
+    apply: () => { state.damageMult += 0.15; } },
+  { id: 'reach', icon: '🎯', name: 'ALCANCE', desc: '+0.3m de alcance',
+    apply: () => { state.rangeBonus += 0.3; } },
+  { id: 'agility', icon: '⚡', name: 'AGILIDADE', desc: '+8% velocidade',
+    apply: () => { state.speedMult += 0.08; } },
+  { id: 'precision', icon: '💥', name: 'PRECISAO', desc: '+8% chance de critico',
+    apply: () => { state.critChance = Math.min(0.95, state.critChance + 0.08); } },
+  { id: 'vampirism', icon: '🩸', name: 'VAMPIRISMO', desc: '+3 HP por zumbi morto',
+    apply: () => { state.lifesteal += 3; } },
+  { id: 'fortune', icon: '💰', name: 'FORTUNA', desc: '+50% moedas',
+    apply: () => { state.coinMult += 0.5; } },
+  { id: 'wisdom', icon: '⭐', name: 'SABEDORIA', desc: '+30% XP',
+    apply: () => { state.xpMult += 0.3; } },
+  { id: 'resistance', icon: '🛡', name: 'RESISTENCIA', desc: '-10% dano recebido',
+    apply: () => { state.damageReduction = Math.min(0.7, state.damageReduction + 0.1); } },
+  { id: 'fury', icon: '🔥', name: 'FURIA', desc: '-12% tempo entre ataques',
+    apply: () => { state.attackSpeedMult += 0.12; } },
+  { id: 'heavy', icon: '⚔', name: 'GOLPE PESADO', desc: '+0.5x dano em critico',
+    apply: () => { state.critDamageBonus += 0.5; } },
+];
+
 const CONFIG = {
   player: {
-    speed: 5.5,
-    height: 1.7,
-    maxHealth: 100,
-    attackRange: 3.2,
-    attackDamage: 25,
-    attackCooldown: 0.4,
+    speed: 5.5, height: 1.7, maxHealth: 100,
+    attackRange: 3.2, attackDamage: 25, attackCooldown: 0.4,
   },
   zombie: {
-    speed: 1.9,
-    maxHealth: 40,
-    damage: 8,
-    attackRange: 1.6,
-    attackCooldown: 1.2,
-    xpReward: 10,
-    coinReward: 2,
-    knockbackStagger: 0.25,
+    speed: 1.9, maxHealth: 40, damage: 8, attackRange: 1.6,
+    attackCooldown: 1.2, xpReward: 10, coinReward: 2, knockbackStagger: 0.25,
   },
-  wave: {
-    baseZombies: 6,
-    zombiesPerWave: 2,
-    maxZombies: 40,
-    breakTime: 5,
-  },
+  wave: { baseZombies: 6, zombiesPerWave: 2, maxZombies: 40, breakTime: 5 },
   arena: { size: 80 },
   ragdoll: {
-    maxActive: 8,
-    settleTime: 25,
-    fadeDuration: 1.5,
-    impactImpulse: 9,
-    sliceRange: 3.5,
-    sliceDotMin: 0.25,
+    maxActive: 8, settleTime: 25, fadeDuration: 1.5,
+    impactImpulse: 9, sliceRange: 3.5, sliceDotMin: 0.25,
   },
-  crit: {
-    baseChance: 0.15,
-    damageMultiplier: 2,
-  },
+  crit: { baseChance: 0.15, damageMultiplier: 2 },
   dismember: {
-    headChance: 0.65,
-    armChance:  0.50,
-    legChance:  0.40,
-    limbSpeed:  14,
-    limbLife:   10,
+    headChance: 0.65, armChance: 0.50, legChance: 0.40,
+    limbSpeed: 14, limbLife: 10,
   },
 };
 
@@ -54,30 +57,22 @@ const state = {
   waveIntervalId: null,
   health: CONFIG.player.maxHealth,
   maxHealth: CONFIG.player.maxHealth,
-  coins: 0,
-  xp: 0,
-  xpToNextLevel: 50,
-  level: 1,
-  wave: 0,
-  zombiesAlive: 0,
-  zombiesRemainingInWave: 0,
-  running: false,
-  betweenWaves: false,
-  lastAttackTime: 0,
-  keys: {},
-  bobTime: 0,
-  isMoving: false,
-  startTime: 0,
+  coins: 0, xp: 0, xpToNextLevel: 50, level: 1, wave: 0,
+  zombiesAlive: 0, zombiesRemainingInWave: 0,
+  running: false, betweenWaves: false,
+  lastAttackTime: 0, keys: {}, bobTime: 0, isMoving: false, startTime: 0,
   critChance: CONFIG.crit.baseChance,
+  damageMult: 1.0, rangeBonus: 0, speedMult: 1.0, lifesteal: 0,
+  coinMult: 1.0, xpMult: 1.0, damageReduction: 0,
+  attackSpeedMult: 1.0, critDamageBonus: 0,
+  levelUpActive: false, pendingLevelUps: 0,
 };
 
 const container = document.getElementById('game-container');
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xC5E0F5, 60, 160);
 
-const camera = new THREE.PerspectiveCamera(
-  78, window.innerWidth / window.innerHeight, 0.1, 400
-);
+const camera = new THREE.PerspectiveCamera(78, window.innerWidth / window.innerHeight, 0.1, 400);
 camera.position.set(0, CONFIG.player.height, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -117,23 +112,18 @@ createFloor();
 Scenery.populateScene(scene, CONFIG.arena.size);
 
 // ============================================================
-// CAVERNAS — nas bordas do mapa
+// CAVERNAS
 // ============================================================
 const caves = [];
 
 function createCave(x, z, rotationY) {
   const g = new THREE.Group();
-
   const rockMat     = new THREE.MeshLambertMaterial({ color: 0x5A5A5A, flatShading: true });
   const darkRockMat = new THREE.MeshLambertMaterial({ color: 0x3A3A3A, flatShading: true });
   const holeMat     = new THREE.MeshBasicMaterial({ color: 0x000000 });
 
-  // Helper pra criar pedra
   function makeRock(px, py, pz, sx, sy, sz, mat) {
-    const rock = new THREE.Mesh(
-      new THREE.BoxGeometry(sx, sy, sz, 3, 3, 3),
-      mat || rockMat
-    );
+    const rock = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz, 3, 3, 3), mat || rockMat);
     rock.position.set(px, py, pz);
     rock.rotation.y = Math.random() * 0.4 - 0.2;
     rock.rotation.z = Math.random() * 0.2 - 0.1;
@@ -143,30 +133,20 @@ function createCave(x, z, rotationY) {
     return rock;
   }
 
-  // Pilares laterais (esquerda e direita)
   makeRock(-1.8, 1.4, 0.2, 1.8, 2.8, 2.0, rockMat);
   makeRock( 1.8, 1.4, 0.2, 1.8, 2.8, 2.0, rockMat);
-
-  // Topo (arco)
   makeRock(-0.9, 3.2, 0.2, 1.6, 1.4, 2.2, darkRockMat);
   makeRock( 0.9, 3.2, 0.2, 1.6, 1.4, 2.2, darkRockMat);
   makeRock( 0,   3.6, 0.2, 3.6, 0.9, 2.0, rockMat);
-
-  // Pedras extras ao redor (deixa mais natural)
   makeRock(-2.8, 0.6, -0.8, 1.4, 1.2, 1.4, darkRockMat);
   makeRock( 2.8, 0.6, -0.8, 1.4, 1.2, 1.4, darkRockMat);
   makeRock(-2.4, 0.4, 1.4, 1.0, 0.8, 1.0, rockMat);
   makeRock( 2.4, 0.4, 1.4, 1.0, 0.8, 1.0, rockMat);
 
-  // Buraco escuro no fundo (a "boca" da caverna)
-  const hole = new THREE.Mesh(
-    new THREE.BoxGeometry(2.6, 2.6, 0.4),
-    holeMat
-  );
+  const hole = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.6, 0.4), holeMat);
   hole.position.set(0, 1.3, -1.0);
   g.add(hole);
 
-  // Detalhe de "profundidade" (escurece mais fundo)
   const deep = new THREE.Mesh(
     new THREE.BoxGeometry(1.8, 1.8, 1.2),
     new THREE.MeshBasicMaterial({ color: 0x000000, fog: false })
@@ -181,18 +161,16 @@ function createCave(x, z, rotationY) {
 
 function setupCaves() {
   const half = CONFIG.arena.size / 2 - 3;
-
   const caveData = [
-    { x: 0,    z: -half, rot: 0 },           // Norte
-    { x: 0,    z:  half, rot: Math.PI },     // Sul
-    { x: -half, z: 0,    rot: Math.PI / 2 }, // Oeste
-    { x:  half, z: 0,    rot: -Math.PI / 2 },// Leste
-    { x: -half * 0.7, z: -half * 0.7, rot: Math.PI / 4 },   // Noroeste
-    { x:  half * 0.7, z: -half * 0.7, rot: -Math.PI / 4 },  // Nordeste
-    { x: -half * 0.7, z:  half * 0.7, rot: Math.PI * 3 / 4 },// Sudoeste
-    { x:  half * 0.7, z:  half * 0.7, rot: -Math.PI * 3 / 4 },// Sudeste
+    { x: 0, z: -half, rot: 0 },
+    { x: 0, z: half, rot: Math.PI },
+    { x: -half, z: 0, rot: Math.PI / 2 },
+    { x: half, z: 0, rot: -Math.PI / 2 },
+    { x: -half * 0.7, z: -half * 0.7, rot: Math.PI / 4 },
+    { x: half * 0.7, z: -half * 0.7, rot: -Math.PI / 4 },
+    { x: -half * 0.7, z: half * 0.7, rot: Math.PI * 3 / 4 },
+    { x: half * 0.7, z: half * 0.7, rot: -Math.PI * 3 / 4 },
   ];
-
   caveData.forEach(({ x, z, rot }) => {
     const mesh = createCave(x, z, rot);
     scene.add(mesh);
@@ -201,7 +179,6 @@ function setupCaves() {
 }
 setupCaves();
 
-// Limites invisíveis (pra ninguém sair do mapa)
 const limit = CONFIG.arena.size / 2 - 1;
 const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
 [
@@ -283,8 +260,7 @@ function updateWeaponViewModel(dt) {
 
 const player = {
   position: new THREE.Vector3(0, CONFIG.player.height, 0),
-  yaw: 0,
-  pitch: 0,
+  yaw: 0, pitch: 0,
 };
 
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -295,16 +271,14 @@ function makeJoint(r, seg = 12) { return new THREE.SphereGeometry(r, seg, Math.f
 // ZUMBIS
 // ============================================================
 const zombies = [];
-
 const SHIRT_COLORS = [0x8E44AD, 0x2ECC71, 0xE74C3C, 0x3498DB, 0xF39C12, 0xE67E22, 0x16A085, 0xC0392B];
 const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
 const SKIN_COLORS  = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
 const HAIR_COLORS  = [0x2C1810, 0x1A0F08, 0x4A2818, 0x6B3A1F, 0x3A2A1A];
-
 const BODY_TYPES = [
-  { name: 'magro',  torsoW: 0.55, torsoD: 0.30, arm: 0.18, leg: 0.22, heightScale: 1.05 },
+  { name: 'magro', torsoW: 0.55, torsoD: 0.30, arm: 0.18, leg: 0.22, heightScale: 1.05 },
   { name: 'normal', torsoW: 0.70, torsoD: 0.35, arm: 0.22, leg: 0.26, heightScale: 1.00 },
-  { name: 'gordo',  torsoW: 0.85, torsoD: 0.45, arm: 0.26, leg: 0.30, heightScale: 0.95 },
+  { name: 'gordo', torsoW: 0.85, torsoD: 0.45, arm: 0.26, leg: 0.30, heightScale: 0.95 },
 ];
 
 function createZombieMesh() {
@@ -331,7 +305,6 @@ function createZombieMesh() {
   const woundMat   = new THREE.MeshBasicMaterial({ color: 0xC0392B });
   const bloodMat   = new THREE.MeshBasicMaterial({ color: 0x8B0000 });
 
-  // === CABEÇA ===
   const headGroup = new THREE.Group();
   headGroup.position.y = 1.85;
 
@@ -393,15 +366,9 @@ function createZombieMesh() {
 
   if (hasHat) {
     const hatGroup = new THREE.Group();
-    const hatBase = new THREE.Mesh(
-      makeBox(0.65, 0.05, 0.65, 3),
-      new THREE.MeshLambertMaterial({ color: 0x2C3E50 })
-    );
+    const hatBase = new THREE.Mesh(makeBox(0.65, 0.05, 0.65, 3), new THREE.MeshLambertMaterial({ color: 0x2C3E50 }));
     hatGroup.add(hatBase);
-    const hatTop = new THREE.Mesh(
-      makeBox(0.45, 0.25, 0.45, 3),
-      new THREE.MeshLambertMaterial({ color: 0x34495E })
-    );
+    const hatTop = new THREE.Mesh(makeBox(0.45, 0.25, 0.45, 3), new THREE.MeshLambertMaterial({ color: 0x34495E }));
     hatTop.position.y = 0.15;
     hatGroup.add(hatTop);
     hatGroup.position.y = 0.34;
@@ -410,14 +377,10 @@ function createZombieMesh() {
 
   g.add(headGroup);
 
-  // === TRONCO ===
   const torsoGroup = new THREE.Group();
   torsoGroup.position.y = 1.15;
 
-  const torso = new THREE.Mesh(
-    makeBox(bodyType.torsoW, 0.85, bodyType.torsoD, 3),
-    shirtMat
-  );
+  const torso = new THREE.Mesh(makeBox(bodyType.torsoW, 0.85, bodyType.torsoD, 3), shirtMat);
   torso.castShadow = true;
   torsoGroup.add(torso);
 
@@ -450,7 +413,6 @@ function createZombieMesh() {
 
   g.add(torsoGroup);
 
-  // === BRAÇOS ===
   const armW = bodyType.arm;
 
   function makeArm(side) {
@@ -487,11 +449,7 @@ function createZombieMesh() {
     const fingerGeo = makeBox(armW * 0.18, 0.13, armW * 0.18, 2);
     for (let i = 0; i < 4; i++) {
       const finger = new THREE.Mesh(fingerGeo, skinMat);
-      finger.position.set(
-        -armW * 0.36 + i * armW * 0.24,
-        -1.11,
-        armW * 0.28
-      );
+      finger.position.set(-armW * 0.36 + i * armW * 0.24, -1.11, armW * 0.28);
       arm.add(finger);
     }
 
@@ -517,7 +475,6 @@ function createZombieMesh() {
   armR.position.set(bodyType.torsoW / 2 + armW / 2 - 0.05, 1.5, 0);
   g.add(armR);
 
-  // === PERNAS ===
   const legW = bodyType.leg;
 
   function makeLeg() {
@@ -569,8 +526,6 @@ function createZombieMesh() {
   g.add(legR);
 
   g.scale.y = bodyType.heightScale;
-
-  // Postura curvada (zumbi corcunda)
   g.rotation.x = 0.12;
 
   g.userData.armL = armL;
@@ -590,17 +545,14 @@ function createZombieMesh() {
 let groanTimer = 0;
 
 function spawnZombie() {
-  // Sorteia uma caverna
   const cave = caves[Math.floor(Math.random() * caves.length)];
 
-  // Spawna dentro da caverna (virado pra dentro do mapa)
   const toCenterX = -cave.x;
   const toCenterZ = -cave.z;
   const len = Math.sqrt(toCenterX * toCenterX + toCenterZ * toCenterZ) || 1;
   const dirX = toCenterX / len;
   const dirZ = toCenterZ / len;
 
-  // Posição inicial: um pouco atrás da entrada (dentro da caverna)
   const offsetBack = 0.8 + Math.random() * 0.8;
   const offsetSide = (Math.random() - 0.5) * 1.6;
 
@@ -611,7 +563,6 @@ function spawnZombie() {
   mesh.position.set(x, 0, z);
   scene.add(mesh);
 
-  // Zumbi recém-nascido da caverna — começa devagar
   zombies.push({
     mesh,
     health: CONFIG.zombie.maxHealth,
@@ -621,7 +572,7 @@ function spawnZombie() {
     hitReactEndTime: 0,
     hitDirection: new THREE.Vector3(),
     dismembered: { head: false, armL: false, armR: false, legL: false, legR: false },
-    emergeTime: 0, // tempo desde o nascimento
+    emergeTime: 0,
   });
   state.zombiesAlive++;
   updateHUD();
@@ -1062,7 +1013,7 @@ function getAimRegion() {
 }
 function rollCrit() { return Math.random() < state.critChance; }
 
-const hitMarker  = document.getElementById('hit-marker');
+const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
 
 function showHitMarker(critical = false) {
@@ -1094,7 +1045,8 @@ function spawnMuzzleFlash() {
 
 function attack() {
   const now = performance.now() / 1000;
-  if (now - state.lastAttackTime < CONFIG.player.attackCooldown) return;
+  const cooldown = CONFIG.player.attackCooldown / state.attackSpeedMult;
+  if (now - state.lastAttackTime < cooldown) return;
   state.lastAttackTime = now;
 
   Sfx.playKnife();
@@ -1107,6 +1059,7 @@ function attack() {
   forward.y = 0; forward.normalize();
 
   const aimRegion = getAimRegion();
+  const attackRange = CONFIG.player.attackRange + state.rangeBonus;
 
   const zombiesSnapshot = [...zombies];
   zombiesSnapshot.forEach(z => {
@@ -1114,14 +1067,14 @@ function attack() {
 
     const toZ = new THREE.Vector3().subVectors(z.mesh.position, player.position);
     toZ.y = 0;
-    if (toZ.length() > CONFIG.player.attackRange) return;
+    if (toZ.length() > attackRange) return;
     toZ.normalize();
     if (forward.dot(toZ) < 0.4) return;
 
     const isCrit = rollCrit();
-    const damage = isCrit
-      ? CONFIG.player.attackDamage * CONFIG.crit.damageMultiplier
-      : CONFIG.player.attackDamage;
+    const baseDamage = CONFIG.player.attackDamage * state.damageMult;
+    const critMult = CONFIG.crit.damageMultiplier + state.critDamageBonus;
+    const damage = isCrit ? baseDamage * critMult : baseDamage;
 
     z.health -= damage;
 
@@ -1173,8 +1126,13 @@ function attack() {
     if (z.health <= 0) {
       Sfx.playZombieDeath();
       Sfx.playCoin();
-      state.coins += CONFIG.zombie.coinReward;
-      state.xp += CONFIG.zombie.xpReward;
+      state.coins += Math.round(CONFIG.zombie.coinReward * state.coinMult);
+      state.xp += Math.round(CONFIG.zombie.xpReward * state.xpMult);
+
+      if (state.lifesteal > 0) {
+        state.health = Math.min(state.maxHealth, state.health + state.lifesteal);
+      }
+
       checkLevelUp();
       const overkill = Math.min(2, Math.max(0.7, -z.health / CONFIG.zombie.maxHealth + 1));
       const finalStrength = isCrit ? overkill * 1.4 : overkill;
@@ -1204,18 +1162,72 @@ function attack() {
   }
 }
 
+// ============================================================
+// LEVEL UP
+// ============================================================
 function checkLevelUp() {
   let leveled = false;
   while (state.xp >= state.xpToNextLevel) {
     state.xp -= state.xpToNextLevel;
     state.level++;
     state.xpToNextLevel = Math.floor(state.xpToNextLevel * 1.4);
+    state.pendingLevelUps++;
     leveled = true;
-    if (state.level % 3 === 0) {
-      state.critChance = Math.min(0.75, state.critChance + 0.02);
+  }
+  if (leveled) {
+    Sfx.playLevelUp();
+    if (!state.levelUpActive) {
+      showLevelUp();
     }
   }
-  if (leveled) Sfx.playLevelUp();
+  updateHUD();
+}
+
+function showLevelUp() {
+  state.levelUpActive = true;
+  state.pendingLevelUps--;
+
+  if (document.exitPointerLock) document.exitPointerLock();
+
+  const pool = [...SKILLS];
+  const chosen = [];
+  for (let i = 0; i < 3 && pool.length > 0; i++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    chosen.push(pool.splice(idx, 1)[0]);
+  }
+
+  const cont = document.getElementById('levelup-choices');
+  cont.innerHTML = '';
+  chosen.forEach(skill => {
+    const card = document.createElement('button');
+    card.className = 'skill-card';
+    card.innerHTML = `
+      <div class="skill-icon">${skill.icon}</div>
+      <div class="skill-name">${skill.name}</div>
+      <div class="skill-desc">${skill.desc}</div>
+    `;
+    card.addEventListener('click', () => pickSkill(skill.id));
+    cont.appendChild(card);
+  });
+
+  document.getElementById('levelup-level').textContent = state.level;
+  document.getElementById('levelup').classList.remove('hidden');
+}
+
+function pickSkill(skillId) {
+  const skill = SKILLS.find(s => s.id === skillId);
+  if (skill) skill.apply();
+
+  document.getElementById('levelup').classList.add('hidden');
+
+  if (state.pendingLevelUps > 0) {
+    setTimeout(showLevelUp, 220);
+  } else {
+    state.levelUpActive = false;
+    if (!isMobile() && state.running) {
+      renderer.domElement.requestPointerLock();
+    }
+  }
   updateHUD();
 }
 
@@ -1271,7 +1283,7 @@ document.addEventListener('keydown', e => { state.keys[e.code] = true; });
 document.addEventListener('keyup', e => { state.keys[e.code] = false; });
 
 renderer.domElement.addEventListener('click', () => {
-  if (!state.running || isMobile()) return;
+  if (!state.running || isMobile() || state.levelUpActive) return;
   Sfx.initAudio();
   Sfx.resumeAudio();
   renderer.domElement.requestPointerLock();
@@ -1285,7 +1297,8 @@ document.addEventListener('mousemove', e => {
 });
 
 document.addEventListener('mousedown', e => {
-  if (e.button === 0 && state.running && document.pointerLockElement === renderer.domElement) {
+  if (e.button === 0 && state.running && !state.levelUpActive &&
+      document.pointerLockElement === renderer.domElement) {
     attack();
   }
 });
@@ -1362,7 +1375,7 @@ setupMobile();
 const clock = new THREE.Clock();
 
 function updatePlayer(dt) {
-  const speed = CONFIG.player.speed;
+  const speed = CONFIG.player.speed * state.speedMult;
   const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
 
@@ -1397,9 +1410,6 @@ function updatePlayer(dt) {
   camera.rotation.x = player.pitch;
 }
 
-// ============================================================
-// ATUALIZA ZUMBIS — agora com animação realista
-// ============================================================
 function updateZombies(dt) {
   const now = performance.now() / 1000;
 
@@ -1412,7 +1422,6 @@ function updateZombies(dt) {
   zombies.forEach(z => {
     if (z.health <= 0) return;
 
-    // Tempo desde o spawn (emerge da caverna devagar)
     z.emergeTime = (z.emergeTime || 0) + dt;
     const emergeFactor = Math.min(1, z.emergeTime / 1.5);
 
@@ -1443,23 +1452,16 @@ function updateZombies(dt) {
       const legLAvailable = !z.dismembered.legL && z.mesh.userData.legL;
       const legRAvailable = !z.dismembered.legR && z.mesh.userData.legR;
 
-      // ============================================================
-      // ANIMAÇÃO REALISTA
-      // ============================================================
-      // Pernas: passada natural (uma frente, outra atrás)
       const legSwing = Math.sin(z.walkPhase) * 0.6;
       if (legLAvailable) z.mesh.userData.legL.rotation.x = legSwing;
       if (legRAvailable) z.mesh.userData.legR.rotation.x = -legSwing;
 
-      // Braços: se está LONGE do player, balança naturalmente como um humano
-      //           se está PERTO, estica os braços pra te agarrar (pose clássica)
       const isReaching = dist < 3.5;
 
       if (armLAvailable) {
         const target = isReaching
           ? -1.5 + Math.sin(z.walkPhase) * 0.08
           : -legSwing * 0.7;
-        // Interpolação suave
         const current = z.mesh.userData.armL.rotation.x;
         z.mesh.userData.armL.rotation.x = current + (target - current) * 0.15;
       }
@@ -1471,20 +1473,16 @@ function updateZombies(dt) {
         z.mesh.userData.armR.rotation.x = current + (target - current) * 0.15;
       }
 
-      // Cabeça balança levemente (movimento vivo)
       if (z.mesh.userData.head) {
         z.mesh.userData.head.rotation.z = Math.sin(z.walkPhase * 0.5) * 0.08;
         z.mesh.userData.head.rotation.y = Math.sin(z.walkPhase * 0.3) * 0.1;
       }
 
-      // Postura: quanto mais perto do player, mais pra frente se inclina
-      // (fica mais agressivo quando ataca)
       const targetLean = isWounded
         ? 0.20 + (dist < 3 ? 0.10 : 0)
         : 0.12 + (dist < 3 ? 0.08 : 0);
       z.mesh.rotation.x += (targetLean - z.mesh.rotation.x) * 0.05;
 
-      // Balanço lateral quando ferido (manca)
       if (isWounded) {
         z.mesh.rotation.z = Math.sin(z.walkPhase * 0.5) * 0.15;
       } else {
@@ -1494,7 +1492,6 @@ function updateZombies(dt) {
 
     if (z.dismembered.head) { z.health = 0; return; }
 
-    // Só anda se já saiu da caverna
     if (emergeFactor >= 0.5) {
       const zombieSpeed = CONFIG.zombie.speed * (isWounded ? 0.6 : 1);
       if (!staggering && dist > CONFIG.zombie.attackRange) {
@@ -1502,7 +1499,8 @@ function updateZombies(dt) {
         z.mesh.position.addScaledVector(toP, zombieSpeed * dt);
       } else if (!staggering && now - z.lastAttackTime > CONFIG.zombie.attackCooldown) {
         z.lastAttackTime = now;
-        state.health -= CONFIG.zombie.damage;
+        const dmg = CONFIG.zombie.damage * (1 - state.damageReduction);
+        state.health -= dmg;
         Sfx.playPlayerHurt();
         showDamageFlash();
         updateHUD();
@@ -1535,7 +1533,7 @@ function updateFlyingLimbs(dt) {
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
-  if (state.running) {
+  if (state.running && !state.levelUpActive) {
     updatePlayer(dt);
     updateZombies(dt);
     updateParticles(dt);
@@ -1549,7 +1547,7 @@ function animate() {
     const min = Math.floor(elapsed / 60);
     const sec = (elapsed % 60).toString().padStart(2, '0');
     document.getElementById('timer').textContent = `${min}:${sec}`;
-  } else {
+  } else if (!state.running) {
     updateParticles(dt);
     updateBloodPools(dt);
     updateRagdolls(dt);
@@ -1588,6 +1586,21 @@ function startGame() {
   state.running = true; state.betweenWaves = false;
   state.startTime = performance.now();
   state.critChance = CONFIG.crit.baseChance;
+
+  // Reset habilidades
+  state.maxHealth = CONFIG.player.maxHealth;
+  state.health = state.maxHealth;
+  state.damageMult = 1.0;
+  state.rangeBonus = 0;
+  state.speedMult = 1.0;
+  state.lifesteal = 0;
+  state.coinMult = 1.0;
+  state.xpMult = 1.0;
+  state.damageReduction = 0;
+  state.attackSpeedMult = 1.0;
+  state.critDamageBonus = 0;
+  state.levelUpActive = false;
+  state.pendingLevelUps = 0;
 
   zombies.forEach(z => scene.remove(z.mesh));
   zombies.length = 0;
