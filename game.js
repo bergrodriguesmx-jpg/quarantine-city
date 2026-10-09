@@ -1946,4 +1946,136 @@ function animate() {
     }
 
     const targetFov = state.aiming ? 50 : 78;
-    camera.fov += (targetFov - camera.fov) * Math.min(1, dt
+    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 15);
+    camera.updateProjectionMatrix();
+
+    shadowFrame++;
+    if (shadowFrame >= 5) {
+      renderer.shadowMap.needsUpdate = true;
+      shadowFrame = 0;
+    }
+
+    const elapsed = Math.floor((performance.now() - state.startTime) / 1000);
+    const m = Math.floor(elapsed / 60);
+    const s = (elapsed % 60).toString().padStart(2, '0');
+    document.getElementById('timer').textContent = `${m}:${s}`;
+  } else if (!state.running) {
+    updateParticles(dt);
+    updateBloodPools(dt);
+    updateTracers(dt);
+    updateRagdolls(dt);
+    updateFlyingLimbs(dt);
+  }
+  renderer.render(scene, camera);
+}
+animate();
+
+function updateHUD() {
+  const hp = Math.max(0, state.health);
+  document.getElementById('hp-fill').style.width = `${(hp / state.maxHealth) * 100}%`;
+  document.getElementById('hp-text').textContent = `${Math.ceil(hp)} / ${state.maxHealth}`;
+  document.getElementById('xp-fill').style.width = `${(state.xp / state.xpToNextLevel) * 100}%`;
+  document.getElementById('coins').textContent = state.coins;
+  document.getElementById('wave').textContent = state.wave;
+  document.getElementById('level').textContent = state.level;
+  document.getElementById('zombies').textContent = state.zombiesAlive;
+  const w = WEAPONS[state.inventory[state.currentSlot] || 'knife'];
+  document.getElementById('weapon-name').textContent = w.name;
+  const ammoEl = document.getElementById('ammo-current');
+  if (w.ammo === null) ammoEl.textContent = '∞';
+  else { ammoEl.textContent = w.ammo + ' / ' + w.maxAmmo; ammoEl.style.color = w.ammo <= 0 ? '#ff4444' : '#fff'; }
+}
+
+function startGame() {
+  if (state.waveIntervalId !== null) {
+    clearInterval(state.waveIntervalId);
+    state.waveIntervalId = null;
+  }
+  Sfx.initAudio(); Sfx.resumeAudio();
+  state.maxHealth = CONFIG.player.maxHealth;
+  state.health = state.maxHealth;
+  state.coins = 0; state.xp = 0;
+  state.level = 1; state.xpToNextLevel = 50;
+  state.wave = 0; state.zombiesAlive = 0;
+  state.zombiesRemainingInWave = 0;
+  state.running = true; state.betweenWaves = false;
+  state.startTime = performance.now();
+  state.critChance = CONFIG.crit.baseChance;
+  state.damageMult = 1.0; state.rangeBonus = 0;
+  state.speedMult = 1.0; state.lifesteal = 0;
+  state.coinMult = 1.0; state.xpMult = 1.0;
+  state.damageReduction = 0;
+  state.attackSpeedMult = 1.0; state.critDamageBonus = 0;
+  state.levelUpActive = false; state.pendingLevelUps = 0;
+  state.inventory = { 1: 'knife', 2: null, 3: null, 4: null };
+  state.currentSlot = 1;
+  state.mouseDown = false;
+  state.aiming = false;
+  state.lastAttackTime = 0;
+  updateCrosshair();
+
+  world.weaponSpots.forEach(s => {
+    scene.remove(s.mesh);
+    scene.remove(s.ring);
+    s.mesh.geometry.dispose();
+    s.mesh.material.dispose();
+    s.ring.geometry.dispose();
+    s.ring.material.dispose();
+  });
+  world.weaponSpots = [];
+  Object.values(WEAPONS).forEach(w => { if (w.maxAmmo !== null) w.ammo = w.maxAmmo; });
+  setupWeaponSpawns();
+
+  zombies.forEach(z => scene.remove(z.mesh));
+  zombies.length = 0;
+  ragdolls.forEach(r => r.dispose());
+  ragdolls.length = 0;
+  flyingLimbs.forEach(l => l.dispose());
+  flyingLimbs.length = 0;
+  particles.forEach(p => scene.remove(p.mesh));
+  particles.length = 0;
+  bloodPools.forEach(b => scene.remove(b.mesh));
+  bloodPools.length = 0;
+  tracers.forEach(t => scene.remove(t.mesh));
+  tracers.length = 0;
+
+  player.position.set(0, CONFIG.player.height, 0);
+  player.yaw = 0; player.pitch = 0;
+
+  buildViewModel('knife');
+  updateWeaponSlotsHUD();
+
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('gameover').classList.add('hidden');
+  document.getElementById('hud').classList.remove('hidden');
+  updateHUD();
+  startWave();
+}
+
+function gameOver() {
+  state.running = false;
+  state.aiming = false;
+  updateCrosshair();
+  if (state.waveIntervalId !== null) {
+    clearInterval(state.waveIntervalId);
+    state.waveIntervalId = null;
+  }
+  document.getElementById('final-wave').textContent = state.wave;
+  document.getElementById('final-level').textContent = state.level;
+  document.getElementById('final-coins').textContent = state.coins;
+  document.getElementById('gameover').classList.remove('hidden');
+  document.getElementById('hud').classList.add('hidden');
+  document.getElementById('prompt').classList.add('hidden');
+  if (document.exitPointerLock) document.exitPointerLock();
+}
+
+document.getElementById('btn-start').addEventListener('click', startGame);
+document.getElementById('btn-restart').addEventListener('click', startGame);
+document.getElementById('btn-multiplayer').addEventListener('click', () => alert('Multijogador em breve!'));
+document.getElementById('btn-wiki').addEventListener('click', () => window.open('https://zumbiblocks2.wiki.gg/', '_blank'));
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
