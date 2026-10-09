@@ -12,6 +12,7 @@
     <div class="menu-container">
       <h1>QUARANTINE BLOCKS</h1>
       <p class="menu-subtitle">OPEN ALPHA - SOBREVIVA AS HORDAS</p>
+      <p class="menu-subtitle" id="menu-record">RECORDE: —</p>
       <button class="menu-btn" id="btn-start">JOGAR SOLO</button>
       <button class="menu-btn" id="btn-multiplayer">MULTIJOGADOR</button>
       <button class="menu-btn" id="btn-wiki">WIKI DO JOGO</button>
@@ -29,12 +30,14 @@
     <div id="hud-ammo">
       <span id="weapon-name">FACA</span>
       <div class="ammo-nums"><span id="ammo-current">INF</span></div>
+      <div id="ammo-reserve">—</div>
     </div>
     <div id="hud-info">
       <div>HORDA <span id="wave">0</span></div>
       <div>LVL <span id="level">1</span></div>
       <div>$ <span id="coins">0</span></div>
       <div>Z <span id="zombies">0</span></div>
+      <div>REVIVES <span id="revives">2</span></div>
     </div>
     <div id="xp-bar"><div id="xp-fill"></div></div>
     <div id="weapon-slots">
@@ -56,6 +59,7 @@
     <div id="downed-overlay" class="hidden">
       <div id="downed-timer">30</div>
       <div id="downed-subtitle">VOCÊ CAIU</div>
+      <div id="downed-hp-bar"><div id="downed-hp-fill"></div></div>
       <div id="downed-prompt">
         Segure <span class="key">E</span> para se levantar
         <div id="downed-progress-wrap"><div id="downed-progress"></div></div>
@@ -100,6 +104,25 @@
     </table>
   </div>
 
+  <div id="shop" class="menu-overlay hidden">
+    <div class="shop-container">
+      <h2>LOJA</h2>
+      <p class="shop-subtitle">COMPRE ARMAS E MUNIÇÃO</p>
+      <div id="shop-coins">$ 0</div>
+      <div id="shop-items"></div>
+      <button class="menu-btn" id="btn-shop-close">FECHAR (E)</button>
+    </div>
+  </div>
+
+  <div id="pause" class="menu-overlay hidden">
+    <div class="menu-container">
+      <h1>PAUSADO</h1>
+      <p class="menu-subtitle">ESC para continuar</p>
+      <button class="menu-btn" id="btn-resume">CONTINUAR</button>
+      <button class="menu-btn" id="btn-quit">SAIR PARA O MENU</button>
+    </div>
+  </div>
+
   <div id="levelup" class="menu-overlay hidden">
     <div class="levelup-container">
       <h2>NIVEL <span id="levelup-level">2</span></h2>
@@ -113,6 +136,9 @@
       <h1>VOCE MORREU</h1>
       <p class="menu-subtitle">Horda <span id="final-wave">0</span> - Nivel <span id="final-level">1</span></p>
       <p class="menu-subtitle">Moedas coletadas: <span id="final-coins">0</span></p>
+      <p class="menu-subtitle">Kills: <span id="final-kills">0</span> - Headshots: <span id="final-hs">0</span></p>
+      <p class="menu-subtitle">Tempo: <span id="final-time">0:00</span></p>
+      <p class="menu-subtitle" id="final-record"></p>
       <button class="menu-btn" id="btn-restart">TENTAR DE NOVO</button>
     </div>
   </div>
@@ -121,6 +147,10 @@
     <div id="joystick-zone"><div id="joystick-base"><div id="joystick-stick"></div></div></div>
     <div id="look-zone"></div>
     <button id="btn-attack">ATQ</button>
+    <button id="btn-ads">ADS</button>
+    <button id="btn-reload">REC</button>
+    <button id="btn-buy">COMPRAR</button>
+    <button id="btn-revive">REVIVER</button>
   </div>
 
   <script type="importmap">
