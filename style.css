@@ -65,10 +65,37 @@ canvas { display: block; }
   position: absolute; bottom: 20px; right: 20px;
   display: flex; flex-direction: column; align-items: flex-end;
   gap: 2px; text-shadow: 3px 3px 0 #000;
+  pointer-events: auto;
+}
+#weapon-class {
+  font-size: 11px;
+  color: #ff6600;
+  letter-spacing: 2px;
+  font-weight: bold;
+  text-shadow: 1px 1px 0 #000;
 }
 #weapon-name { font-size: 18px; font-weight: bold; color: #ffdd00; letter-spacing: 3px; }
 .ammo-nums { font-size: 34px; font-weight: bold; color: #fff; }
 #ammo-reserve { font-size: 14px; color: #888; font-weight: bold; letter-spacing: 2px; }
+
+#weapon-tooltip {
+  margin-top: 6px;
+  max-width: 260px;
+  background: rgba(0, 0, 0, 0.85);
+  border-left: 3px solid #cc0000;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: right;
+  text-shadow: none;
+  color: #ddd;
+  display: none;
+  pointer-events: none;
+}
+#hud-ammo:hover #weapon-tooltip { display: block; }
+#weapon-tooltip b { color: #ffdd00; }
+#weapon-tooltip .tt-class { color: #ff6600; font-weight: bold; letter-spacing: 1px; }
+#weapon-tooltip .tt-desc { color: #aaa; font-style: italic; display: block; margin-top: 4px; }
 
 #hud-info {
   position: absolute; top: 12px; left: 20px;
@@ -142,11 +169,13 @@ body.aiming #crosshair::before {
   transform: translate(-50%, -50%) scale(0.7);
   padding: 18px 55px; background: rgba(0, 0, 0, 0.85);
   border: 3px solid #cc0000; color: #cc0000;
-  font-family: 'Courier New', monospace; font-size: 38px;
-  font-weight: bold; letter-spacing: 6px;
+  font-family: 'Courier New', monospace; font-size: 28px;
+  font-weight: bold; letter-spacing: 4px;
   text-shadow: 0 0 25px #cc0000, 3px 3px #000;
   z-index: 50; pointer-events: none; opacity: 0;
   transition: all 0.35s ease-out;
+  max-width: 80vw;
+  text-align: center;
 }
 #wave-banner.hidden { display: none; }
 #wave-banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
@@ -260,7 +289,7 @@ body.aiming #crosshair::before {
 #btn-revive:active { background: rgba(255, 50, 50, 0.95); transform: translateX(-50%) scale(0.94); }
 
 /* ============================================ */
-/* FASE 2-A — DAMAGE NUMBERS                    */
+/* DAMAGE NUMBERS                               */
 /* ============================================ */
 #damage-numbers {
   position: fixed; inset: 0;
@@ -297,7 +326,7 @@ body.aiming #crosshair::before {
 }
 
 /* ============================================ */
-/* FASE 2-A — KILL FEED                         */
+/* KILL FEED                                    */
 /* ============================================ */
 #kill-feed {
   position: fixed;
@@ -350,7 +379,7 @@ body.aiming #crosshair::before {
 }
 
 /* ============================================ */
-/* FASE 2-A — SCOREBOARD (Tab)                  */
+/* SCOREBOARD                                   */
 /* ============================================ */
 #scoreboard {
   position: fixed;
@@ -398,7 +427,7 @@ body.aiming #crosshair::before {
 }
 
 /* ============================================ */
-/* FASE 2-B — DOWNED STATE                      */
+/* DOWNED STATE                                 */
 /* ============================================ */
 #downed-overlay {
   position: fixed; inset: 0;
@@ -490,7 +519,7 @@ body.aiming #crosshair::before {
 body.downed #crosshair { opacity: 0; }
 
 /* ============================================ */
-/* FASE 2-B — PING WHEEL                        */
+/* PING WHEEL                                   */
 /* ============================================ */
 #ping-wheel {
   position: fixed;
