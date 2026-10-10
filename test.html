@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Teste GLB Zombie</title>
+  <style>
+    body { margin:0; background:#222; font-family:monospace; color:#fff; overflow:hidden; }
+    #hud {
+      position:fixed; top:10px; left:10px; z-index:10;
+      background:rgba(0,0,0,0.7); padding:12px 16px;
+      border-radius:6px; font-size:13px; line-height:1.6;
+      max-width:400px; max-height:90vh; overflow:auto;
+    }
+    #hud h3 { margin:0 0 8px; color:#0f0; font-size:14px; }
+    #hud button {
+      display:block; width:100%; margin:4px 0;
+      padding:8px; background:#333; color:#fff;
+      border:1px solid #555; cursor:pointer;
+      font-family:inherit; font-size:12px;
+      text-align:left;
+    }
+    #hud button:hover { background:#444; }
+    #hud button.active { background:#0f0; color:#000; font-weight:bold; }
+    #hud .info { color:#888; font-size:11px; margin-top:10px; padding-top:8px; border-top:1px solid #333; }
+    #hud .info b { color:#ff0; }
+    #status { color:#ff0; margin-top:8px; font-size:11px; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <h3>🧟 TESTE GLB</h3>
+    <div id="anims"></div>
+    <div id="status">Carregando...</div>
+    <div class="info">
+      <b>Controles:</b><br>
+      Mouse: orbitar<br>
+      Scroll: zoom<br>
+      Botões: trocar animação<br><br>
+      <b>Olhe o zumbi e me diga:</b><br>
+      1. Ele está em pé?<br>
+      2. Ele olha pra onde? (frente/costas)<br>
+      3. Os pés estão no chão?<br>
+      4. Qual animação parece correta?<br>
+      5. Algum membro fica fora do lugar?
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // Cena
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x333333);
+
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 1000);
+    camera.position.set(3, 2, 4);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1, 0);
+    controls.enableDamping = true;
+
+    // Luz
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+    sun.position.set(5, 10, 5);
+    sun.castShadow = true;
+    scene.add(sun);
+    const back = new THREE.DirectionalLight(0xffffff, 0.3);
+    back.position.set(-5, 5, -5);
+    scene.add(back);
+
+    // Chão
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(30, 30),
+      new THREE.MeshStandardMaterial({ color: 0x555555 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // Grid para ver escala e orientação
+    const grid = new THREE.GridHelper(10, 10, 0x00ff00, 0x444444);
+    scene.add(grid);
+
+    // Eixos (X vermelho, Y verde, Z azul)
+    const axes = new THREE.AxesHelper(2);
+    scene.add(axes);
+
+    // Boneco de referência (2m de altura)
+    const refMan = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.3, 1.4, 4, 8),
+      new THREE.MeshStandardMaterial({ color: 0x00ffff, transparent: true, opacity: 0.3 })
+    );
+    refMan.position.set(-1.5, 1.0, 0);
+    scene.add(refMan);
+
+    // Estado
+    let mixer = null;
+    let model = null;
+    const clips = {};
+    let currentAction = null;
+    let currentName = '';
+
+    const statusEl = document.getElementById('status');
+    const animsEl = document.getElementById('anims');
+
+    // Carrega GLB
+    const loader = new GLTFLoader();
+    loader.load('./low_poly_zombie_game_animation.glb', gltf => {
+      const glbScene = gltf.scene;
+
+      // Info do modelo ANTES de escalar
+      const box0 = new THREE.Box3().setFromObject(glbScene);
+      const size0 = box0.getSize(new THREE.Vector3());
+      statusEl.innerHTML = `Tamanho bruto: ${size0.x.toFixed(2)} × ${size0.y.toFixed(2)} × ${size0.z.toFixed(2)}m<br>`;
+      statusEl.innerHTML += `Animações: ${gltf.animations.length}<br>`;
+
+      // Escala para 1.75m
+      const scale = 1.75 / size0.y;
+      glbScene.scale.setScalar(scale);
+      statusEl.innerHTML += `Scale aplicado: ${scale.toFixed(4)}<br>`;
+
+      // Bounding box depois de escalar
+      glbScene.updateMatrixWorld(true);
+      const box1 = new THREE.Box3().setFromObject(glbScene);
+      const minY = box1.min.y;
+      const centerX = (box1.min.x + box1.max.x) / 2;
+      const centerZ = (box1.min.z + box1.max.z) / 2;
+      statusEl.innerHTML += `MinY: ${minY.toFixed(3)}m (deve ser ~0)<br>`;
+
+      // Ajusta para pés no chão
+      glbScene.position.set(-centerX, -minY, -centerZ);
+
+      // Sombras
+      glbScene.traverse(c => {
+        if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
+      });
+
+      scene.add(glbScene);
+      model = glbScene;
+
+      // Mixer
+      mixer = new THREE.AnimationMixer(glbScene);
+
+      // Guarda clipes
+      gltf.animations.forEach(clip => {
+        clips[clip.name] = clip;
+      });
+
+      // Cria botões
+      Object.keys(clips).forEach(name => {
+        const btn = document.createElement('button');
+        btn.textContent = `${name} (${clips[name].duration.toFixed(2)}s)`;
+        btn.dataset.anim = name;
+        btn.addEventListener('click', () => playAnim(name));
+        animsEl.appendChild(btn);
+      });
+
+      // Play inicial
+      if (clips.Idle) playAnim('Idle');
+      else if (gltf.animations[0]) playAnim(gltf.animations[0].name);
+
+    }, undefined, err => {
+      statusEl.textContent = '❌ Erro: ' + err.message;
+      console.error(err);
+    });
+
+    function playAnim(name) {
+      if (!clips[name] || !mixer) return;
+      if (currentName === name) return;
+
+      const next = mixer.clipAction(clips[name]);
+      next.reset();
+      if (name === 'Death') {
+        next.setLoop(THREE.LoopOnce, 1);
+        next.clampWhenFinished = true;
+      } else {
+        next.setLoop(THREE.LoopRepeat, Infinity);
+      }
+      next.play();
+
+      if (currentAction && currentAction !== next) {
+        try { next.crossFadeFrom(currentAction, 0.3, true); }
+        catch { currentAction.stop(); }
+      }
+      currentAction = next;
+      currentName = name;
+
+      // Marca botão ativo
+      document.querySelectorAll('#anims button').forEach(b => {
+        b.classList.toggle('active', b.dataset.anim === name);
+      });
+    }
+
+    // Loop
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+      if (mixer) mixer.update(dt);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // Resize
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>
