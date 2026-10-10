@@ -6,6 +6,11 @@ import * as bus from './src/core/bus.js';
 import { Ev } from './src/core/events.js';
 import { nextId } from './src/core/ids.js';
 import { LocalAdapter } from './src/net/adapter.js';
+// ===== NOVOS IMPORTS =====
+import { springStep, springKick } from './src/core/spring.js';
+import { SpatialGrid } from './src/core/spatial-grid.js';
+import { geoBox, geoSphere, geoCyl, geoTorus, matL, matB, zMat } from './src/core/geo-cache.js';
+import { computePartLocalBoxes } from './src/core/part-box.js';
 
 bus.setAdapter(new LocalAdapter());
 
