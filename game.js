@@ -896,7 +896,7 @@ function spawnZombie(forceType) {
     attackRange:type.attackRange, attackCooldown:type.cooldown,
     xpReward:Math.round(CONFIG.zombie.xpReward * type.xpMul * (1 + (state.wave - 1) * 0.06)),
     coinReward:Math.round(CONFIG.zombie.coinReward * type.coinMul * (1 + (state.wave - 1) * 0.05)),
-    isBoss:!!type.boss, typeKey, tier:type.tier,
+    isBoss:!!type.boss, typeKey, type, tier:type.tier,
     lastAttackTime:0, walkPhase:Math.random()*Math.PI*2,
     hitReactEndTime:0, hitDirection:new THREE.Vector3(),
     dismembered:{ head:false, armL:false, armR:false, legL:false, legR:false },
@@ -1025,7 +1025,6 @@ class Debris {
             this.settled = true;
             this.velocity.set(0,0,0);
             this.angularVelocity.set(0,0,0);
-            // PATCH #4: libera o Map para evitar leak de memória em ragdolls longevos
             if (this.lastHitZombie && this.lastHitZombie.size > 0) this.lastHitZombie.clear();
           }
         } else this.settleTimer = 0;
@@ -1217,7 +1216,6 @@ function randomDismemberOnDeath(z) {
 const debrisGrid = new SpatialGrid(4);
 const zCollGrid = new SpatialGrid(2);
 
-// PATCH #5: scratch reutilizado — evita alocação por frame em checkDebrisZombieCollision
 const _allPiecesScratch = [];
 
 function checkDebrisZombieCollision() {
@@ -1434,7 +1432,6 @@ const muzzleLight = new THREE.PointLight(0xFFAA33, 0, 8, 2);
 scene.add(muzzleLight);
 let muzzleLightEnd = 0;
 
-// PATCH #3: point light reciclada para explosões — evita recompilar shaders
 const explosionLight = new THREE.PointLight(0xFF6600, 0, 14, 2);
 scene.add(explosionLight);
 let explosionLightEnd = 0;
@@ -1685,7 +1682,6 @@ function attack(isRightClick = false) {
     const minDot = CONFIG.melee.coneDot;
     let hitCount = 0;
     const maxHits = weapon.hitCount || 1;
-    // PATCH #1: iterar DE TRÁS PRA FRENTE — damageZombie faz splice()
     for (let i = zombies.length - 1; i >= 0; i--) {
       if (hitCount >= maxHits) break;
       const z = zombies[i];
@@ -2356,7 +2352,7 @@ function updateZombieLOD() {
     const dx = z.mesh.position.x - camX;
     const dz = z.mesh.position.z - camZ;
     const d2 = dx*dx + dz*dz;
-    z.mesh.visible = d2 < 2500; // 50m
+    z.mesh.visible = d2 < 2500;
   }
 }
 
@@ -2369,9 +2365,6 @@ function updateZombies(dt) {
     const z = zombies[i];
     if (z.health <= 0) continue;
 
-    // PATCH #2: LOD agora SÓ pula a parte visual (springs/juntas).
-    // IA, física, emerge, colisão e ataque SEMPRE rodam — senão zumbis
-    // distantes ficam congelados e "zombiesAlive" nunca chega a 0.
     const dxLod = z.mesh.position.x - player.position.x;
     const dzLod = z.mesh.position.z - player.position.z;
     const distLod2 = dxLod*dxLod + dzLod*dzLod;
@@ -2417,7 +2410,7 @@ function updateZombies(dt) {
           damage:CONFIG.zombie.damage * type.dmgMul * 0.6,
           speed:CONFIG.zombie.speed * type.speedMul, scale:type.scale, radius:CONFIG.zombie.radius*type.scale,
           attackRange:type.attackRange, attackCooldown:type.cooldown,
-          xpReward:5, coinReward:1, isBoss:false, typeKey, tier:type.tier,
+          xpReward:5, coinReward:1, isBoss:false, typeKey, type, tier:type.tier,
           lastAttackTime:0, walkPhase:Math.random()*Math.PI*2,
           hitReactEndTime:0, hitDirection:new THREE.Vector3(),
           dismembered:{ head:false, armL:false, armR:false, legL:false, legR:false },
@@ -2550,9 +2543,7 @@ function updateZombies(dt) {
       armRXTarget -= hunt*0.25;
     }
 
-    // PATCH #2: visual pesado só quando não está em skip
     if (skipVisual) {
-      // Atualiza só a posição do pelvis para o corpo não "afundar"
       joints.pelvis.position.y = P_PELVIS_Y + anim.pelvisBob;
     } else {
       springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
@@ -2644,7 +2635,6 @@ function updateZombies(dt) {
     if (staggering && z.attackWindupActive) z.attackWindupActive = false;
   }
 
-  // Colisão zumbi-zumbi com spatial grid
   zCollGrid.clear();
   for (let i = 0; i < zombies.length; i++) {
     const z = zombies[i];
@@ -3033,7 +3023,6 @@ function nameOf(id) {
 }
 const damageNumbersEl = document.getElementById('damage-numbers');
 
-// PATCH #6: cap duro de damage numbers para evitar DOM explodindo com SMG
 const DAMAGE_NUMBERS_MAX = 40;
 let damageNumbersActive = 0;
 
