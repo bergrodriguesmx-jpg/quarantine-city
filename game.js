@@ -440,7 +440,19 @@ function updateWeaponViewModel(dt) {
   }
 }
 
-const player = { id:nextId('p'), position:new THREE.Vector3(0, CONFIG.player.height, 0), yaw:0, pitch:0 };
+// ============================================================
+// ⚠️ PLAYER — AQUI ESTAVA O BUG.
+// O objeto `player` é um plain object (não é um THREE.Object3D),
+// então ele NÃO tem `userData` por padrão. Adicionamos `userData:{}`
+// para que `player.userData._pendingDamage` funcione.
+// ============================================================
+const player = {
+  id: nextId('p'),
+  position: new THREE.Vector3(0, CONFIG.player.height, 0),
+  yaw: 0,
+  pitch: 0,
+  userData: { _pendingDamage: 0 },   // <-- FIX
+};
 
 // ====== FUSÃO ZB2 — inicialização dos novos sistemas ======
 // (depende de `scene`, `sun`, `player` já estarem definidos)
