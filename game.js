@@ -166,6 +166,7 @@ const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xC5E0F5, 50, 130);
 
 const camera = new THREE.PerspectiveCamera(78, window.innerWidth/window.innerHeight, 0.1, 400);
+window.__qbCamera = camera;
 camera.position.set(0, CONFIG.player.height, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias:false, powerPreference:'high-performance' });
