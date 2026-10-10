@@ -4,14 +4,21 @@ import * as CANNON from 'cannon-es';
 let physicsWorld = null;
 let sceneRef = null;
 
-// Scratch objects (zero allocation per frame)
+const _v1 = new THREE.Vector3();
+const _q1 = new THREE.Quaternion();
 const _scratchQ = new THREE.Quaternion();
-const _scratchV = new THREE.Vector3();
+
+// Scratch CANNON (zero alloc por frame)
+const _cVec1 = new CANNON.Vec3();
+const _cVec2 = new CANNON.Vec3();
+const _cVec3 = new CANNON.Vec3();
+const UP = new CANNON.Vec3(0, 1, 0);
+const DOWN = new CANNON.Vec3(0, -1, 0);
 
 export function initPhysics(scene) {
   if (physicsWorld) return physicsWorld;
   sceneRef = scene;
-  physicsWorld = new CANNON.World({ gravity: new CANNON.Vec3(0, -18, 0) });
+  physicsWorld = new CANNON.World({ gravity: new CANNON.Vec3(0, -20, 0) });
   physicsWorld.broadphase = new CANNON.SAPBroadphase(physicsWorld);
   physicsWorld.allowSleep = true;
   physicsWorld.solver.iterations = 8;
@@ -20,15 +27,15 @@ export function initPhysics(scene) {
   const groundMat = new CANNON.Material('ground');
   const limbMat = new CANNON.Material('limb');
   physicsWorld.addContactMaterial(new CANNON.ContactMaterial(groundMat, limbMat, {
-    friction: 0.9,
-    restitution: 0.02,
+    friction: 0.95,
+    restitution: 0.0,
   }));
   physicsWorld.addContactMaterial(new CANNON.ContactMaterial(limbMat, limbMat, {
-    friction: 0.7,
-    restitution: 0.03,
+    friction: 0.75,
+    restitution: 0.02,
   }));
-  physicsWorld.defaultContactMaterial.friction = 0.9;
-  physicsWorld.defaultContactMaterial.restitution = 0.02;
+  physicsWorld.defaultContactMaterial.friction = 0.95;
+  physicsWorld.defaultContactMaterial.restitution = 0.0;
 
   const ground = new CANNON.Body({
     type: CANNON.Body.STATIC,
@@ -74,31 +81,20 @@ export function clearPhysics() {
 }
 
 // ============================================================
-// Definição de massa e bounds por osso
-// Bounds são FIXOS (não precisam ser computados do mesh)
+// Definição de ossos — SHAPES FIXOS (nada de Box3 traversal)
 // ============================================================
 const BONE_DEFS = {
-  torso: { mass: 20, half: [0.17, 0.24, 0.11] },
-  head:  { mass: 4.0, half: [0.11, 0.13, 0.11] },
-  armL:  { mass: 2.5, half: [0.06, 0.20, 0.06] },
-  armR:  { mass: 2.5, half: [0.06, 0.20, 0.06] },
-  legL:  { mass: 5.0, half: [0.09, 0.24, 0.09] },
-  legR:  { mass: 5.0, half: [0.09, 0.24, 0.09] },
+  torso: { mass: 22, half: [0.17, 0.24, 0.11], pivot: null },
+  head:  { mass: 4.5, half: [0.11, 0.13, 0.11], pivot: 'neck' },
+  armL:  { mass: 3.0, half: [0.06, 0.20, 0.06], pivot: 'shoulderL' },
+  armR:  { mass: 3.0, half: [0.06, 0.20, 0.06], pivot: 'shoulderR' },
+  legL:  { mass: 5.5, half: [0.09, 0.24, 0.09], pivot: 'hipL' },
+  legR:  { mass: 5.5, half: [0.09, 0.24, 0.09], pivot: 'hipR' },
 };
 
 const ORDER = ['torso', 'head', 'armL', 'armR', 'legL', 'legR'];
 
-const JOINT_LOCAL = {
-  neck:      { parent: new CANNON.Vec3(0,  0.22, 0), child: new CANNON.Vec3(0, -0.12, 0) },
-  shoulderL: { parent: new CANNON.Vec3(-0.18, 0.12, 0), child: new CANNON.Vec3(0, 0.18, 0) },
-  shoulderR: { parent: new CANNON.Vec3( 0.18, 0.12, 0), child: new CANNON.Vec3(0, 0.18, 0) },
-  hipL:      { parent: new CANNON.Vec3(-0.09, -0.14, 0), child: new CANNON.Vec3(0, 0.22, 0) },
-  hipR:      { parent: new CANNON.Vec3( 0.09, -0.14, 0), child: new CANNON.Vec3(0, 0.22, 0) },
-};
-
-const AXIS_UP = new CANNON.Vec3(0, 1, 0);
-
-// Shapes cacheados por osso — reutilizados entre ragdolls (immutable)
+// Shapes cacheados (immutable, compartilhados entre todos os ragdolls)
 const SHAPE_CACHE = {};
 function getShape(key) {
   if (!SHAPE_CACHE[key]) {
@@ -108,15 +104,84 @@ function getShape(key) {
   return SHAPE_CACHE[key];
 }
 
-// ConeTwist configs por junta (immutable)
-const JOINT_CONFIGS = [
-  { parent: 'torso', child: 'head',  joint: 'neck',      angle: 0.7, twist: 0.5 },
-  { parent: 'torso', child: 'armL',  joint: 'shoulderL', angle: 1.3, twist: 0.8 },
-  { parent: 'torso', child: 'armR',  joint: 'shoulderR', angle: 1.3, twist: 0.8 },
-  { parent: 'torso', child: 'legL',  joint: 'hipL',      angle: 1.1, twist: 0.4 },
-  { parent: 'torso', child: 'legR',  joint: 'hipR',      angle: 1.1, twist: 0.4 },
-];
+// ============================================================
+// Muscle System — corpo tenta ficar em pé por X segundos
+// Puro torque, sem constraints. Sem alocação por frame.
+// ============================================================
+class MuscleSystem {
+  constructor(ragdoll) {
+    this.ragdoll = ragdoll;
+    this.timer = 0;
+    // Força muscular por osso
+    this.strength = {
+      torso: 1.0,
+      head:  0.9,
+      armL:  0.35,
+      armR:  0.35,
+      legL:  0.85,
+      legR:  0.85,
+    };
+    this.Kp = 55;
+    this.Kd = 6;
+  }
 
+  update(dt) {
+    this.timer += dt;
+
+    // Fade: 0-0.7s força total, 0.7-1.5s decai, >1.5s desligado
+    let fade = 1;
+    if (this.timer > 0.7) {
+      fade = Math.max(0, 1 - (this.timer - 0.7) / 0.8);
+    }
+    if (fade <= 0.01) return;
+
+    const map = this.ragdoll.bodyMap;
+
+    for (const key in map) {
+      const body = map[key];
+      const s = this.strength[key];
+      if (!s) continue;
+
+      // Eixo Y local do corpo, em coords de mundo
+      const curUp = body.quaternion.vmult(UP, _cVec1);
+
+      // cross(curUp, UP) — eixo pra girar curUp em direção a UP
+      const cx = curUp.y * UP.z - curUp.z * UP.y;
+      const cy = curUp.z * UP.x - curUp.x * UP.z;
+      const cz = curUp.x * UP.y - curUp.y * UP.x;
+      const sinA = Math.sqrt(cx*cx + cy*cy + cz*cz);
+
+      if (sinA < 0.001) continue;
+
+      const invLen = 1 / sinA;
+      const nx = cx * invLen, ny = cy * invLen, nz = cz * invLen;
+
+      // Aproximação do ângulo
+      const angle = Math.asin(Math.min(1, sinA));
+
+      // Damping angular (usa magnitude, sem normalizar)
+      const w = body.angularVelocity;
+      const angSpeed = Math.sqrt(w.x*w.x + w.y*w.y + w.z*w.z);
+
+      const torqueMag = (this.Kp * angle - this.Kd * angSpeed) * s * fade;
+      if (torqueMag <= 0) continue;
+
+      body.torque.x += nx * torqueMag;
+      body.torque.y += ny * torqueMag;
+      body.torque.z += nz * torqueMag;
+
+      if (body.sleepState === CANNON.Body.SLEEPING) body.wakeUp();
+    }
+  }
+
+  forget(key) {
+    delete this.strength[key];
+  }
+}
+
+// ============================================================
+// Ragdoll
+// ============================================================
 export class Ragdoll {
   constructor(zombieMesh, hitDir, hitStrength, missingParts) {
     if (!physicsWorld) { console.warn('[ragdoll] physics não inicializada'); return; }
@@ -137,15 +202,14 @@ export class Ragdoll {
     this._maxLife    = 45;
 
     this._build(zombieMesh, hitDir, hitStrength, missingParts);
+    this.muscles = new MuscleSystem(this);
   }
 
   _build(zombieMesh, hitDir, hitStrength, missingParts) {
     const ud = zombieMesh.userData;
     zombieMesh.updateMatrixWorld(true);
 
-    // --- 1) Extrair meshes SEM bounding box traversal ---
-    // O truque: usamos a posição do próprio grupo e um shape fixo.
-    // Não precisamos do tamanho real do mesh — o shape é fixo por osso.
+    // ---------- 1) Extrair meshes ----------
     const parts = {};
     for (const key of ORDER) {
       const obj = (key === 'torso') ? ud.torso : ud[key];
@@ -155,27 +219,44 @@ export class Ragdoll {
         continue;
       }
 
-      const worldPos = new THREE.Vector3();
-      const worldQ = new THREE.Quaternion();
-      obj.getWorldPosition(worldPos);
-      obj.getWorldQuaternion(worldQ);
+      obj.getWorldPosition(_v1);
+      obj.getWorldQuaternion(_q1);
+
+      // Guarda pivô em local do pai (se houver)
+      let pivotInParent = null;
+      const parentObj = obj.parent;
+      if (parentObj && key !== 'torso') {
+        parentObj.updateMatrixWorld(true);
+        const parentQ = new THREE.Quaternion();
+        parentObj.getWorldQuaternion(parentQ);
+        const parentP = new THREE.Vector3();
+        parentObj.getWorldPosition(parentP);
+        const invPQ = parentQ.clone().invert();
+        const rel = new THREE.Vector3().subVectors(_v1, parentP).applyQuaternion(invPQ);
+        pivotInParent = new CANNON.Vec3(rel.x, rel.y, rel.z);
+      }
 
       if (obj.parent) obj.parent.remove(obj);
       obj.position.set(0, 0, 0);
       obj.quaternion.set(0, 0, 0, 1);
 
       const wrapper = new THREE.Group();
-      wrapper.position.copy(worldPos);
-      wrapper.quaternion.copy(worldQ);
+      wrapper.position.copy(_v1);
+      wrapper.quaternion.copy(_q1);
       if (sceneRef) sceneRef.add(wrapper);
       wrapper.add(obj);
 
-      parts[key] = { wrapper, pos: worldPos, quat: worldQ };
+      parts[key] = {
+        wrapper,
+        pos: _v1.clone(),
+        quat: _q1.clone(),
+        pivotInParent,
+      };
     }
 
     if (zombieMesh.parent) zombieMesh.parent.remove(zombieMesh);
 
-    // --- 2) Criar bodies com shapes cacheados ---
+    // ---------- 2) Criar bodies (SEM adicionar ao mundo ainda) ----------
     for (const key of ORDER) {
       const part = parts[key];
       if (!part) continue;
@@ -186,10 +267,10 @@ export class Ragdoll {
         shape: getShape(key),
         position: new CANNON.Vec3(part.pos.x, part.pos.y, part.pos.z),
         quaternion: new CANNON.Quaternion(part.quat.x, part.quat.y, part.quat.z, part.quat.w),
-        linearDamping: 0.20,
-        angularDamping: 0.60,
+        linearDamping: 0.25,
+        angularDamping: 0.55,
         sleepSpeedLimit: 0.3,
-        sleepTimeLimit: 0.5,
+        sleepTimeLimit: 0.6,
         allowSleep: true,
       });
       body.userData = { key };
@@ -213,54 +294,54 @@ export class Ragdoll {
       });
     }
 
-    // --- 3) Criar constraints ---
-    for (const cfg of JOINT_CONFIGS) {
-      const parent = this.bodyMap[cfg.parent];
-      const child = this.bodyMap[cfg.child];
-      if (!parent || !child) continue;
-      const jl = JOINT_LOCAL[cfg.joint];
-      const c = new CANNON.ConeTwistConstraint(child, parent, {
-        pivotA: jl.child,
-        pivotB: jl.parent,
-        axisA: AXIS_UP,
-        axisB: AXIS_UP,
-        angle: cfg.angle,
-        twistAngle: cfg.twist,
-        maxForce: 1e7,
-      });
+    // ---------- 3) Constraints (PointToPoint com pivô correto) ----------
+    for (const key of ORDER) {
+      const part = parts[key];
+      if (!part) continue;
+      if (key === 'torso') continue;
+      const parentKey = 'torso';
+      const parentBody = this.bodyMap[parentKey];
+      const childBody = this.bodyMap[key];
+      if (!parentBody || !childBody) continue;
+
+      const pivotB = part.pivotInParent || new CANNON.Vec3(0, 0, 0);
+      const pivotA = new CANNON.Vec3(0, 0, 0); // origem do filho é a junta
+
+      const c = new CANNON.PointToPointConstraint(
+        childBody, pivotA,
+        parentBody, pivotB,
+        1e7
+      );
       this.constraints.push(c);
     }
 
-    // --- 4) Impulso inicial direcional (SEGURO) ---
+    // ---------- 4) Impulso inicial pequeno ----------
     const dir = hitDir.clone(); dir.y = 0;
     if (dir.lengthSq() < 0.0001) dir.set(1, 0, 0);
     dir.normalize();
+
     const strength = Math.min(2.5, Math.max(0.6, hitStrength));
-    const base = strength * 1.8;
+    const base = strength * 1.4;
 
     for (const key in this.bodyMap) {
       const body = this.bodyMap[key];
-      const w = (key === 'torso' ? 0.7 : 0.35);
-      const ix = dir.x * base * body.mass * w;
-      const iy = (0.6 + Math.random() * 0.8) * body.mass * w;
-      const iz = dir.z * base * body.mass * w;
-      // setVelocity evita alocação de applyImpulse
+      const w = (key === 'torso' ? 0.6 : 0.35);
       body.velocity.set(
-        body.velocity.x + ix / body.mass,
-        body.velocity.y + iy / body.mass,
-        body.velocity.z + iz / body.mass
+        dir.x * base * w,
+        (0.5 + Math.random() * 0.7) * w,
+        dir.z * base * w
       );
       body.angularVelocity.set(
-        (Math.random() - 0.5) * 1.5,
-        (Math.random() - 0.5) * 1.5,
-        (Math.random() - 0.5) * 1.5
+        (Math.random() - 0.5) * 1.2,
+        (Math.random() - 0.5) * 1.2,
+        (Math.random() - 0.5) * 1.2
       );
     }
 
-    // --- 5) ADICIONAR ao mundo em lote (depois de tudo pronto) ---
-    // Isso reduz o custo do addBody × addConstraint
-    for (const b of this.bodies) physicsWorld.addBody(b);
-    for (const c of this.constraints) physicsWorld.addConstraint(c);
+    // ---------- 5) Adicionar ao mundo EM LOTE ----------
+    // Uma única passada de broadphase/solver rebuild
+    for (let i = 0; i < this.bodies.length; i++) physicsWorld.addBody(this.bodies[i]);
+    for (let i = 0; i < this.constraints.length; i++) physicsWorld.addConstraint(this.constraints[i]);
   }
 
   sliceAt(cameraPos, forward3D, range) {
@@ -272,8 +353,8 @@ export class Ragdoll {
       const wrapper = this.wrapperMap[key];
       const d = cameraPos.distanceTo(wrapper.position);
       if (d > bestDist) continue;
-      _scratchV.subVectors(wrapper.position, cameraPos).normalize();
-      const dot = forward3D.dot(_scratchV);
+      _v1.subVectors(wrapper.position, cameraPos).normalize();
+      const dot = forward3D.dot(_v1);
       if (dot < 0.3) continue;
       bestKey = key; bestWrapper = wrapper; bestDist = d;
     }
@@ -294,6 +375,7 @@ export class Ragdoll {
     if (wi >= 0) this.wrappers.splice(wi, 1);
     const pi = this.pieces.findIndex(p => p.key === bestKey);
     if (pi >= 0) this.pieces.splice(pi, 1);
+    if (this.muscles) this.muscles.forget(bestKey);
 
     return {
       mesh: bestWrapper,
@@ -324,20 +406,21 @@ export class Ragdoll {
     }
     if (!nearest) return;
     const f = Math.min(6, force);
-    // Impulso direto na velocity (sem alocar CANNON.Vec3)
     nearest.velocity.x += dir.x * f;
     nearest.velocity.y += dir.y * f;
     nearest.velocity.z += dir.z * f;
     this.lastHitTime = performance.now() / 1000;
     this.state = 'falling'; this.settleStart = 0;
-    for (const b of this.bodies) b.wakeUp();
+    // Reativa músculos (reação ao impacto)
+    if (this.muscles) { this.muscles.timer = 0; }
+    for (let i = 0; i < this.bodies.length; i++) this.bodies[i].wakeUp();
   }
 
   update(dt) {
     this._life += dt;
 
     if (this.state === 'fading') {
-      this.fadeProgress += dt / 1.5;
+      this.fadeProgress += dt / 1.2;
       const op = Math.max(0, 1 - this.fadeProgress);
       for (const w of this.wrappers) {
         w.traverse(c => {
@@ -349,17 +432,18 @@ export class Ragdoll {
       return this.fadeProgress >= 1;
     }
 
-    // Sync visual SEM alocar quaternions
+    if (this.muscles) this.muscles.update(dt);
+
     let allAsleep = true;
     for (const key in this.bodyMap) {
       const body = this.bodyMap[key];
       const wrapper = this.wrapperMap[key];
       if (!body || !wrapper) continue;
 
+      // Interpolação visual (evita tremor)
       wrapper.position.x += (body.position.x - wrapper.position.x) * 0.75;
       wrapper.position.y += (body.position.y - wrapper.position.y) * 0.75;
       wrapper.position.z += (body.position.z - wrapper.position.z) * 0.75;
-
       _scratchQ.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
       wrapper.quaternion.slerp(_scratchQ, 0.75);
 
