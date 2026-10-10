@@ -41,6 +41,29 @@ function envGain(t, peak, attack, decay) {
   g.gain.exponentialRampToValueAtTime(0.001, t + attack + decay);
   return g;
 }
+
+// ============================================================
+// CLEANUP — desconecta todos os nós após o som terminar.
+// Sem isso o grafo do AudioContext cresce infinitamente.
+// ============================================================
+function autoCleanup(source, nodes, durationSec) {
+  if (!source) return;
+  let done = false;
+  const cleanup = () => {
+    if (done) return;
+    done = true;
+    try { source.disconnect(); } catch (_) {}
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (!n) continue;
+      try { n.disconnect(); } catch (_) {}
+    }
+  };
+  try { source.onended = cleanup; } catch (_) {}
+  // Fallback caso onended não dispare (browser antigo / tab em bg)
+  setTimeout(cleanup, (durationSec + 0.6) * 1000);
+}
+
 function playNoise(t, duration, filterType, filterFreq, peak, decay, freqEnd) {
   const src = ctx.createBufferSource();
   src.buffer = getNoiseBuffer();
@@ -52,6 +75,7 @@ function playNoise(t, duration, filterType, filterFreq, peak, decay, freqEnd) {
   src.connect(filter).connect(g).connect(compressor);
   src.start(t, 0, duration);
   src.stop(t + duration + 0.01);
+  autoCleanup(src, [filter, g], duration + 0.1);
   return { src, filter, g };
 }
 function playOsc(t, type, freqStart, freqEnd, peak, decay, duration) {
@@ -62,6 +86,7 @@ function playOsc(t, type, freqStart, freqEnd, peak, decay, duration) {
   const g = envGain(t, peak, 0.003, decay);
   o.connect(g).connect(compressor);
   o.start(t); o.stop(t + duration + 0.02);
+  autoCleanup(o, [g], duration + 0.1);
   return { o, g };
 }
 
@@ -78,6 +103,7 @@ export function playKnifeSwing() {
   const g = envGain(t, 0.22, 0.005, 0.16);
   src.connect(filter).connect(g).connect(compressor);
   src.start(t, 0, 0.18); src.stop(t + 0.2);
+  autoCleanup(src, [filter, g], 0.25);
 }
 export function playKnifeHitFlesh() {
   if (!ctx) return;
@@ -136,6 +162,7 @@ export function playLauncher() {
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
   o.connect(g).connect(compressor);
   o.start(t + 0.3); o.stop(t + 0.95);
+  autoCleanup(o, [g], 1.05);
 }
 export function playZombieDeath() {
   if (!ctx) return;
@@ -165,6 +192,8 @@ export function playGroan() {
   o.connect(filter).connect(g).connect(compressor);
   o.start(t); lfo.start(t);
   o.stop(t + 0.82); lfo.stop(t + 0.82);
+  // Cleanup dos dois sources + intermediários
+  autoCleanup(o, [lfo, lfoGain, filter, g], 0.9);
 }
 export function playCoin() {
   if (!ctx) return;
@@ -185,6 +214,7 @@ export function playLevelUp() {
     g.gain.exponentialRampToValueAtTime(0.001, start + 0.3);
     o.connect(g).connect(compressor);
     o.start(start); o.stop(start + 0.32);
+    autoCleanup(o, [g], (i * 0.08) + 0.4);
   });
 }
 export function playPlayerHurt() {
