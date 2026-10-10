@@ -18,7 +18,7 @@ export function initAudio() {
     masterGain.gain.value = 0.85;
     compressor.connect(masterGain);
     masterGain.connect(ctx.destination);
-  } catch (e) { console.warn('Web Audio nao suportado'); }
+  } catch (e) { console.warn('Web Audio não suportado'); }
 }
 export function resumeAudio() { if (ctx && ctx.state === 'suspended') ctx.resume(); }
 export function setMuted(m) { muted = !!m; if (masterGain) masterGain.gain.value = muted ? 0 : 0.85; }
@@ -42,16 +42,11 @@ function envGain(t, peak, attack, decay) {
   return g;
 }
 
-// ============================================================
-// CLEANUP — desconecta todos os nós após o som terminar.
-// Sem isso o grafo do AudioContext cresce infinitamente.
-// ============================================================
 function autoCleanup(source, nodes, durationSec) {
   if (!source) return;
   let done = false;
   const cleanup = () => {
-    if (done) return;
-    done = true;
+    if (done) return; done = true;
     try { source.disconnect(); } catch (_) {}
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i];
@@ -60,7 +55,6 @@ function autoCleanup(source, nodes, durationSec) {
     }
   };
   try { source.onended = cleanup; } catch (_) {}
-  // Fallback caso onended não dispare (browser antigo / tab em bg)
   setTimeout(cleanup, (durationSec + 0.6) * 1000);
 }
 
@@ -90,6 +84,9 @@ function playOsc(t, type, freqStart, freqEnd, peak, decay, duration) {
   return { o, g };
 }
 
+// ============================================================
+// MELEE
+// ============================================================
 export function playKnifeSwing() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -97,55 +94,71 @@ export function playKnifeSwing() {
   src.buffer = getNoiseBuffer();
   const filter = ctx.createBiquadFilter();
   filter.type = 'bandpass';
-  filter.frequency.setValueAtTime(800, t);
-  filter.frequency.exponentialRampToValueAtTime(3000, t + 0.1);
-  filter.Q.value = 2;
+  filter.frequency.setValueAtTime(900, t);
+  filter.frequency.exponentialRampToValueAtTime(3200, t + 0.1);
+  filter.Q.value = 2.2;
   const g = envGain(t, 0.22, 0.005, 0.16);
   src.connect(filter).connect(g).connect(compressor);
   src.start(t, 0, 0.18); src.stop(t + 0.2);
   autoCleanup(src, [filter, g], 0.25);
 }
+export function playBluntSwing() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  playNoise(t, 0.12, 'lowpass', 700, 0.18, 0.1, 300);
+}
 export function playKnifeHitFlesh() {
   if (!ctx) return;
   const t = ctx.currentTime;
   playOsc(t, 'sine', 140, 50, 0.35, 0.18, 0.2);
-  playNoise(t, 0.12, 'lowpass', 800, 0.3, 0.1);
+  playNoise(t, 0.12, 'lowpass', 800, 0.32, 0.1);
 }
-export function playBulletImpact() {
+export function playBluntHitFlesh() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  playNoise(t, 0.06, 'highpass', 2500, 0.18, 0.05);
-  playOsc(t, 'square', 180, 60, 0.12, 0.05, 0.06);
+  playOsc(t, 'sine', 90, 40, 0.4, 0.22, 0.25);
+  playNoise(t, 0.15, 'lowpass', 500, 0.4, 0.12);
 }
+
+// ============================================================
+// FIREARMS — todos os sons do C# com pitch range variável
+// ============================================================
+function pitchVar() { return 0.94 + Math.random() * 0.12; }
+
 export function playPistol() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  playOsc(t, 'square', 800, 180, 0.35, 0.09, 0.1);
-  playNoise(t, 0.08, 'highpass', 1200, 0.4, 0.07);
+  const p = pitchVar();
+  playOsc(t, 'square', 800 * p, 180 * p, 0.35, 0.09, 0.1);
+  playNoise(t, 0.08, 'highpass', 1200, 0.42, 0.07);
 }
 export function playRevolver() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  playOsc(t, 'square', 500, 80, 0.45, 0.22, 0.25);
+  const p = pitchVar();
+  playOsc(t, 'square', 500 * p, 80 * p, 0.48, 0.22, 0.25);
   playNoise(t, 0.2, 'lowpass', 2500, 0.5, 0.18);
 }
 export function playSMG() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  playOsc(t, 'sawtooth', 600, 150, 0.25, 0.05, 0.06);
-  playNoise(t, 0.05, 'highpass', 1500, 0.35, 0.04);
+  const p = pitchVar();
+  playOsc(t, 'sawtooth', 600 * p, 150 * p, 0.22, 0.05, 0.06);
+  playNoise(t, 0.05, 'highpass', 1500, 0.32, 0.04);
 }
 export function playRifle() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  playOsc(t, 'square', 700, 90, 0.5, 0.22, 0.25);
+  const p = pitchVar();
+  playOsc(t, 'square', 700 * p, 90 * p, 0.5, 0.22, 0.25);
   const n = playNoise(t, 0.25, 'bandpass', 2000, 0.45, 0.22);
   n.filter.Q.value = 0.8;
 }
 export function playShotgun() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  playOsc(t, 'sawtooth', 150, 35, 0.55, 0.28, 0.3);
+  const p = pitchVar();
+  playOsc(t, 'sawtooth', 150 * p, 35 * p, 0.55, 0.28, 0.3);
   playNoise(t, 0.3, 'lowpass', 3000, 0.6, 0.28, 500);
 }
 export function playLauncher() {
@@ -164,6 +177,23 @@ export function playLauncher() {
   o.start(t + 0.3); o.stop(t + 0.95);
   autoCleanup(o, [g], 1.05);
 }
+export function playBulletImpact() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const p = 0.9 + Math.random() * 0.25;
+  playNoise(t, 0.06, 'highpass', 2500 * p, 0.2, 0.05);
+  playOsc(t, 'square', 180 * p, 60 * p, 0.14, 0.05, 0.06);
+}
+export function playDebrisImpact() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  playNoise(t, 0.06, 'lowpass', 1200, 0.22, 0.05);
+  playOsc(t, 'square', 200, 90, 0.1, 0.06, 0.07);
+}
+
+// ============================================================
+// ZOMBIES
+// ============================================================
 export function playZombieDeath() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -192,40 +222,38 @@ export function playGroan() {
   o.connect(filter).connect(g).connect(compressor);
   o.start(t); lfo.start(t);
   o.stop(t + 0.82); lfo.stop(t + 0.82);
-  // Cleanup dos dois sources + intermediários
   autoCleanup(o, [lfo, lfoGain, filter, g], 0.9);
 }
-export function playCoin() {
+
+// ============================================================
+// PLAYER — footsteps, hurt, roll, jump, wall jump
+// ============================================================
+export function playFootstep() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  [880, 1320].forEach((f, i) => playOsc(t + i * 0.05, 'sine', f, f, 0.13, 0.14, 0.15));
+  const p = 0.8 + Math.random() * 0.5;
+  playNoise(t, 0.05, 'lowpass', 400 * p, 0.08, 0.04);
 }
-export function playLevelUp() {
+export function playJump() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  [523, 659, 784, 1047].forEach((f, i) => {
-    const o = ctx.createOscillator();
-    o.type = 'triangle';
-    o.frequency.value = f;
-    const g = ctx.createGain();
-    const start = t + i * 0.08;
-    g.gain.setValueAtTime(0, start);
-    g.gain.linearRampToValueAtTime(0.18, start + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, start + 0.3);
-    o.connect(g).connect(compressor);
-    o.start(start); o.stop(start + 0.32);
-    autoCleanup(o, [g], (i * 0.08) + 0.4);
-  });
+  playOsc(t, 'sine', 400, 700, 0.15, 0.12, 0.14);
+}
+export function playRoll() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  playNoise(t, 0.25, 'bandpass', 800, 0.2, 0.2, 400);
+}
+export function playWallJump() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  playNoise(t, 0.08, 'lowpass', 600, 0.22, 0.06);
+  playOsc(t, 'sine', 300, 600, 0.18, 0.1, 0.12);
 }
 export function playPlayerHurt() {
   if (!ctx) return;
   const t = ctx.currentTime;
   playOsc(t, 'sawtooth', 220, 80, 0.28, 0.22, 0.25);
-}
-export function playBuy() {
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  playOsc(t, 'triangle', 660, 990, 0.2, 0.12, 0.13);
 }
 export function playPlayerDown() {
   if (!ctx) return;
@@ -239,6 +267,36 @@ export function playRevive() {
   playOsc(t, 'sine', 330, 990, 0.25, 0.5, 0.55);
   playOsc(t + 0.12, 'sine', 660, 1320, 0.2, 0.4, 0.45);
 }
+
+// ============================================================
+// UI / PROGRESS
+// ============================================================
+export function playCoin() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  [880, 1320].forEach((f, i) => playOsc(t + i * 0.05, 'sine', f, f, 0.13, 0.14, 0.15));
+}
+export function playLevelUp() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  [523, 659, 784, 1047].forEach((f, i) => {
+    const o = ctx.createOscillator();
+    o.type = 'triangle'; o.frequency.value = f;
+    const g = ctx.createGain();
+    const start = t + i * 0.08;
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(0.18, start + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, start + 0.3);
+    o.connect(g).connect(compressor);
+    o.start(start); o.stop(start + 0.32);
+    autoCleanup(o, [g], (i * 0.08) + 0.4);
+  });
+}
+export function playBuy() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  playOsc(t, 'triangle', 660, 990, 0.2, 0.12, 0.13);
+}
 export function playPing() {
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -249,10 +307,5 @@ export function playReload() {
   const t = ctx.currentTime;
   playOsc(t, 'square', 400, 250, 0.15, 0.06, 0.07);
   playNoise(t + 0.15, 0.05, 'highpass', 2000, 0.12, 0.04);
-}
-export function playDebrisImpact() {
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  playNoise(t, 0.06, 'lowpass', 1200, 0.22, 0.05);
-  playOsc(t, 'square', 200, 90, 0.1, 0.06, 0.07);
+  playOsc(t + 0.30, 'square', 300, 200, 0.12, 0.05, 0.06);
 }
