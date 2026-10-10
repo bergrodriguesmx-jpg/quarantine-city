@@ -147,6 +147,7 @@ const state = {
   vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
   currentBoss:null,
 };
+
 const container = document.getElementById('game-container');
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xC5E0F5, 50, 130);
@@ -182,7 +183,6 @@ scene.add(sun);
 
 const world = buildWorld(scene, CONFIG.arena.size);
 
-// ===== Física (Cannon) =====
 initPhysics(scene);
 for (const box of world.wallColliders) {
   addStaticBox(box.minX, box.maxX, box.minZ, box.maxZ, 4);
@@ -298,6 +298,7 @@ const MAT = {
   skin:matL(0xD4A574), skinDark:matL(0xC09065), nail:matL(0xE8C8A0),
   blood:matL(0x6B0000),
 };
+
 function buildViewModel(weaponId) {
   if (currentViewModel) { weaponGroup.remove(currentViewModel); currentViewModel = null; }
   const g = new THREE.Group();
@@ -481,6 +482,7 @@ const P_SHOULDER_Y = 0.14;
 const BONE_MAT = matL(0xE8E0D0);
 const BONE_DARK_MAT = matL(0xC8BFA8);
 const BONE_DARKER = matL(0xA89F88);
+
 function applyHeadgear(head, headgear, HR) {
   if (!headgear) return;
   if (headgear === 'cap_brown' || headgear === 'cap_red' || headgear === 'cap_black') {
@@ -597,7 +599,6 @@ function buildJudgeHead(head, skinMat, wound, HR) {
 }
 
 function buildJudgeOutfit(spineUpper) {
-  const wm = matL(0xF5F5F5);
   const tie = new THREE.Mesh(geoBox(0.025, 0.16, 0.008, 1), matL(0xCC1111)); tie.position.set(0, 0.04, 0.112); spineUpper.add(tie);
 }
 
@@ -817,11 +818,20 @@ function createZombieMesh(opts = {}) {
   return g;
 }
 
+function smoothstep(x) {
+  if (x < 0) x = 0; else if (x > 1) x = 1;
+  return x * x * (3 - 2 * x);
+}
+function smoothDamp(current, target, speed, dt) {
+  return current + (target - current) * (1 - Math.exp(-speed * dt));
+}
+
 function makeAnimState() {
   return {
     pelvisRoll:0, pelvisTwist:0, pelvisBob:0,
     spineTwist:0, spineLean:0.10, spineRoll:0, spineSide:0,
     headTwist:0, headRoll:0, headPitch:0,
+    headTwistLag:0, headPitchLag:0, headRollLag:0,
     armLX:0, armRX:0, elbowLX:0, elbowRX:0,
     thighLX:0, thighRX:0, kneeLX:0, kneeRX:0, footLX:0, footRX:0,
     pelvisRollVel:0, pelvisTwistVel:0, pelvisBobVel:0,
@@ -830,6 +840,12 @@ function makeAnimState() {
     armLXVel:0, armRXVel:0, elbowLXVel:0, elbowRXVel:0,
     thighLXVel:0, thighRXVel:0, kneeLXVel:0, kneeRXVel:0, footLXVel:0, footRXVel:0,
     bankX:0, bankZ:0, bankXVel:0, bankZVel:0,
+    bodyAccelX:0, bodyAccelZ:0,
+    walkPhaseSmooth:0,
+    cadenceSmooth:0,
+    attackPhase:0,
+    attackPhaseT:0,
+    plantPhaseL:0, plantPhaseR:0,
     alertBlend:0, idleBlend:0,
   };
 }
@@ -1003,7 +1019,6 @@ class Debris {
 const ragdolls = [];
 const _wpTmp = new THREE.Vector3();
 const _wqTmp = new THREE.Quaternion();
-// Classe Ragdoll agora vem de src/core/ragdoll-physics.js
 const flyingLimbs = [];
 function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
   if (ragdolls.length >= CONFIG.ragdoll.maxActive) {
@@ -1275,6 +1290,7 @@ function applyHitReaction(z, part, hitDirWorld, force = 1) {
     springKick(anim, 'kneeRXVel', s*24);
   }
 }
+
 const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
 function showHitMarker(critical = false) {
@@ -2006,6 +2022,7 @@ function updateVendorVan() {
     showWaveBanner('Vendedor foi embora...');
   }
 }
+
 document.addEventListener('keydown', e => {
   state.keys[e.code] = true;
   if (e.code === 'Digit1') switchToSlot(1);
@@ -2233,15 +2250,18 @@ function resolvePlayerZombieCollision() {
   }
 }
 
-const K_THIGH = 85, C_THIGH = 9.5;
-const K_KNEE = 75, C_KNEE = 8.5;
-const K_FOOT = 110, C_FOOT = 9;
-const K_PELVIS = 100, C_PELVIS = 10;
-const K_SPINE = 110, C_SPINE = 11;
-const K_HEAD = 140, C_HEAD = 12;
-const K_ARM = 70, C_ARM = 8.5;
-const K_ELBOW = 85, C_ELBOW = 8.5;
-const K_BANK = 45, C_BANK = 6;
+// ============================================================
+// MOLASSEM MOLES para fluidez
+// ============================================================
+const K_THIGH = 55,  C_THIGH = 11;
+const K_KNEE  = 50,  C_KNEE  = 10;
+const K_FOOT  = 75,  C_FOOT  = 10;
+const K_PELVIS = 65, C_PELVIS = 11;
+const K_SPINE = 70,  C_SPINE = 12;
+const K_HEAD  = 90,  C_HEAD  = 14;
+const K_ARM   = 45,  C_ARM   = 9;
+const K_ELBOW = 55,  C_ELBOW = 9;
+const K_BANK  = 30,  C_BANK  = 5;
 
 let lodFrame = 0;
 function updateZombieLOD() {
@@ -2372,78 +2392,127 @@ function updateZombies(dt) {
     z._prevX = z.mesh.position.x;
     z._prevZ = z.mesh.position.z;
 
+    // ============= FLUIDEZ =============
     const speedNorm = Math.min(1.5, realSpeed / Math.max(0.01, z.speed));
     const walkStyle = z.walkStyle;
     const shuffling = dist < 3.0;
 
-    const idleTarget = realSpeed < 0.15 ? 1 : 0;
-    anim.idleBlend += (idleTarget - anim.idleBlend) * Math.min(1, dt*3);
-    const idle = anim.idleBlend;
-    z.idlePhase += dt*1.6;
-    const breathe = Math.sin(z.idlePhase)*0.5 + Math.sin(z.idlePhase*0.37 + 1.3)*0.5;
-    const idleSway = Math.sin(z.idlePhase*0.6 + walkStyle*6.28)*0.02;
+    // Inércia do corpo (bank)
+    const accelX = (z.vx - anim.bodyAccelX) / Math.max(dt, 0.001);
+    const accelZ = (z.vz - anim.bodyAccelZ) / Math.max(dt, 0.001);
+    anim.bodyAccelX = z.vx;
+    anim.bodyAccelZ = z.vz;
+    anim.bankX = smoothDamp(anim.bankX, Math.max(-1, Math.min(1, accelX * 0.03)), 8, dt);
+    anim.bankZ = smoothDamp(anim.bankZ, Math.max(-1, Math.min(1, accelZ * 0.03)), 8, dt);
 
+    // Cadência suavizada
     const strideLength = 0.85;
-    const idealCadence = (realSpeed / strideLength) * Math.PI * 2 + 0.6;
+    const idealCadence = (realSpeed / strideLength) * Math.PI * 2 + 0.4;
+    anim.cadenceSmooth = smoothDamp(anim.cadenceSmooth, idealCadence, 6, dt);
     const styleMul = (1 - walkStyle*0.35) * (shuffling ? 1.35 : 1.0) * (alerted ? 1.15 : 1);
-    z.walkPhase += dt * idealCadence * styleMul * emerge;
-    const phase = z.walkPhase;
+    anim.walkPhaseSmooth += dt * anim.cadenceSmooth * styleMul * emerge;
+    const phase = anim.walkPhaseSmooth;
+
+    // Idle blend smooth
+    const idleTarget = 1 - smoothstep(Math.min(1, realSpeed / 0.6));
+    anim.idleBlend = smoothDamp(anim.idleBlend, idleTarget, 3, dt);
+    const idle = anim.idleBlend;
+
+    z.idlePhase += dt * 1.4;
+    const breathe = Math.sin(z.idlePhase) * 0.5 + Math.sin(z.idlePhase * 0.37 + 1.3) * 0.5;
+    const idleSway = Math.sin(z.idlePhase * 0.6 + walkStyle * 6.28) * 0.015;
+
+    // Foot planting
+    const legLPhase = (phase / (Math.PI * 2)) % 1;
+    const legRPhase = ((phase + Math.PI) / (Math.PI * 2)) % 1;
+    const inStanceL = (legLPhase > 0.35 && legLPhase < 0.65) ? 1 : 0;
+    const inStanceR = (legRPhase > 0.35 && legRPhase < 0.65) ? 1 : 0;
+    anim.plantPhaseL = smoothDamp(anim.plantPhaseL, inStanceL, 18, dt);
+    anim.plantPhaseR = smoothDamp(anim.plantPhaseR, inStanceR, 18, dt);
 
     const stepL = Math.sin(phase), stepR = Math.sin(phase + Math.PI);
-    const legAmp = (0.5 + walkStyle*0.2) * (0.35 + speedNorm*0.65) * (1 + hunt*0.15);
+    const speedAmp = 0.35 + smoothstep(Math.min(1, speedNorm)) * 0.65;
+    const legAmp = (0.5 + walkStyle * 0.2) * speedAmp * (1 + hunt * 0.15);
     let legL = stepL * legAmp;
     let legR = stepR * legAmp;
 
     let thighLTarget = legL, thighRTarget = legR;
-    const kneeAmp = 0.9 * (0.4 + speedNorm*0.6);
-    let kneeLTarget = Math.max(0, stepL)*kneeAmp + 0.08 + walkStyle*0.2;
-    let kneeRTarget = Math.max(0, stepR)*kneeAmp + 0.08 + walkStyle*0.2;
-    let footLTarget = -stepL*0.35*(1 + walkStyle*0.4);
-    let footRTarget = -stepR*0.35*(1 + walkStyle*0.4);
+    const kneeAmp = 0.85 * (0.4 + speedNorm * 0.6);
+    thighLTarget *= (1 - anim.plantPhaseL * 0.55);
+    thighRTarget *= (1 - anim.plantPhaseR * 0.55);
+    let kneeLTarget = Math.max(0, stepL) * kneeAmp + 0.06 + walkStyle * 0.18;
+    let kneeRTarget = Math.max(0, stepR) * kneeAmp + 0.06 + walkStyle * 0.18;
+    let footLTarget = -stepL * 0.35 * (1 + walkStyle * 0.4);
+    let footRTarget = -stepR * 0.35 * (1 + walkStyle * 0.4);
+    footLTarget *= (1 - anim.plantPhaseL * 0.7);
+    footRTarget *= (1 - anim.plantPhaseR * 0.7);
 
-    let pelvisRollTarget = -Math.cos(phase)*0.10*speedNorm;
-    let pelvisTwistTarget = stepL*0.20*speedNorm;
-    let pelvisBobTarget = -Math.abs(Math.sin(phase))*0.05*speedNorm - 0.010*speedNorm;
-    let spineTwistTarget = -stepL*0.14*speedNorm;
+    let pelvisRollTarget = -Math.cos(phase) * 0.09 * speedNorm;
+    let pelvisTwistTarget = stepL * 0.18 * speedNorm;
+    let pelvisBobTarget = -Math.abs(Math.sin(phase)) * 0.04 * speedNorm - 0.008 * speedNorm;
+    let spineTwistTarget = -stepL * 0.13 * speedNorm;
     const leanBase = isWounded ? 0.22 : 0.10;
-    let spineLeanTarget = leanBase + (dist < 3 ? 0.10 : 0) + speedNorm*0.06;
-    let spineSideTarget = Math.cos(phase)*0.07*speedNorm;
+    let spineLeanTarget = leanBase + (dist < 3 ? 0.10 : 0) + speedNorm * 0.05;
+    let spineSideTarget = Math.cos(phase) * 0.06 * speedNorm;
     let spineRollTarget = 0;
-    let headRollTarget = z.headLoll + Math.cos(phase)*0.08*speedNorm + anim.bankZ*2.5;
-    let headTwistTarget = spineTwistTarget*0.4 + stepL*0.06*speedNorm;
-    let headPitchTarget = z.headPitchBase + speedNorm*0.12 + (dist < 3 ? 0.15 : 0);
+    let headRollTarget = z.headLoll + Math.cos(phase) * 0.07 * speedNorm + anim.bankZ * 2.0;
+    let headTwistTarget = spineTwistTarget * 0.4 + stepL * 0.05 * speedNorm;
+    let headPitchTarget = z.headPitchBase + speedNorm * 0.10 + (dist < 3 ? 0.15 : 0);
 
-    const reaching = dist < 3.5 && !staggering;
-    const armAmp = 0.5 * (0.4 + speedNorm*0.6);
+    // Secondary motion
+    anim.headTwistLag = smoothDamp(anim.headTwistLag, headTwistTarget, 9, dt);
+    anim.headPitchLag = smoothDamp(anim.headPitchLag, headPitchTarget, 9, dt);
+    anim.headRollLag = smoothDamp(anim.headRollLag, headRollTarget, 9, dt);
+
+    // Anticipation / Recovery
     let armLXTarget, armRXTarget;
-    if (reaching) {
-      const reach = -1.55;
-      armLXTarget = reach + Math.sin(phase*2.1 + z.walkStyle*6.28)*0.12;
-      armRXTarget = reach + Math.sin(phase*1.8 + z.walkStyle*5.1 + 1.7)*0.12;
+    if (z.attackWindupActive) {
+      const wElapsed = now - (z.attackWindupEnd - 0.30);
+      const wT = Math.max(0, Math.min(1, wElapsed / 0.30));
+      const windupArm = -0.6 - wT * 0.9;
+      armLXTarget = windupArm;
+      armRXTarget = windupArm;
+      spineLeanTarget -= wT * 0.15;
+      headPitchTarget += wT * 0.20;
+    } else if (anim.attackPhase === 3) {
+      const recT = Math.min(1, (now - anim.attackPhaseT) / 0.25);
+      const recArm = -1.2 + recT * 1.2;
+      armLXTarget = Math.max(-1.55, recArm);
+      armRXTarget = Math.max(-1.55, recArm);
     } else {
-      armLXTarget = -stepL*armAmp + z.armDroopL;
-      armRXTarget = -stepR*armAmp + z.armDroopR;
+      const reaching = dist < 3.5 && !staggering;
+      const armAmp = 0.5 * (0.4 + speedNorm * 0.6);
+      if (reaching) {
+        const reach = -1.55;
+        armLXTarget = reach + Math.sin(phase * 2.1 + walkStyle * 6.28) * 0.12;
+        armRXTarget = reach + Math.sin(phase * 1.8 + walkStyle * 5.1 + 1.7) * 0.12;
+      } else {
+        armLXTarget = -stepL * armAmp + z.armDroopL;
+        armRXTarget = -stepR * armAmp + z.armDroopR;
+      }
     }
-    let elbowLXTarget = reaching ? -0.9 : -0.15 - Math.max(0, armLXTarget)*0.4;
-    let elbowRXTarget = reaching ? -0.9 : -0.15 - Math.max(0, armRXTarget)*0.4;
+    const reaching2 = dist < 3.5 && !staggering && !z.attackWindupActive;
+    let elbowLXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armLXTarget) * 0.4;
+    let elbowRXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armRXTarget) * 0.4;
 
     if (idle > 0.01) {
       const inv = 1 - idle;
-      spineLeanTarget = spineLeanTarget*inv + (0.06 + breathe*0.02)*idle;
-      spineSideTarget = spineSideTarget*inv + idleSway*idle;
+      spineLeanTarget = spineLeanTarget * inv + (0.06 + breathe * 0.02) * idle;
+      spineSideTarget = spineSideTarget * inv + idleSway * idle;
       spineTwistTarget *= inv;
-      headTwistTarget = headTwistTarget*inv + Math.sin(z.idlePhase*0.4)*0.15*idle;
-      headPitchTarget = headPitchTarget*inv + (z.headPitchBase + breathe*0.03)*idle;
-      armLXTarget = armLXTarget*inv + (z.armDroopL + breathe*0.02)*idle;
-      armRXTarget = armRXTarget*inv + (z.armDroopR + breathe*0.02)*idle;
-      pelvisBobTarget = pelvisBobTarget*inv + breathe*0.008*idle;
+      headTwistTarget = headTwistTarget * inv + Math.sin(z.idlePhase * 0.4) * 0.15 * idle;
+      headPitchTarget = headPitchTarget * inv + (z.headPitchBase + breathe * 0.03) * idle;
+      armLXTarget = armLXTarget * inv + (z.armDroopL + breathe * 0.02) * idle;
+      armRXTarget = armRXTarget * inv + (z.armDroopR + breathe * 0.02) * idle;
+      pelvisBobTarget = pelvisBobTarget * inv + breathe * 0.008 * idle;
     }
-    if (hunt > 0.01) {
-      spineLeanTarget -= hunt*0.08;
-      headPitchTarget += hunt*0.25;
-      armLXTarget -= hunt*0.25;
-      armRXTarget -= hunt*0.25;
+    if (hunt > 0.01 && !z.attackWindupActive) {
+      spineLeanTarget -= hunt * 0.08;
+      headPitchTarget += hunt * 0.25;
+      armLXTarget -= hunt * 0.25;
+      armRXTarget -= hunt * 0.25;
     }
+    // ============= FIM FLUIDEZ =============
 
     if (skipVisual) {
       joints.pelvis.position.y = P_PELVIS_Y + anim.pelvisBob;
@@ -2481,9 +2550,9 @@ function updateZombies(dt) {
       joints.spineUpper.rotation.z = anim.spineRoll*0.6 + anim.spineSide*0.7 + anim.bankZ*0.5;
       joints.neck.rotation.y = anim.headTwist*0.4;
       joints.neck.rotation.x = anim.headPitch*0.3;
-      joints.head.rotation.y = anim.headTwist;
-      joints.head.rotation.z = anim.headRoll;
-      joints.head.rotation.x = anim.headPitch;
+      joints.head.rotation.y = anim.headTwistLag;
+      joints.head.rotation.z = anim.headRollLag;
+      joints.head.rotation.x = anim.headPitchLag;
       joints.shoulderL.rotation.x = anim.armLX;
       joints.shoulderR.rotation.x = anim.armRX;
       joints.elbowL.rotation.x = anim.elbowLX;
@@ -2507,19 +2576,23 @@ function updateZombies(dt) {
       continue;
     }
 
-    if (emerge >= 0.5 && !staggering && !z.attackWindupActive
+    // Windup longo + recovery
+    if (emerge >= 0.5 && !staggering && !z.attackWindupActive && anim.attackPhase === 0
         && now - z.lastAttackTime > z.attackCooldown
         && dist < z.attackRange + 0.3) {
       z.attackWindupActive = true;
-      z.attackWindupEnd = now + 0.18;
-      springKick(anim, 'armLXVel', -6);
-      springKick(anim, 'armRXVel', -6);
+      z.attackWindupEnd = now + 0.30;
+      anim.attackPhase = 1;
+      springKick(anim, 'armLXVel', -3);
+      springKick(anim, 'armRXVel', -3);
     }
     if (z.attackWindupActive && now >= z.attackWindupEnd) {
       z.attackWindupActive = false;
       z.lastAttackTime = now;
-      springKick(anim, 'armLXVel', 20);
-      springKick(anim, 'armRXVel', 20);
+      anim.attackPhase = 2;
+      anim.attackPhaseT = now;
+      springKick(anim, 'armLXVel', 28);
+      springKick(anim, 'armRXVel', 28);
       if (dist < z.attackRange + 0.5) {
         if (state.downed) { state.downedHP -= z.damage*0.8; }
         else {
@@ -2535,6 +2608,15 @@ function updateZombies(dt) {
       }
     }
     if (staggering && z.attackWindupActive) z.attackWindupActive = false;
+
+    // Recovery do ataque
+    if (anim.attackPhase === 2 && now - anim.attackPhaseT > 0.12) {
+      anim.attackPhase = 3;
+      anim.attackPhaseT = now;
+    }
+    if (anim.attackPhase === 3 && now - anim.attackPhaseT > 0.25) {
+      anim.attackPhase = 0;
+    }
   }
 
   zCollGrid.clear();
@@ -2836,7 +2918,6 @@ function startGame() {
   zombies.length = 0;
   ragdolls.forEach(r => r.dispose()); ragdolls.length = 0;
   clearPhysics();
-  // Re-registra as paredes
   for (const box of world.wallColliders) addStaticBox(box.minX, box.maxX, box.minZ, box.maxZ, 4);
   for (const box of world.furnitureColliders) addStaticBox(box.minX, box.maxX, box.minZ, box.maxZ, 1.2);
   flyingLimbs.forEach(l => l.dispose()); flyingLimbs.length = 0;
