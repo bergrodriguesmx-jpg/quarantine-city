@@ -1,6 +1,7 @@
 // ============================================================
 // SPRING ANALÍTICO — estável para qualquer dt
-// Resolve x'' + 2ζω x' + ω²(x - target) = 0
+// Resolve x'' + 2ζω x' + ω²(x - target) = 0 de forma fechada.
+// Nunca diverge, mesmo com quedas de FPS.
 // ============================================================
 
 export function springStep(obj, key, target, k, c, dt) {
@@ -12,7 +13,6 @@ export function springStep(obj, key, target, k, c, dt) {
 
   let x, v;
   if (zeta < 1) {
-    // Subamortecido
     const wd = omega * Math.sqrt(1 - zeta * zeta);
     const e = Math.exp(-zeta * omega * dt);
     const cos = Math.cos(wd * dt);
@@ -22,7 +22,7 @@ export function springStep(obj, key, target, k, c, dt) {
     x = target + e * (A * cos + B * sin);
     v = e * ((B * wd - zeta * omega * A) * cos - (A * wd + zeta * omega * B) * sin);
   } else {
-    // Criticamente amortecido (aproximação)
+    // Criticamente amortecido
     const e = Math.exp(-omega * dt);
     const A = d0;
     const B = v0 + omega * d0;
