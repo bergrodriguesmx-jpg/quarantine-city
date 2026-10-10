@@ -14,6 +14,13 @@ import { computePartLocalBoxes } from './src/core/part-box.js';
 import { enrichWeapons, MELEE_TYPES, ZOMBIE_LORE, formatWeaponTooltip } from './src/core/lore.js';
 import { initPhysics, stepPhysics, addStaticBox, clearPhysics, Ragdoll as PhysicsRagdoll } from './src/core/ragdoll-physics.js';
 
+// ====== FUSÃO ZB2 ======
+import * as Daytime from './src/core/daytime.js';
+import * as BossStages from './src/core/boss-stages.js';
+import * as Gore from './src/core/gore.js';
+import * as ZombieAI from './src/core/zombie-ai.js';
+import * as Extraction from './src/core/extraction.js';
+
 bus.setAdapter(new LocalAdapter());
 
 // ============================================================
@@ -170,7 +177,8 @@ renderer.shadowMap.autoUpdate = false;
 container.appendChild(renderer.domElement);
 
 scene.add(new THREE.Mesh(new THREE.SphereGeometry(180, 16, 8), new THREE.MeshBasicMaterial({ map:Textures.skyTexture(), side:THREE.BackSide, fog:false })));
-scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
+scene.add(ambientLight);
 const sun = new THREE.DirectionalLight(0xffffff, 0.9);
 sun.position.set(50, 80, 40);
 sun.castShadow = true;
@@ -432,6 +440,75 @@ function updateWeaponViewModel(dt) {
 }
 
 const player = { id:nextId('p'), position:new THREE.Vector3(0, CONFIG.player.height, 0), yaw:0, pitch:0 };
+
+// ====== FUSÃO ZB2 — inicialização dos novos sistemas ======
+// (depende de `scene`, `sun`, `player` já estarem definidos)
+Daytime.initDaytime(scene, sun, ambientLight);
+Gore.initGore(scene);
+Extraction.initExtraction(scene, player);
+
+// Listeners de eventos ZB2
+bus.on('world:blood_moon', () => {
+  try { Sfx.playZombieDeath(); } catch(_) {}
+  addShake(0.5);
+  showWaveBanner('LUA DE SANGUE!');
+});
+bus.on('extraction:spawned', () => showWaveBanner('HELICÓPTERO CHEGANDO!'));
+bus.on('extraction:landed',  () => showWaveBanner('ENTRE NO HELICÓPTERO!'));
+bus.on('extraction:success', () => {
+  state.running = false;
+  document.getElementById('final-wave').textContent = state.wave;
+  document.getElementById('final-level').textContent = state.level;
+  document.getElementById('final-coins').textContent = state.coins;
+  document.getElementById('final-kills').textContent = state.kills;
+  document.getElementById('final-hs').textContent = state.headshots;
+  const elapsed = Math.floor((performance.now() - state.startTime)/1000);
+  const m = Math.floor(elapsed/60);
+  const s = (elapsed % 60).toString().padStart(2, '0');
+  document.getElementById('final-time').textContent = `${m}:${s}`;
+  document.getElementById('final-record').textContent = '★ VOCÊ ESCAPOU! ★';
+  document.getElementById('gameover').classList.remove('hidden');
+  document.getElementById('hud').classList.add('hidden');
+  if (document.exitPointerLock) document.exitPointerLock();
+});
+
+// ====== PROJÉTEIS DE BOSS ======
+const bossProjectiles = [];
+function spawnBossProjectile({ type, origin, dir, speed, damage, radius }) {
+  const geo = type === 'tox'
+    ? new THREE.SphereGeometry(radius, 10, 8)
+    : new THREE.SphereGeometry(radius, 6, 4);
+  const color = type === 'tox' ? 0x66ff33 : 0xffdd44;
+  const mat = new THREE.MeshBasicMaterial({ color });
+  const m = new THREE.Mesh(geo, mat);
+  m.position.copy(origin);
+  scene.add(m);
+  bossProjectiles.push({ mesh: m, dir: dir.clone(), speed, damage, life: 3, type });
+}
+
+function updateBossProjectiles(dt) {
+  for (let i = bossProjectiles.length - 1; i >= 0; i--) {
+    const p = bossProjectiles[i];
+    p.life -= dt;
+    p.mesh.position.addScaledVector(p.dir, p.speed * dt);
+    // Colisão com player
+    const d = p.mesh.position.distanceTo(player.position);
+    if (d < 0.8) {
+      state.health -= p.damage;
+      showDamageFlash();
+      updateHUD();
+      if (state.health <= 0 && !state.downed) enterDownedState();
+      scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose();
+      bossProjectiles.splice(i, 1);
+      continue;
+    }
+    if (p.life <= 0 || p.mesh.position.y < 0) {
+      scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose();
+      bossProjectiles.splice(i, 1);
+    }
+  }
+}
+
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function circleVsAABB(px, pz, radius, box) {
   const cx = Math.max(box.minX, Math.min(px, box.maxX));
@@ -848,7 +925,6 @@ function makeAnimState() {
     attackPhaseT:0,
     plantPhaseL:0, plantPhaseR:0,
     alertBlend:0, idleBlend:0,
-    // NOVO: crawling
     crawlBlend:0,
     crawlPhase:0,
   };
@@ -909,6 +985,19 @@ function spawnZombie(forceType) {
     crawling:false,
   };
   zombies.push(z);
+
+  // ====== FUSÃO ZB2 — IA e Boss Stages ======
+  ZombieAI.initZombieAIState(z);
+  if (z.isBoss) {
+    z.bossStage = 1;
+    z.bossStageHealthThresholds = [1.0, 0.66, 0.33];
+    z.bossActionCooldown = 0;
+    z.bossActionState = 'idle';
+    z.bossActionTimer = 0;
+    z.teleportCooldown = 3 + Math.random() * 2;
+    z.projectiles = [];
+  }
+
   state.zombiesAlive++;
   bus.emit(Ev.ZOMBIE_SPAWNED, { id:z.id, type:typeKey, tier:type.tier, isBoss:z.isBoss, pos:{ x:mesh.position.x, y:0, z:mesh.position.z } });
   updateHUD();
@@ -1504,8 +1593,16 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
 
   alertNearbyZombies(z, hitPoint);
 
+  // ====== FUSÃO ZB2 — alerta em grupo + stagger ======
+  ZombieAI.alertNearbyZombies(zombies, hitPoint, 8);
+  ZombieAI.staggerZombie(z, isCrit || isHead ? 0.55 : 0.3);
+
   if (z.health <= 0 && !z.dying) {
     z.dying = true;
+
+    // ====== FUSÃO ZB2 — Gore avançado ======
+    Gore.onZombieDeath(z.mesh.position, hitDir, z.isBoss);
+
     Sfx.playZombieDeath(); Sfx.playCoin(); addShake(CONFIG.shake.kill);
     const rewardMul = state.brazierBurning ? CONFIG.brazier.rewardMult : 1;
     const cRew = Math.round(z.coinReward * rewardMul);
@@ -1901,6 +1998,10 @@ function checkWaveComplete() {
     state.brazierFuel = Math.min(CONFIG.brazier.maxFuel, state.brazierFuel + CONFIG.brazier.fuelPerWave);
     showWaveBanner(`+${coinBonus}$  +${healed}HP${ammoGiven ? '  +' + ammoGiven + 'AMMO' : ''}  — PROXIMA EM ${CONFIG.wave.breakTime}s`);
     updateHUD();
+
+    // ====== FUSÃO ZB2 — Extraction ======
+    Extraction.trySpawnExtraction(state.wave);
+
     if (state.waveStartTimeoutId !== null) clearTimeout(state.waveStartTimeoutId);
     state.waveStartTimeoutId = setTimeout(() => {
       state.waveStartTimeoutId = null;
@@ -2336,6 +2437,18 @@ function updatePlayer(dt) {
     camera.rotation.z = (Math.random()-0.5)*state.shake*0.5;
     state.shake *= Math.pow(0.001, dt);
   } else { camera.rotation.z = 0; state.shake = 0; }
+
+  // ====== FUSÃO ZB2 — dano pendente de bosses ======
+  if (player.userData._pendingDamage) {
+    const dmg = player.userData._pendingDamage;
+    player.userData._pendingDamage = 0;
+    if (!state.downed && performance.now()/1000 >= state.invulnUntil) {
+      state.health -= dmg;
+      showDamageFlash();
+      updateHUD();
+      if (state.health <= 0) enterDownedState();
+    }
+  }
 }
 
 function resolvePlayerZombieCollision() {
@@ -2393,6 +2506,10 @@ function updateZombies(dt) {
     const z = zombies[i];
     if (z.health <= 0) continue;
 
+    // ====== FUSÃO ZB2 — IA state machine ======
+    ZombieAI.updateZombieAIState(z, player, dt);
+    const aiMult = ZombieAI.getAIMultiplier(z);
+
     const dxLod = z.mesh.position.x - player.position.x;
     const dzLod = z.mesh.position.z - player.position.z;
     const distLod2 = dxLod*dxLod + dzLod*dzLod;
@@ -2406,9 +2523,6 @@ function updateZombies(dt) {
     const anim = z.anim;
     const alerted = z.alertedUntil > now;
 
-    // ============================================================
-    // CRAWLING: ativa quando ambas as pernas foram removidas
-    // ============================================================
     const lostBothLegs = z.dismembered.legL && z.dismembered.legR;
     const crawlTarget = lostBothLegs ? 1 : 0;
     anim.crawlBlend = smoothDamp(anim.crawlBlend, crawlTarget, 4, dt);
@@ -2423,9 +2537,8 @@ function updateZombies(dt) {
     const dxP = player.position.x - z.mesh.position.x;
     const dzP = player.position.z - z.mesh.position.z;
     const dist = Math.hypot(dxP, dzP);
-    const staggering = z.hitReactEndTime > now;
+    const staggering = z.hitReactEndTime > now || z.aiState === 'stagger';
 
-    // Velocidade reduzida quando rastejando
     const speedFactorCrawl = 1 - crawl * (1 - CONFIG.crawl.speedMul);
     const attackRangeCrawl = 1 - crawl * (1 - CONFIG.crawl.attackRangeMul);
     const cooldownCrawl = 1 + crawl * (CONFIG.crawl.cooldownMul - 1);
@@ -2468,6 +2581,7 @@ function updateZombies(dt) {
           flinch:{ head:null, armL:null, armR:null, legL:null, legR:null, torso:null },
           crawling:false,
         };
+        ZombieAI.initZombieAIState(minion);
         zombies.push(minion); state.zombiesAlive++;
       }
     }
@@ -2485,11 +2599,11 @@ function updateZombies(dt) {
     let desiredVx = 0, desiredVz = 0;
     if (!staggering && emerge >= 0.5 && dist > arrival) {
       const speedFactor = isWounded ? 0.6 : 1.0;
-      const target = z.speed * speedFactor * alertMul * speedFactorCrawl;
+      const target = z.speed * speedFactor * alertMul * speedFactorCrawl * aiMult;
       desiredVx = (dxP/dist) * target; desiredVz = (dzP/dist) * target;
     } else if (!staggering && emerge >= 0.5 && dist > z.attackRange * attackRangeCrawl) {
       const t = (dist - z.attackRange * attackRangeCrawl) / CONFIG.pursuit.arrivalRadius;
-      const target = z.speed * Math.max(CONFIG.pursuit.minSpeedFactor, t) * (isWounded ? 0.6 : 1) * alertMul * speedFactorCrawl;
+      const target = z.speed * Math.max(CONFIG.pursuit.minSpeedFactor, t) * (isWounded ? 0.6 : 1) * alertMul * speedFactorCrawl * aiMult;
       desiredVx = (dxP/dist) * target; desiredVz = (dzP/dist) * target;
     }
     const k = 1 - Math.exp(-dt * CONFIG.pursuit.responsiveness * (alerted ? 1.3 : 1));
@@ -2532,7 +2646,6 @@ function updateZombies(dt) {
     anim.walkPhaseSmooth += dt * anim.cadenceSmooth * styleMul * emerge;
     const phase = anim.walkPhaseSmooth;
 
-    // Crawl arm cycle (mais lento, movemento de arrastar)
     anim.crawlPhase += dt * (anim.cadenceSmooth * 0.55 + 1.4) * emerge;
     const crawlCycle = Math.sin(anim.crawlPhase);
     const crawlCycle2 = Math.sin(anim.crawlPhase + Math.PI);
@@ -2558,9 +2671,6 @@ function updateZombies(dt) {
     let legL = stepL * legAmp;
     let legR = stepR * legAmp;
 
-    // ============================================================
-    // TARGETS BASE (em pé)
-    // ============================================================
     let thighLTarget = legL, thighRTarget = legR;
     const kneeAmp = 0.85 * (0.4 + speedNorm * 0.6);
     thighLTarget *= (1 - anim.plantPhaseL * 0.55);
@@ -2585,32 +2695,19 @@ function updateZombies(dt) {
     let headTwistTarget = spineTwistTarget * 0.4 + stepL * 0.05 * speedNorm;
     let headPitchTarget = z.headPitchBase + speedNorm * 0.10 + (dist < 3 ? 0.15 : 0);
 
-    // ============================================================
-    // TARGETS CRAWLING (rastejando) — blend pelo `crawl`
-    // ============================================================
     if (crawl > 0.001) {
-      // Corpo baixo ao chão
       pelvisYTmp = P_PELVIS_Y * (1 - crawl) + 0.28 * crawl;
-      // Tronco quase horizontal (deitado pra frente)
       spineLeanTarget = spineLeanTarget * (1 - crawl) + 1.35 * crawl;
-      // Coxas puxadas pra trás (pernas sem uso)
       thighLTarget = thighLTarget * (1 - crawl) + (-0.15) * crawl;
       thighRTarget = thighRTarget * (1 - crawl) + (-0.15) * crawl;
-      // Joelhos levemente dobrados
       kneeLTarget = kneeLTarget * (1 - crawl) + 0.35 * crawl;
       kneeRTarget = kneeRTarget * (1 - crawl) + 0.35 * crawl;
-      // Pes quase na horizontal
       footLTarget = footLTarget * (1 - crawl) + 0.5 * crawl;
       footRTarget = footRTarget * (1 - crawl) + 0.5 * crawl;
-      // Pelvis sem "bob" de caminhada, mas balança um pouco com o crawl cycle
       pelvisBobTarget = pelvisBobTarget * (1 - crawl) + (crawlCycle * 0.03) * crawl;
-      // Braços fazem ciclo de arrastar (alternado)
-      // (aplicado após o bloco de arm targets)
-      // Cabeça levantada pra frente
       headPitchTarget = headPitchTarget * (1 - crawl) + (-0.5 + crawlCycle * 0.05) * crawl;
     }
 
-    // Arm targets base (em pé)
     let armLXTarget, armRXTarget;
     if (z.attackWindupActive) {
       const wElapsed = now - (z.attackWindupEnd - 0.30);
@@ -2638,10 +2735,7 @@ function updateZombies(dt) {
       }
     }
 
-    // Blend crawling nos braços: substitui pela animação de arrastar
     if (crawl > 0.001) {
-      // Crawl arm targets: empurrar o chão, alternado
-      // Angulo -2.0 = completamente pra frente e pra baixo, +0.2 = levantado
       const crawlArmL = -1.9 + crawlCycle * 0.9;
       const crawlArmR = -1.9 + crawlCycle2 * 0.9;
       armLXTarget = armLXTarget * (1 - crawl) + crawlArmL * crawl;
@@ -2652,7 +2746,6 @@ function updateZombies(dt) {
     let elbowLXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armLXTarget) * 0.4;
     let elbowRXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armRXTarget) * 0.4;
 
-    // Crawling elbow: braço quase esticado quando empurra, dobrado quando volta
     if (crawl > 0.001) {
       const crawlElbowL = -0.2 - Math.max(0, crawlCycle) * -0.5;
       const crawlElbowR = -0.2 - Math.max(0, crawlCycle2) * -0.5;
@@ -3005,6 +3098,14 @@ function animate() {
     updatePings(dt);
     updateExplosions(dt);
     updateNoiseRipples(dt);
+
+    // ====== FUSÃO ZB2 — updates dos novos sistemas ======
+    Daytime.updateDaytime(dt);
+    Gore.updateGore(dt);
+    BossStages.updateBossStages(dt, zombies, scene, player, spawnBossProjectile);
+    Extraction.updateExtraction(dt);
+    updateBossProjectiles(dt);
+
     if (state.downed) weaponGroup.visible = false;
     else { weaponGroup.visible = true; updateWeaponViewModel(dt); }
     if (state.mouseDown && !state.reload.active) {
@@ -3103,8 +3204,12 @@ function startGame() {
   tracers.forEach(t => { t.mesh.visible = false; tracerPool.push(t); }); tracers.length = 0;
   _noiseRipples.forEach(r => { scene.remove(r.mesh); r.mesh.geometry.dispose(); r.mesh.material.dispose(); });
   _noiseRipples.length = 0;
+  // Limpa projéteis de boss
+  bossProjectiles.forEach(p => { scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose(); });
+  bossProjectiles.length = 0;
   player.position.set(0, CONFIG.player.height, 0);
   player.yaw = 0; player.pitch = 0;
+  player.userData._pendingDamage = 0;
   buildViewModel('knife');
   updateWeaponSlotsHUD();
   document.getElementById('menu').classList.add('hidden');
