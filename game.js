@@ -119,6 +119,7 @@ const CONFIG = {
   debris: { minHitSpeed2:6, pushRadiusBonus:0.6, staggerTime:0.22 },
   brazier: { fuelPerWave:1, maxFuel:3, costPerBurn:1, waveSpeedBoost:3.0, rewardMult:2.0 },
   vendor: { spawnEveryWaves:3, durationSec:60, buyDiscount:0.8, sellRate:0.4 },
+  crawl: { speedMul:0.35, attackRangeMul:0.75, cooldownMul:1.4 },
 };
 
 const state = {
@@ -187,7 +188,6 @@ scene.add(sun);
 }
 
 const world = buildWorld(scene, CONFIG.arena.size);
-
 initPhysics(scene);
 for (const box of world.wallColliders) addStaticBox(box.minX, box.maxX, box.minZ, box.maxZ, 4);
 for (const box of world.furnitureColliders) addStaticBox(box.minX, box.maxX, box.minZ, box.maxZ, 1.2);
@@ -848,6 +848,9 @@ function makeAnimState() {
     attackPhaseT:0,
     plantPhaseL:0, plantPhaseR:0,
     alertBlend:0, idleBlend:0,
+    // NOVO: crawling
+    crawlBlend:0,
+    crawlPhase:0,
   };
 }
 
@@ -903,6 +906,7 @@ function spawnZombie(forceType) {
     _prevX:spawnX, _prevZ:spawnZ,
     flinch:{ head:null, armL:null, armR:null, legL:null, legR:null, torso:null },
     teleportCd:0, summonCd:0,
+    crawling:false,
   };
   zombies.push(z);
   state.zombiesAlive++;
@@ -1159,7 +1163,7 @@ function checkDebrisZombieCollision() {
 const _debrisDir = new THREE.Vector3();
 
 // ============================================================
-// RAYCAST PRECISO — OBB via espaço local
+// RAYCAST PRECISO (OBB)
 // ============================================================
 function rayAABB(origin, dir, min, max, maxDist) {
   let tMin = 0, tMax = maxDist;
@@ -1181,23 +1185,19 @@ function rayAABB(origin, dir, min, max, maxDist) {
   return tMin >= 0 ? tMin : tMax;
 }
 
-// SCRATCH para OBB
 const _obbInv = new THREE.Matrix4();
 const _obbLocalOrigin = new THREE.Vector3();
 const _obbLocalDir = new THREE.Vector3();
 const _obbHitLocal = new THREE.Vector3();
 const _obbHitWorld = new THREE.Vector3();
 
-// Testa o raio contra a caixa LOCAL de um grupo, retornando o ponto exato em world space
 function rayOBBPart(origin, dir, localBox, group, maxDist, outPoint) {
   group.updateMatrixWorld(true);
   _obbInv.copy(group.matrixWorld).invert();
   _obbLocalOrigin.copy(origin).applyMatrix4(_obbInv);
   _obbLocalDir.copy(dir).transformDirection(_obbInv);
-
   const t = rayAABB(_obbLocalOrigin, _obbLocalDir, localBox.min, localBox.max, maxDist);
   if (t === null) return null;
-
   _obbHitLocal.copy(_obbLocalOrigin).addScaledVector(_obbLocalDir, t);
   _obbHitWorld.copy(_obbHitLocal).applyMatrix4(group.matrixWorld);
   if (outPoint) outPoint.copy(_obbHitWorld);
@@ -1259,7 +1259,6 @@ function raycastZombie(origin, dir, maxDist, candidates) {
   const list = candidates || zombies;
   let bestZ = null, bestDist = Infinity, bestPart = null;
   const bestPoint = new THREE.Vector3();
-
   for (let i = 0; i < list.length; i++) {
     const z = list[i];
     if (z.health <= 0) continue;
@@ -1411,7 +1410,6 @@ function spawnExplosion(pos) {
     const falloff = 1 - Math.min(1, d/radius);
     const dmg = baseDamage * Math.max(0.25, falloff);
     const dir = new THREE.Vector3(dx/Math.max(d,0.01), 0, dz/Math.max(d,0.01));
-
     const nearFactor = 1 - Math.min(1, d / (radius * 0.7));
     if (nearFactor > 0.4) {
       const candidates = [];
@@ -1427,7 +1425,6 @@ function spawnExplosion(pos) {
         detachLimb(z, limb, dir, z.mesh.position.clone().setY(1));
       }
     }
-
     damageZombie(z, dmg, false, 'torso', dir, z.mesh.position.clone().setY(1), 'explosion');
   }
   const ddx = player.position.x - pos.x, ddz = player.position.z - pos.z;
@@ -1491,7 +1488,6 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   addShake(CONFIG.shake.hit);
   applyHitReaction(z, part, hitDir, isCrit||isHead ? 1.4 : 1.0);
 
-  // Desmembramento por LOCAL do impacto
   {
     const roll = Math.random();
     let limb = null;
@@ -1609,9 +1605,6 @@ function updateReload(now) {
   }
 }
 
-// ============================================================
-// ATTACK — mira precisa
-// ============================================================
 function attack(isRightClick = false) {
   if (state.downed) {
     const wid = state.inventory[state.currentSlot] || 'knife';
@@ -1644,24 +1637,17 @@ function attack(isRightClick = false) {
   makeNoise(player.position, weapon.noise || 15);
   if (weapon.type === 'ranged') { spawnMuzzleFlash(); addShake(CONFIG.shake.shoot * (weapon.damage/40)); }
 
-  // ============================================================
-  // MELEE — usa raycast preciso (mesmo esquema dos tiros)
-  // ============================================================
   if (weapon.type === 'melee') {
     const camOrigin = camera.position.clone();
     const camForward = new THREE.Vector3(); camera.getWorldDirection(camForward);
     const range = weapon.range + state.rangeBonus;
-
-    // 1) Raycast preciso pelo centro da mira
     const candidates = collectRaycastCandidates(camOrigin, camForward, range);
     const precise = raycastZombie(camOrigin, camForward, range, candidates);
-
     let hitCount = 0;
     const maxHits = weapon.hitCount || 1;
     const mt = MELEE_TYPES[weapon.meleeType] || MELEE_TYPES.mixed;
 
     if (precise.zombie) {
-      // Hit EXATO onde a mira apontou
       const z = precise.zombie;
       const part = precise.part;
       const hitPoint = precise.point.clone();
@@ -1688,7 +1674,6 @@ function attack(isRightClick = false) {
       }
       hitCount++;
 
-      // Ataques extras (Katana, machados): pega vizinhos no cone frontal
       if (maxHits > 1) {
         const minDot = CONFIG.melee.coneDot;
         for (let i = zombies.length - 1; i >= 0 && hitCount < maxHits; i--) {
@@ -1713,7 +1698,6 @@ function attack(isRightClick = false) {
         }
       }
     } else {
-      // Nenhum hit direto: usa cone tradicional para não perder o golpe
       const minDot = CONFIG.melee.coneDot;
       for (let i = zombies.length - 1; i >= 0 && hitCount < maxHits; i--) {
         const z = zombies[i];
@@ -1725,7 +1709,6 @@ function attack(isRightClick = false) {
           const dot = (dx*camForward.x + dz*camForward.z) / horizDist;
           if (dot < minDot) continue;
         }
-        // Aproxima o hit do centro visual do zumbi
         const hitPoint = z.mesh.position.clone().setY(z.mesh.position.y + 1.0);
         const isCrit = rollCrit();
         const baseDmg = weapon.damage * state.damageMult * (isRightClick ? 1.3 : 1.0);
@@ -1762,9 +1745,6 @@ function attack(isRightClick = false) {
     return true;
   }
 
-  // ============================================================
-  // RANGED — raycast preciso
-  // ============================================================
   const origin = camera.position.clone();
   const forward = new THREE.Vector3(); camera.getWorldDirection(forward);
   const range = weapon.range + state.rangeBonus;
@@ -2426,6 +2406,16 @@ function updateZombies(dt) {
     const anim = z.anim;
     const alerted = z.alertedUntil > now;
 
+    // ============================================================
+    // CRAWLING: ativa quando ambas as pernas foram removidas
+    // ============================================================
+    const lostBothLegs = z.dismembered.legL && z.dismembered.legR;
+    const crawlTarget = lostBothLegs ? 1 : 0;
+    anim.crawlBlend = smoothDamp(anim.crawlBlend, crawlTarget, 4, dt);
+    const crawl = anim.crawlBlend;
+    z.crawling = crawl > 0.5;
+    if (lostBothLegs) z._crawlAnnounced = true;
+
     const targetAlertBlend = alerted ? 1 : 0;
     anim.alertBlend += (targetAlertBlend - anim.alertBlend) * Math.min(1, dt*4);
     const hunt = anim.alertBlend;
@@ -2434,6 +2424,11 @@ function updateZombies(dt) {
     const dzP = player.position.z - z.mesh.position.z;
     const dist = Math.hypot(dxP, dzP);
     const staggering = z.hitReactEndTime > now;
+
+    // Velocidade reduzida quando rastejando
+    const speedFactorCrawl = 1 - crawl * (1 - CONFIG.crawl.speedMul);
+    const attackRangeCrawl = 1 - crawl * (1 - CONFIG.crawl.attackRangeMul);
+    const cooldownCrawl = 1 + crawl * (CONFIG.crawl.cooldownMul - 1);
 
     if (z.type.teleport && now > z.teleportCd && dist > 3 && dist < 25 && Math.random() < dt * 0.4) {
       z.mesh.position.x += dxP * 0.7;
@@ -2471,6 +2466,7 @@ function updateZombies(dt) {
           attackWindupActive:false, attackWindupEnd:0,
           _prevX:sx, _prevZ:sz,
           flinch:{ head:null, armL:null, armR:null, legL:null, legR:null, torso:null },
+          crawling:false,
         };
         zombies.push(minion); state.zombiesAlive++;
       }
@@ -2484,16 +2480,16 @@ function updateZombies(dt) {
     z.mesh.rotation.y += yawStep;
     z.yawVel = yawStep / Math.max(dt, 0.001);
 
-    const arrival = z.attackRange + CONFIG.pursuit.arrivalRadius;
+    const arrival = z.attackRange * attackRangeCrawl + CONFIG.pursuit.arrivalRadius;
     const alertMul = alerted ? CONFIG.aggro.alertSpeedMult : 1;
     let desiredVx = 0, desiredVz = 0;
     if (!staggering && emerge >= 0.5 && dist > arrival) {
       const speedFactor = isWounded ? 0.6 : 1.0;
-      const target = z.speed * speedFactor * alertMul;
+      const target = z.speed * speedFactor * alertMul * speedFactorCrawl;
       desiredVx = (dxP/dist) * target; desiredVz = (dzP/dist) * target;
-    } else if (!staggering && emerge >= 0.5 && dist > z.attackRange) {
-      const t = (dist - z.attackRange) / CONFIG.pursuit.arrivalRadius;
-      const target = z.speed * Math.max(CONFIG.pursuit.minSpeedFactor, t) * (isWounded ? 0.6 : 1) * alertMul;
+    } else if (!staggering && emerge >= 0.5 && dist > z.attackRange * attackRangeCrawl) {
+      const t = (dist - z.attackRange * attackRangeCrawl) / CONFIG.pursuit.arrivalRadius;
+      const target = z.speed * Math.max(CONFIG.pursuit.minSpeedFactor, t) * (isWounded ? 0.6 : 1) * alertMul * speedFactorCrawl;
       desiredVx = (dxP/dist) * target; desiredVz = (dzP/dist) * target;
     }
     const k = 1 - Math.exp(-dt * CONFIG.pursuit.responsiveness * (alerted ? 1.3 : 1));
@@ -2536,6 +2532,11 @@ function updateZombies(dt) {
     anim.walkPhaseSmooth += dt * anim.cadenceSmooth * styleMul * emerge;
     const phase = anim.walkPhaseSmooth;
 
+    // Crawl arm cycle (mais lento, movemento de arrastar)
+    anim.crawlPhase += dt * (anim.cadenceSmooth * 0.55 + 1.4) * emerge;
+    const crawlCycle = Math.sin(anim.crawlPhase);
+    const crawlCycle2 = Math.sin(anim.crawlPhase + Math.PI);
+
     const idleTarget = 1 - smoothstep(Math.min(1, realSpeed / 0.6));
     anim.idleBlend = smoothDamp(anim.idleBlend, idleTarget, 3, dt);
     const idle = anim.idleBlend;
@@ -2557,6 +2558,9 @@ function updateZombies(dt) {
     let legL = stepL * legAmp;
     let legR = stepR * legAmp;
 
+    // ============================================================
+    // TARGETS BASE (em pé)
+    // ============================================================
     let thighLTarget = legL, thighRTarget = legR;
     const kneeAmp = 0.85 * (0.4 + speedNorm * 0.6);
     thighLTarget *= (1 - anim.plantPhaseL * 0.55);
@@ -2571,6 +2575,7 @@ function updateZombies(dt) {
     let pelvisRollTarget = -Math.cos(phase) * 0.09 * speedNorm;
     let pelvisTwistTarget = stepL * 0.18 * speedNorm;
     let pelvisBobTarget = -Math.abs(Math.sin(phase)) * 0.04 * speedNorm - 0.008 * speedNorm;
+    let pelvisYTmp = P_PELVIS_Y;
     let spineTwistTarget = -stepL * 0.13 * speedNorm;
     const leanBase = isWounded ? 0.22 : 0.10;
     let spineLeanTarget = leanBase + (dist < 3 ? 0.10 : 0) + speedNorm * 0.05;
@@ -2580,10 +2585,32 @@ function updateZombies(dt) {
     let headTwistTarget = spineTwistTarget * 0.4 + stepL * 0.05 * speedNorm;
     let headPitchTarget = z.headPitchBase + speedNorm * 0.10 + (dist < 3 ? 0.15 : 0);
 
-    anim.headTwistLag = smoothDamp(anim.headTwistLag, headTwistTarget, 9, dt);
-    anim.headPitchLag = smoothDamp(anim.headPitchLag, headPitchTarget, 9, dt);
-    anim.headRollLag = smoothDamp(anim.headRollLag, headRollTarget, 9, dt);
+    // ============================================================
+    // TARGETS CRAWLING (rastejando) — blend pelo `crawl`
+    // ============================================================
+    if (crawl > 0.001) {
+      // Corpo baixo ao chão
+      pelvisYTmp = P_PELVIS_Y * (1 - crawl) + 0.28 * crawl;
+      // Tronco quase horizontal (deitado pra frente)
+      spineLeanTarget = spineLeanTarget * (1 - crawl) + 1.35 * crawl;
+      // Coxas puxadas pra trás (pernas sem uso)
+      thighLTarget = thighLTarget * (1 - crawl) + (-0.15) * crawl;
+      thighRTarget = thighRTarget * (1 - crawl) + (-0.15) * crawl;
+      // Joelhos levemente dobrados
+      kneeLTarget = kneeLTarget * (1 - crawl) + 0.35 * crawl;
+      kneeRTarget = kneeRTarget * (1 - crawl) + 0.35 * crawl;
+      // Pes quase na horizontal
+      footLTarget = footLTarget * (1 - crawl) + 0.5 * crawl;
+      footRTarget = footRTarget * (1 - crawl) + 0.5 * crawl;
+      // Pelvis sem "bob" de caminhada, mas balança um pouco com o crawl cycle
+      pelvisBobTarget = pelvisBobTarget * (1 - crawl) + (crawlCycle * 0.03) * crawl;
+      // Braços fazem ciclo de arrastar (alternado)
+      // (aplicado após o bloco de arm targets)
+      // Cabeça levantada pra frente
+      headPitchTarget = headPitchTarget * (1 - crawl) + (-0.5 + crawlCycle * 0.05) * crawl;
+    }
 
+    // Arm targets base (em pé)
     let armLXTarget, armRXTarget;
     if (z.attackWindupActive) {
       const wElapsed = now - (z.attackWindupEnd - 0.30);
@@ -2591,8 +2618,8 @@ function updateZombies(dt) {
       const windupArm = -0.6 - wT * 0.9;
       armLXTarget = windupArm;
       armRXTarget = windupArm;
-      spineLeanTarget -= wT * 0.15;
-      headPitchTarget += wT * 0.20;
+      spineLeanTarget -= wT * 0.15 * (1 - crawl);
+      headPitchTarget += wT * 0.20 * (1 - crawl);
     } else if (anim.attackPhase === 3) {
       const recT = Math.min(1, (now - anim.attackPhaseT) / 0.25);
       const recArm = -1.2 + recT * 1.2;
@@ -2610,30 +2637,49 @@ function updateZombies(dt) {
         armRXTarget = -stepR * armAmp + z.armDroopR;
       }
     }
+
+    // Blend crawling nos braços: substitui pela animação de arrastar
+    if (crawl > 0.001) {
+      // Crawl arm targets: empurrar o chão, alternado
+      // Angulo -2.0 = completamente pra frente e pra baixo, +0.2 = levantado
+      const crawlArmL = -1.9 + crawlCycle * 0.9;
+      const crawlArmR = -1.9 + crawlCycle2 * 0.9;
+      armLXTarget = armLXTarget * (1 - crawl) + crawlArmL * crawl;
+      armRXTarget = armRXTarget * (1 - crawl) + crawlArmR * crawl;
+    }
+
     const reaching2 = dist < 3.5 && !staggering && !z.attackWindupActive;
     let elbowLXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armLXTarget) * 0.4;
     let elbowRXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armRXTarget) * 0.4;
 
-    if (idle > 0.01) {
-      const inv = 1 - idle;
-      spineLeanTarget = spineLeanTarget * inv + (0.06 + breathe * 0.02) * idle;
-      spineSideTarget = spineSideTarget * inv + idleSway * idle;
-      spineTwistTarget *= inv;
-      headTwistTarget = headTwistTarget * inv + Math.sin(z.idlePhase * 0.4) * 0.15 * idle;
-      headPitchTarget = headPitchTarget * inv + (z.headPitchBase + breathe * 0.03) * idle;
-      armLXTarget = armLXTarget * inv + (z.armDroopL + breathe * 0.02) * idle;
-      armRXTarget = armRXTarget * inv + (z.armDroopR + breathe * 0.02) * idle;
-      pelvisBobTarget = pelvisBobTarget * inv + breathe * 0.008 * idle;
+    // Crawling elbow: braço quase esticado quando empurra, dobrado quando volta
+    if (crawl > 0.001) {
+      const crawlElbowL = -0.2 - Math.max(0, crawlCycle) * -0.5;
+      const crawlElbowR = -0.2 - Math.max(0, crawlCycle2) * -0.5;
+      elbowLXTarget = elbowLXTarget * (1 - crawl) + crawlElbowL * crawl;
+      elbowRXTarget = elbowRXTarget * (1 - crawl) + crawlElbowR * crawl;
+    }
+
+    if (idle > 0.01 && crawl < 0.5) {
+      const inv = (1 - idle) * (1 - crawl);
+      spineLeanTarget = spineLeanTarget * (1 - inv) + (0.06 + breathe * 0.02) * inv;
+      spineSideTarget = spineSideTarget * (1 - inv) + idleSway * inv;
+      spineTwistTarget *= (1 - inv);
+      headTwistTarget = headTwistTarget * (1 - inv) + Math.sin(z.idlePhase * 0.4) * 0.15 * inv;
+      headPitchTarget = headPitchTarget * (1 - inv) + (z.headPitchBase + breathe * 0.03) * inv;
+      armLXTarget = armLXTarget * (1 - inv) + (z.armDroopL + breathe * 0.02) * inv;
+      armRXTarget = armRXTarget * (1 - inv) + (z.armDroopR + breathe * 0.02) * inv;
+      pelvisBobTarget = pelvisBobTarget * (1 - inv) + breathe * 0.008 * inv;
     }
     if (hunt > 0.01 && !z.attackWindupActive) {
-      spineLeanTarget -= hunt * 0.08;
-      headPitchTarget += hunt * 0.25;
-      armLXTarget -= hunt * 0.25;
-      armRXTarget -= hunt * 0.25;
+      spineLeanTarget -= hunt * 0.08 * (1 - crawl);
+      headPitchTarget += hunt * 0.25 * (1 - crawl);
+      armLXTarget -= hunt * 0.25 * (1 - crawl);
+      armRXTarget -= hunt * 0.25 * (1 - crawl);
     }
 
     if (skipVisual) {
-      joints.pelvis.position.y = P_PELVIS_Y + anim.pelvisBob;
+      joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
     } else {
       springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
       springStep(anim, 'bankZ', -z.yawVel*0.05*speedNorm, K_BANK, C_BANK, dt);
@@ -2660,7 +2706,7 @@ function updateZombies(dt) {
 
       joints.pelvis.rotation.z = anim.pelvisRoll;
       joints.pelvis.rotation.y = anim.pelvisTwist;
-      joints.pelvis.position.y = P_PELVIS_Y + anim.pelvisBob;
+      joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
       joints.spineLower.rotation.x = anim.spineLean*0.4;
       joints.spineLower.rotation.z = anim.spineRoll*0.4 + anim.spineSide*0.3 + anim.bankZ;
       joints.spineUpper.rotation.y = anim.spineTwist;
@@ -2695,8 +2741,8 @@ function updateZombies(dt) {
     }
 
     if (emerge >= 0.5 && !staggering && !z.attackWindupActive && anim.attackPhase === 0
-        && now - z.lastAttackTime > z.attackCooldown
-        && dist < z.attackRange + 0.3) {
+        && now - z.lastAttackTime > z.attackCooldown * cooldownCrawl
+        && dist < z.attackRange * attackRangeCrawl + 0.3) {
       z.attackWindupActive = true;
       z.attackWindupEnd = now + 0.30;
       anim.attackPhase = 1;
@@ -2710,7 +2756,7 @@ function updateZombies(dt) {
       anim.attackPhaseT = now;
       springKick(anim, 'armLXVel', 28);
       springKick(anim, 'armRXVel', 28);
-      if (dist < z.attackRange + 0.5) {
+      if (dist < z.attackRange * attackRangeCrawl + 0.5) {
         if (state.downed) { state.downedHP -= z.damage*0.8; }
         else {
           const invuln = performance.now()/1000 < state.invulnUntil;
