@@ -7,27 +7,26 @@ let sceneRef = null;
 export function initPhysics(scene) {
   if (physicsWorld) return physicsWorld;
   sceneRef = scene;
-  physicsWorld = new CANNON.World({ gravity: new CANNON.Vec3(0, -18, 0) });
+  physicsWorld = new CANNON.World({ gravity: new CANNON.Vec3(0, -16, 0) });
   physicsWorld.broadphase = new CANNON.SAPBroadphase(physicsWorld);
   physicsWorld.allowSleep = true;
-  physicsWorld.solver.iterations = 12;
+  physicsWorld.solver.iterations = 14;
   physicsWorld.solver.tolerance = 0.001;
 
-  // Contato duro com o chão (menos deslizamento)
   const groundMat = new CANNON.Material('ground');
   const limbMat = new CANNON.Material('limb');
   physicsWorld.addContactMaterial(new CANNON.ContactMaterial(groundMat, limbMat, {
-    friction: 0.85,
-    restitution: 0.04,
+    friction: 0.9,
+    restitution: 0.02,
     contactEquationStiffness: 1e8,
     contactEquationRelaxation: 3,
   }));
   physicsWorld.addContactMaterial(new CANNON.ContactMaterial(limbMat, limbMat, {
-    friction: 0.6,
-    restitution: 0.05,
+    friction: 0.65,
+    restitution: 0.03,
   }));
-  physicsWorld.defaultContactMaterial.friction = 0.85;
-  physicsWorld.defaultContactMaterial.restitution = 0.04;
+  physicsWorld.defaultContactMaterial.friction = 0.9;
+  physicsWorld.defaultContactMaterial.restitution = 0.02;
 
   const ground = new CANNON.Body({
     type: CANNON.Body.STATIC,
@@ -73,29 +72,27 @@ export function clearPhysics() {
 }
 
 // ============================================================
-// RAGDOLL ESTILO ZUMBI BLOCKS 2
-// - Massas realistas em escala de zumbi
-// - HingeConstraints para cotovelos e joelhos (dobram 1 sentido)
-// - PointToPoint para pescoço (rotação livre)
-// - Damping angular alto (membros param de girar)
-// - Sleep rápido quando estável
-// - Atrito alto com o chão
+// RAGDOLL ZUMBI BLOCKS 2 STYLE
+// - ConeTwistConstraint em todas as juntas (limita ângulo)
+// - Massas realistas
+// - Damping angular alto
+// - Pose inicial levemente dobrada
+// - Impulso inicial suave e direcional
 // ============================================================
 
 const BONE_DEFS = {
-  torso: { mass: 22, halfExtents: [0.18, 0.22, 0.12] },
-  head:  { mass: 4.5, halfExtents: [0.11, 0.12, 0.11] },
-  armL:  { mass: 3.0, halfExtents: [0.06, 0.18, 0.06] },
-  armR:  { mass: 3.0, halfExtents: [0.06, 0.18, 0.06] },
-  legL:  { mass: 5.5, halfExtents: [0.08, 0.22, 0.08] },
-  legR:  { mass: 5.5, halfExtents: [0.08, 0.22, 0.08] },
+  torso: { mass: 20, halfExtents: [0.18, 0.22, 0.12] },
+  head:  { mass: 4.0, halfExtents: [0.11, 0.12, 0.11] },
+  armL:  { mass: 2.5, halfExtents: [0.06, 0.18, 0.06] },
+  armR:  { mass: 2.5, halfExtents: [0.06, 0.18, 0.06] },
+  legL:  { mass: 5.0, halfExtents: [0.08, 0.22, 0.08] },
+  legR:  { mass: 5.0, halfExtents: [0.08, 0.22, 0.08] },
 };
 
 const ORDER = ['torso', 'head', 'armL', 'armR', 'legL', 'legR'];
 const _v1 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 
-// Ponto de junção em coordenadas locais (aproximado)
 const JOINT_LOCAL = {
   neck:      { torso: new CANNON.Vec3(0,  0.22, 0), head:  new CANNON.Vec3(0, -0.12, 0) },
   shoulderL: { torso: new CANNON.Vec3(-0.18, 0.12, 0), armL: new CANNON.Vec3(0, 0.18, 0) },
@@ -104,7 +101,7 @@ const JOINT_LOCAL = {
   hipR:      { torso: new CANNON.Vec3( 0.09, -0.14, 0), legR: new CANNON.Vec3(0, 0.22, 0) },
 };
 
-const HINGE_AXIS = new CANNON.Vec3(1, 0, 0);
+const AXIS_UP = new CANNON.Vec3(0, 1, 0);
 
 export class Ragdoll {
   constructor(zombieMesh, hitDir, hitStrength, missingParts) {
@@ -133,7 +130,7 @@ export class Ragdoll {
     const ud = zombieMesh.userData;
     zombieMesh.updateMatrixWorld(true);
 
-    // --- 1) Extrair meshes e criar wrappers ---
+    // --- 1) Extrair meshes ---
     const rawParts = {};
     for (const key of ORDER) {
       const obj = (key === 'torso') ? ud.torso : ud[key];
@@ -164,7 +161,7 @@ export class Ragdoll {
 
     if (zombieMesh.parent) zombieMesh.parent.remove(zombieMesh);
 
-    // --- 2) Criar bodies com massa realista ---
+    // --- 2) Criar bodies ---
     for (const key of ORDER) {
       const part = rawParts[key];
       if (!part) continue;
@@ -179,10 +176,10 @@ export class Ragdoll {
         shape: new CANNON.Box(new CANNON.Vec3(hx, hy, hz)),
         position: new CANNON.Vec3(part.center.x, part.center.y, part.center.z),
         quaternion: new CANNON.Quaternion(part.quat.x, part.quat.y, part.quat.z, part.quat.w),
-        linearDamping: 0.35,
-        angularDamping: 0.55,
-        sleepSpeedLimit: 0.25,
-        sleepTimeLimit: 0.5,
+        linearDamping: 0.20,
+        angularDamping: 0.60,
+        sleepSpeedLimit: 0.3,
+        sleepTimeLimit: 0.4,
         allowSleep: true,
       });
       body.userData = { key, ragdollId: this._uid };
@@ -207,35 +204,20 @@ export class Ragdoll {
       });
     }
 
-    // --- 3) Criar constraints ---
-    const makeP2P = (parentKey, childKey, jointName) => {
+    // --- 3) Constraints com limites de ângulo (ConeTwist) ---
+    const makeConeTwist = (parentKey, childKey, jointName, angleLimit, twistLimit) => {
       const parent = this.bodyMap[parentKey];
       const child  = this.bodyMap[childKey];
       if (!parent || !child) return null;
       const jl = JOINT_LOCAL[jointName];
       if (!jl) return null;
-      const c = new CANNON.PointToPointConstraint(
-        child,  jl[childKey],
-        parent, jl[parentKey],
-        1e7
-      );
-      physicsWorld.addConstraint(c);
-      this.constraints.push(c);
-      return c;
-    };
-
-    const makeHinge = (parentKey, childKey, jointName, axisLocal) => {
-      const parent = this.bodyMap[parentKey];
-      const child  = this.bodyMap[childKey];
-      if (!parent || !child) return null;
-      const jl = JOINT_LOCAL[jointName];
-      if (!jl) return null;
-      const axis = axisLocal || HINGE_AXIS;
-      const c = new CANNON.HingeConstraint(child, parent, {
+      const c = new CANNON.ConeTwistConstraint(child, parent, {
         pivotA: jl[childKey],
         pivotB: jl[parentKey],
-        axisA: axis,
-        axisB: axis,
+        axisA: AXIS_UP,
+        axisB: AXIS_UP,
+        angle: angleLimit,
+        twistAngle: twistLimit,
         maxForce: 1e7,
       });
       physicsWorld.addConstraint(c);
@@ -243,33 +225,48 @@ export class Ragdoll {
       return c;
     };
 
-    makeP2P('torso', 'head', 'neck');
-    makeHinge('torso', 'armL', 'shoulderL', new CANNON.Vec3(1, 0, 0));
-    makeHinge('torso', 'armR', 'shoulderR', new CANNON.Vec3(1, 0, 0));
-    makeHinge('torso', 'legL', 'hipL', new CANNON.Vec3(1, 0, 0));
-    makeHinge('torso', 'legR', 'hipR', new CANNON.Vec3(1, 0, 0));
+    // Pescoço: cone pequeno (cabeça não pode ir longe)
+    makeConeTwist('torso', 'head', 'neck', 0.7, 0.5);
+    // Ombros: cone médio (braço pode abrir até ~80°)
+    makeConeTwist('torso', 'armL', 'shoulderL', 1.4, 0.9);
+    makeConeTwist('torso', 'armR', 'shoulderR', 1.4, 0.9);
+    // Quadris: cone médio, twist pequeno (perna balança mas não roda)
+    makeConeTwist('torso', 'legL', 'hipL', 1.1, 0.4);
+    makeConeTwist('torso', 'legR', 'hipR', 1.1, 0.4);
 
-    // --- 4) Impulso inicial realista ---
+    // --- 4) Pose inicial levemente curvada ---
+    // Braços para trás, pernas abertas — sensação de "colapso"
+    for (const key in this.bodyMap) {
+      const body = this.bodyMap[key];
+      if (key === 'armL') body.quaternion.setFromEuler(0, 0, -0.3);
+      else if (key === 'armR') body.quaternion.setFromEuler(0, 0, 0.3);
+      else if (key === 'legL') body.quaternion.setFromEuler(0.2, 0, 0);
+      else if (key === 'legR') body.quaternion.setFromEuler(-0.2, 0, 0);
+    }
+
+    // --- 5) Impulso inicial direcional suave ---
     const dir = hitDir.clone(); dir.y = 0;
     if (dir.lengthSq() < 0.0001) dir.set(1, 0, 0);
     dir.normalize();
 
     const strength = Math.min(2.5, Math.max(0.6, hitStrength));
-    const baseImpulse = strength * 5.5;
+    const baseImpulse = strength * 2.2;   // <<< reduzido de 5.5
 
     for (const key in this.bodyMap) {
       const body = this.bodyMap[key];
-      const w = (key === 'torso' ? 0.35 : 1.0);
+      // Torso empurra o conjunto todo, membros seguem
+      const w = (key === 'torso' ? 0.8 : 0.4);
       const imp = new CANNON.Vec3(
         dir.x * baseImpulse * body.mass * w,
-        (2.0 + Math.random() * 2.5) * body.mass * w,
+        (0.8 + Math.random() * 1.0) * body.mass * w,
         dir.z * baseImpulse * body.mass * w
       );
       body.applyImpulse(imp, new CANNON.Vec3(0, 0, 0));
+      // Rotação suave, não caótica
       body.angularVelocity.set(
-        (Math.random() - 0.5) * 5,
-        (Math.random() - 0.5) * 5,
-        (Math.random() - 0.5) * 5
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2
       );
     }
   }
@@ -368,6 +365,7 @@ export class Ragdoll {
       const wrapper = this.wrapperMap[key];
       if (!body || !wrapper) continue;
 
+      // Interpolação visual suave
       wrapper.position.x += (body.position.x - wrapper.position.x) * 0.7;
       wrapper.position.y += (body.position.y - wrapper.position.y) * 0.7;
       wrapper.position.z += (body.position.z - wrapper.position.z) * 0.7;
