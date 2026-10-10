@@ -43,18 +43,9 @@ const MAT_EYE_WHITE = matB(0xFFFFFF);
 const MAT_EYE_BLACK = matB(0x000000);
 const MAT_WOUND = matB(0xC0392B);
 
-const PLAYER_SKINS = {
-  default:   { name:'PADRÃO',      shirt:0xCC1111, pants:0x2C3E50, hair:0x2C1810, skin:0xD4A574 },
-  casual:    { name:'CASUAL',      shirt:0x3498DB, pants:0x4A4A4A, hair:0x4A2818, skin:0xD4A574 },
-  paramedic: { name:'PARAMÉDICO',  shirt:0xE74C3C, pants:0xF0F0F0, hair:0x1A0F08, skin:0xD4A574, hat:'cap_red' },
-  sheriff:   { name:'XERIFE',      shirt:0x8B5A2B, pants:0x3E2723, hair:0x4A2818, skin:0xD4A574, hat:'cap_brown', badge:true },
-  winter:    { name:'INVERNO',     shirt:0x34495E, pants:0x2C3E50, hair:0x2C1810, skin:0xD4A574, hat:'beanie_red' },
-  military:  { name:'MILITAR',     shirt:0x2E7D32, pants:0x1B5E20, hair:0x1A0F08, skin:0xD4A574, hat:'helmet_green' },
-  punk:      { name:'PUNK',        shirt:0x1A1A1A, pants:0x1A1A1A, hair:0xCC0000, skin:0xD4A574 },
-  business:  { name:'EXECUTIVO',   shirt:0xFFFFFF, pants:0x1A1A1A, hair:0x2C1810, skin:0xD4A574 },
-  ninja:     { name:'NINJA',       shirt:0x0A0A0A, pants:0x0A0A0A, hair:0x000000, skin:0xD4A574, mask:'ninja' },
-};
-
+// ============================================================
+// WEAPONS
+// ============================================================
 const WEAPONS = {
   knife:       { id:'knife',       name:'FACA',           slot:1, type:'melee',  damage:35, range:3.0, cooldown:0.55, cost:0,    color:0xBDC3C7, arc:0.35, hitCount:1, chop:0.65 },
   woodenClub:  { id:'woodenClub',  name:'PORRETE',        slot:1, type:'melee',  damage:55, range:2.8, cooldown:0.75, cost:30,   color:0x8B5A2B, arc:0.4,  hitCount:2, chop:0.15 },
@@ -65,6 +56,7 @@ const WEAPONS = {
   kukri:       { id:'kukri',       name:'KUKRI',          slot:1, type:'melee',  damage:75, range:2.8, cooldown:0.55, cost:200,  color:0xB0B0B0, arc:0.35, hitCount:2, chop:0.85 },
   pipeWrench:  { id:'pipeWrench',  name:'CHAVE GRIFO',    slot:1, type:'melee',  damage:65, range:2.9, cooldown:0.9,  cost:70,   color:0x4A4A4A, arc:0.4,  hitCount:1, chop:0.1 },
   reaperScythe:{ id:'reaperScythe',name:'FOICE DO CEIFADOR',slot:1,type:'melee', damage:180,range:4.0, cooldown:1.0,  cost:1500, color:0x1A1A1A, arc:0.6,  hitCount:5, chop:1.0 },
+
   pistol:      { id:'pistol',      name:'PISTOLA',        slot:2, type:'ranged', damage:40, range:16, cooldown:0.28, cost:40,   spread:0.02,  pellets:1, auto:false, color:0x2C3E50, magSize:12, reserveMax:120, reloadTime:1.3 },
   revolver:    { id:'revolver',    name:'REVOLVER',       slot:2, type:'ranged', damage:90, range:15, cooldown:0.75, cost:120,  spread:0.008, pellets:1, auto:false, color:0x4A4A4A, magSize:6,  reserveMax:42,  reloadTime:2.2 },
   smg:         { id:'smg',         name:'SMG',            slot:3, type:'ranged', damage:18, range:13, cooldown:0.075,cost:160,  spread:0.07,  pellets:1, auto:true,  color:0x34495E, magSize:30, reserveMax:240, reloadTime:1.9 },
@@ -78,17 +70,17 @@ const AMMO_PACKS = { pistol:60, revolver:12, smg:90, rifle:15, shotgun:15, launc
 const AMMO_PRICES = { pistol:5, revolver:15, smg:25, rifle:40, shotgun:30, launcher:100 };
 
 const SKILLS = [
-  { id:'vitality',   icon:'V', name:'VITALIDADE',   desc:'+20 HP maximo',         apply:()=>{ state.maxHealth+=20; state.health=Math.min(state.maxHealth,state.health+20); } },
-  { id:'strength',   icon:'F', name:'FORCA',        desc:'+15% dano',             apply:()=>{ state.damageMult+=0.15; } },
+  { id:'vitality',   icon:'V', name:'VITALIDADE',   desc:'+20 HP máximo',         apply:()=>{ state.maxHealth+=20; state.health=Math.min(state.maxHealth,state.health+20); } },
+  { id:'strength',   icon:'F', name:'FORÇA',        desc:'+15% dano',             apply:()=>{ state.damageMult+=0.15; } },
   { id:'reach',      icon:'A', name:'ALCANCE',      desc:'+0.3m alcance',         apply:()=>{ state.rangeBonus+=0.3; } },
   { id:'agility',    icon:'V', name:'AGILIDADE',    desc:'+8% velocidade',        apply:()=>{ state.speedMult+=0.08; } },
-  { id:'precision',  icon:'P', name:'PRECISAO',     desc:'+8% critico',           apply:()=>{ state.critChance=Math.min(0.95,state.critChance+0.08); } },
+  { id:'precision',  icon:'P', name:'PRECISÃO',     desc:'+8% crítico',           apply:()=>{ state.critChance=Math.min(0.95,state.critChance+0.08); } },
   { id:'vampirism',  icon:'S', name:'VAMPIRISMO',   desc:'+3 HP por kill',        apply:()=>{ state.lifesteal+=3; } },
   { id:'fortune',    icon:'$', name:'FORTUNA',      desc:'+50% moedas',           apply:()=>{ state.coinMult+=0.5; } },
   { id:'wisdom',     icon:'W', name:'SABEDORIA',    desc:'+30% XP',               apply:()=>{ state.xpMult+=0.3; } },
-  { id:'resistance', icon:'R', name:'RESISTENCIA',  desc:'-10% dano recebido',    apply:()=>{ state.damageReduction=Math.min(0.7,state.damageReduction+0.1); } },
-  { id:'fury',       icon:'U', name:'FURIA',        desc:'-12% tempo ataque',     apply:()=>{ state.attackSpeedMult+=0.12; } },
-  { id:'heavy',      icon:'H', name:'GOLPE PESADO', desc:'+0.5x dano critico',    apply:()=>{ state.critDamageBonus+=0.5; } },
+  { id:'resistance', icon:'R', name:'RESISTÊNCIA',  desc:'-10% dano recebido',    apply:()=>{ state.damageReduction=Math.min(0.7,state.damageReduction+0.1); } },
+  { id:'fury',       icon:'U', name:'FÚRIA',        desc:'-12% tempo ataque',     apply:()=>{ state.attackSpeedMult+=0.12; } },
+  { id:'heavy',      icon:'H', name:'GOLPE PESADO', desc:'+0.5x dano crítico',    apply:()=>{ state.critDamageBonus+=0.5; } },
   { id:'dodge',      icon:'D', name:'ESQUIVA',      desc:'-15% cooldown rolamento', apply:()=>{ state.dodgeCd*=0.85; } },
 ];
 
@@ -257,6 +249,7 @@ const invisible = new THREE.MeshBasicMaterial({ visible:false });
   world.wallColliders.push({ minX:x-w/2, maxX:x+w/2, minZ:z-d/2, maxZ:z+d/2 });
 });
 
+// Brazier
 const brazierGroup = new THREE.Group();
 {
   const base = new THREE.Mesh(geoCyl(0.7, 0.9, 1.2, 8), matL(0x3A3A3A, { flatShading:true }));
@@ -272,6 +265,7 @@ const brazierGroup = new THREE.Group();
 }
 scene.add(brazierGroup);
 
+// Vendor van
 const vendorVan = new THREE.Group();
 {
   const body = new THREE.Mesh(geoRoundBox(2.4, 1.8, 4.5, 0.15, 3), matL(0x8B5A2B));
@@ -296,6 +290,9 @@ const headgearMats = {
   gasMask: matL(0x2A2A2A), riotShield: matL(0x2C3E50, { transparent:true, opacity:0.6 }),
 };
 
+// ============================================================
+// VIEW MODEL
+// ============================================================
 const weaponGroup = new THREE.Group();
 camera.add(weaponGroup);
 scene.add(camera);
@@ -441,26 +438,23 @@ function updateWeaponViewModel(dt) {
 }
 
 // ============================================================
-// ⚠️ PLAYER — AQUI ESTAVA O BUG.
-// O objeto `player` é um plain object (não é um THREE.Object3D),
-// então ele NÃO tem `userData` por padrão. Adicionamos `userData:{}`
-// para que `player.userData._pendingDamage` funcione.
+// PLAYER (fix userData)
 // ============================================================
 const player = {
   id: nextId('p'),
   position: new THREE.Vector3(0, CONFIG.player.height, 0),
   yaw: 0,
   pitch: 0,
-  userData: { _pendingDamage: 0 },   // <-- FIX
+  userData: { _pendingDamage: 0 },
 };
 
-// ====== FUSÃO ZB2 — inicialização dos novos sistemas ======
-// (depende de `scene`, `sun`, `player` já estarem definidos)
+// ====== Inicializa sistemas ZB2 ======
 Daytime.initDaytime(scene, sun, ambientLight);
 Gore.initGore(scene);
 Extraction.initExtraction(scene, player);
+BossStages.initBossStageSystem(scene, camera, player);
 
-// Listeners de eventos ZB2
+// Listeners ZB2
 bus.on('world:blood_moon', () => {
   try { Sfx.playZombieDeath(); } catch(_) {}
   addShake(0.5);
@@ -485,13 +479,18 @@ bus.on('extraction:success', () => {
   if (document.exitPointerLock) document.exitPointerLock();
 });
 
-// ====== PROJÉTEIS DE BOSS ======
+// ============================================================
+// PROJÉTEIS DE BOSS
+// ============================================================
 const bossProjectiles = [];
 function spawnBossProjectile({ type, origin, dir, speed, damage, radius }) {
   const geo = type === 'tox'
     ? new THREE.SphereGeometry(radius, 10, 8)
     : new THREE.SphereGeometry(radius, 6, 4);
-  const color = type === 'tox' ? 0x66ff33 : 0xffdd44;
+  const color = type === 'tox' ? 0x66ff33
+              : type === 'scythe' ? 0x6060ff
+              : type === 'pellet' ? 0xffaa33
+              : 0xffdd44;
   const mat = new THREE.MeshBasicMaterial({ color });
   const m = new THREE.Mesh(geo, mat);
   m.position.copy(origin);
@@ -504,7 +503,6 @@ function updateBossProjectiles(dt) {
     const p = bossProjectiles[i];
     p.life -= dt;
     p.mesh.position.addScaledVector(p.dir, p.speed * dt);
-    // Colisão com player
     const d = p.mesh.position.distanceTo(player.position);
     if (d < 0.8) {
       state.health -= p.damage;
@@ -554,7 +552,7 @@ function resolveWallCollisions(pos, radius) {
 }
 
 // ============================================================
-// ZOMBIES
+// ZOMBIES (mesh builder completa — igual ao original)
 // ============================================================
 const zombies = [];
 const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
@@ -653,7 +651,7 @@ function buildHumanHead(head, skinMat, hairMat, wound, HR, opts = {}) {
 }
 
 function buildDonkeyHead(head, skinMat, wound, HR) {
-  const dSkin = matL(0x9E8B7A), dDark = matL(0x6B5D4F), muzzleMat = matL(0xB8A796);
+  const dSkin = matL(0x9E8B7A), muzzleMat = matL(0xB8A796);
   const skull = new THREE.Mesh(geoSphere(HR*0.95, 10), dSkin);
   skull.scale.set(1.0,1.0,1.10); head.add(skull);
   const muzzle = new THREE.Mesh(geoRoundBox(HR*1.1, HR*0.95, HR*1.5, HR*0.25), muzzleMat);
@@ -674,8 +672,7 @@ function buildDonkeyHead(head, skinMat, wound, HR) {
 }
 
 function buildJudgeHead(head, skinMat, wound, HR) {
-  const hs = new THREE.Mesh(geoSphere(HR, 12), skinMat);
-  head.add(hs);
+  const hs = new THREE.Mesh(geoSphere(HR, 12), skinMat); head.add(hs);
   const eL = new THREE.Mesh(geoBox(HR*0.40, HR*0.34, HR*0.10, 1), MAT_EYE_WHITE); eL.position.set(-HR*0.48, HR*0.18, HR*0.92); head.add(eL);
   const eR = new THREE.Mesh(geoBox(HR*0.40, HR*0.34, HR*0.10, 1), MAT_EYE_WHITE); eR.position.set(HR*0.48, HR*0.18, HR*0.92); head.add(eR);
   const pL = new THREE.Mesh(geoBox(HR*0.17, HR*0.17, HR*0.10, 1), MAT_EYE_BLACK); pL.position.set(-HR*0.48, HR*0.18, HR*0.96); head.add(pL);
@@ -763,23 +760,16 @@ function createZombieMesh(opts = {}) {
 
   const head = new THREE.Group(); head.position.y = 0.10 + 0.09*0.4 + HR*0.55; neck.add(head);
 
-  if (variant === 'reaper') {
-    buildHumanHead(head, skinMat, hairMat, wound, HR, { headgear:'hood' });
-  } else if (variant === 'riot') {
-    buildHumanHead(head, skinMat, hairMat, wound, HR, { headgear:'gasMask' });
-  } else if (variant === 'queen') {
-    buildHumanHead(head, skinMat, hairMat, wound, HR, { headgear:'crown' });
-  } else if (typeKey === 'pt_donkey') {
-    buildDonkeyHead(head, skinMat, wound, HR);
-  } else if (typeKey === 'judge') {
-    buildJudgeHead(head, skinMat, wound, HR);
-  } else {
-    buildHumanHead(head, skinMat, hairMat, wound, HR, {
-      headgear: type.headgear,
-      balaclava: type.headgear === 'balaclava',
-      hood: type.headgear === 'hood',
-    });
-  }
+  if (variant === 'reaper') buildHumanHead(head, skinMat, hairMat, wound, HR, { headgear:'hood' });
+  else if (variant === 'riot') buildHumanHead(head, skinMat, hairMat, wound, HR, { headgear:'gasMask' });
+  else if (variant === 'queen') buildHumanHead(head, skinMat, hairMat, wound, HR, { headgear:'crown' });
+  else if (typeKey === 'pt_donkey') buildDonkeyHead(head, skinMat, wound, HR);
+  else if (typeKey === 'judge') buildJudgeHead(head, skinMat, wound, HR);
+  else buildHumanHead(head, skinMat, hairMat, wound, HR, {
+    headgear: type.headgear,
+    balaclava: type.headgear === 'balaclava',
+    hood: type.headgear === 'hood',
+  });
 
   const skullBone = new THREE.Mesh(geoSphere(HR*0.85, 8), BONE_MAT); skullBone.visible = false; head.add(skullBone);
   const jawBone = new THREE.Mesh(geoRoundBox(HR*1.4, HR*0.65, HR*1.4, HR*0.15), BONE_DARK_MAT);
@@ -999,17 +989,8 @@ function spawnZombie(forceType) {
   };
   zombies.push(z);
 
-  // ====== FUSÃO ZB2 — IA e Boss Stages ======
   ZombieAI.initZombieAIState(z);
-  if (z.isBoss) {
-    z.bossStage = 1;
-    z.bossStageHealthThresholds = [1.0, 0.66, 0.33];
-    z.bossActionCooldown = 0;
-    z.bossActionState = 'idle';
-    z.bossActionTimer = 0;
-    z.teleportCooldown = 3 + Math.random() * 2;
-    z.projectiles = [];
-  }
+  if (z.isBoss) BossStages.initBoss(z, typeKey);
 
   state.zombiesAlive++;
   bus.emit(Ev.ZOMBIE_SPAWNED, { id:z.id, type:typeKey, tier:type.tier, isBoss:z.isBoss, pos:{ x:mesh.position.x, y:0, z:mesh.position.z } });
@@ -1017,7 +998,7 @@ function spawnZombie(forceType) {
 }
 
 // ============================================================
-// BLOOD
+// BLOOD (mantido para compatibilidade)
 // ============================================================
 const bloodGeoShared = new THREE.BoxGeometry(1, 1, 1);
 const bloodPool = [], bloodActive = [];
@@ -1584,8 +1565,11 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   const isHead = part === 'head';
   bus.emit(Ev.DAMAGE, { attackerId:player.id, victimId:z.id, amount:damage, part, isCrit, headshot:isHead, sourceType, weaponId:state.inventory[state.currentSlot], pos:{ x:hitPoint.x, y:hitPoint.y, z:hitPoint.z } });
   spawnBlood(hitPoint, hitDir, (isCrit||isHead) ? 25 : 12, isHead);
-  if (sourceType === 'melee') Sfx.playKnifeHitFlesh();
-  else if (sourceType !== 'explosion') Sfx.playBulletImpact();
+  if (sourceType === 'melee') {
+    const w = WEAPONS[state.inventory[state.currentSlot]];
+    if (w && w.meleeType === 'blunt') Sfx.playBluntHitFlesh();
+    else Sfx.playKnifeHitFlesh();
+  } else if (sourceType !== 'explosion') Sfx.playBulletImpact();
   showHitMarker(isCrit || isHead);
   addShake(CONFIG.shake.hit);
   applyHitReaction(z, part, hitDir, isCrit||isHead ? 1.4 : 1.0);
@@ -1605,17 +1589,12 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   }
 
   alertNearbyZombies(z, hitPoint);
-
-  // ====== FUSÃO ZB2 — alerta em grupo + stagger ======
   ZombieAI.alertNearbyZombies(zombies, hitPoint, 8);
   ZombieAI.staggerZombie(z, isCrit || isHead ? 0.55 : 0.3);
 
   if (z.health <= 0 && !z.dying) {
     z.dying = true;
-
-    // ====== FUSÃO ZB2 — Gore avançado ======
     Gore.onZombieDeath(z.mesh.position, hitDir, z.isBoss);
-
     Sfx.playZombieDeath(); Sfx.playCoin(); addShake(CONFIG.shake.kill);
     const rewardMul = state.brazierBurning ? CONFIG.brazier.rewardMult : 1;
     const cRew = Math.round(z.coinReward * rewardMul);
@@ -1736,7 +1715,10 @@ function attack(isRightClick = false) {
   }
   state.lastAttackTime = now;
   bus.emit(Ev.ATTACK, { playerId:player.id, weaponId, weaponType:weapon.type, aiming:state.aiming, pos:{ x:player.position.x, y:player.position.y, z:player.position.z }, yaw:player.yaw, pitch:player.pitch });
-  if (weapon.type === 'melee') Sfx.playKnifeSwing();
+  if (weapon.type === 'melee') {
+    if (weapon.meleeType === 'blunt') Sfx.playBluntSwing();
+    else Sfx.playKnifeSwing();
+  }
   else if (weaponId === 'pistol') Sfx.playPistol();
   else if (weaponId === 'revolver') Sfx.playRevolver();
   else if (weaponId === 'smg') Sfx.playSMG();
@@ -1832,7 +1814,8 @@ function attack(isRightClick = false) {
 
     if (hitCount > 0) {
       state.hitstopUntil = performance.now() + CONFIG.melee.hitstop * 1000;
-      Sfx.playKnifeHitFlesh();
+      if (weapon.meleeType === 'blunt') Sfx.playBluntHitFlesh();
+      else Sfx.playKnifeHitFlesh();
     }
     const camPos = camera.position.clone();
     for (let ri = ragdolls.length - 1; ri >= 0; ri--) {
@@ -2011,10 +1994,7 @@ function checkWaveComplete() {
     state.brazierFuel = Math.min(CONFIG.brazier.maxFuel, state.brazierFuel + CONFIG.brazier.fuelPerWave);
     showWaveBanner(`+${coinBonus}$  +${healed}HP${ammoGiven ? '  +' + ammoGiven + 'AMMO' : ''}  — PROXIMA EM ${CONFIG.wave.breakTime}s`);
     updateHUD();
-
-    // ====== FUSÃO ZB2 — Extraction ======
     Extraction.trySpawnExtraction(state.wave);
-
     if (state.waveStartTimeoutId !== null) clearTimeout(state.waveStartTimeoutId);
     state.waveStartTimeoutId = setTimeout(() => {
       state.waveStartTimeoutId = null;
@@ -2244,6 +2224,7 @@ function updateVendorVan() {
 // ============================================================
 // INPUT
 // ============================================================
+const _lastFootstepPos = new THREE.Vector3();
 document.addEventListener('keydown', e => {
   state.keys[e.code] = true;
   if (e.code === 'Digit1') switchToSlot(1);
@@ -2277,7 +2258,9 @@ document.addEventListener('keydown', e => {
     if (nearWeapon && !nearWeapon.bought) tryBuyWeapon(); else openShop();
   }
   if (e.code === 'Space' && state.running && !state.downed && !state.paused) {
-    e.preventDefault(); tryDodge();
+    e.preventDefault();
+    Sfx.playJump();
+    tryDodge();
   }
 });
 document.addEventListener('keyup', e => {
@@ -2328,6 +2311,7 @@ function tryDodge() {
   state.stamina -= 25;
   const forward = new THREE.Vector3(); camera.getWorldDirection(forward); forward.y = 0; forward.normalize();
   state.dodgeDir.copy(forward);
+  Sfx.playRoll();
 }
 
 function isMobile() { return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || 'ontouchstart' in window; }
@@ -2424,6 +2408,13 @@ function updatePlayer(dt) {
   if (state.isMoving) _moveV.normalize();
   player.position.addScaledVector(_moveV, speed * dt);
 
+  // Footsteps
+  const moved = player.position.distanceTo(_lastFootstepPos);
+  if (state.isMoving && moved > 0.9) {
+    Sfx.playFootstep();
+    _lastFootstepPos.copy(player.position);
+  }
+
   resolveWallCollisions(player.position, CONFIG.player.radius);
   const lim = CONFIG.arena.size/2 - 1;
   player.position.x = Math.max(-lim, Math.min(lim, player.position.x));
@@ -2451,13 +2442,13 @@ function updatePlayer(dt) {
     state.shake *= Math.pow(0.001, dt);
   } else { camera.rotation.z = 0; state.shake = 0; }
 
-  // ====== FUSÃO ZB2 — dano pendente de bosses ======
   if (player.userData._pendingDamage) {
     const dmg = player.userData._pendingDamage;
     player.userData._pendingDamage = 0;
     if (!state.downed && performance.now()/1000 >= state.invulnUntil) {
       state.health -= dmg;
       showDamageFlash();
+      Sfx.playPlayerHurt();
       updateHUD();
       if (state.health <= 0) enterDownedState();
     }
@@ -2519,7 +2510,6 @@ function updateZombies(dt) {
     const z = zombies[i];
     if (z.health <= 0) continue;
 
-    // ====== FUSÃO ZB2 — IA state machine ======
     ZombieAI.updateZombieAIState(z, player, dt);
     const aiMult = ZombieAI.getAIMultiplier(z);
 
@@ -2541,7 +2531,6 @@ function updateZombies(dt) {
     anim.crawlBlend = smoothDamp(anim.crawlBlend, crawlTarget, 4, dt);
     const crawl = anim.crawlBlend;
     z.crawling = crawl > 0.5;
-    if (lostBothLegs) z._crawlAnnounced = true;
 
     const targetAlertBlend = alerted ? 1 : 0;
     anim.alertBlend += (targetAlertBlend - anim.alertBlend) * Math.min(1, dt*4);
@@ -3074,6 +3063,25 @@ function updateHUD() {
       reserveEl.textContent = 'RESERVA ' + am.reserve;
     }
   }
+  updateBossHUD();
+}
+
+const BOSS_NAMES = { riot: 'MOTIM', queen: 'RAINHA', reaper: 'CEIFADOR' };
+function updateBossHUD() {
+  const el = document.getElementById('boss-hud');
+  if (!el) return;
+  let active = null;
+  for (const z of zombies) {
+    if (z.isBoss && z.health > 0 && !z.dying) { active = z; break; }
+  }
+  if (active) {
+    el.classList.remove('hidden');
+    document.getElementById('boss-name').textContent = BOSS_NAMES[active.typeKey] || 'BOSS';
+    document.getElementById('boss-fill').style.width = (100 * active.health / active.maxHealth) + '%';
+    document.getElementById('boss-stage').textContent = 'ESTÁGIO ' + (active.bossStage || 1);
+  } else {
+    el.classList.add('hidden');
+  }
 }
 
 // ============================================================
@@ -3112,10 +3120,9 @@ function animate() {
     updateExplosions(dt);
     updateNoiseRipples(dt);
 
-    // ====== FUSÃO ZB2 — updates dos novos sistemas ======
     Daytime.updateDaytime(dt);
     Gore.updateGore(dt);
-    BossStages.updateBossStages(dt, zombies, scene, player, spawnBossProjectile);
+    BossStages.updateBossStages(dt, zombies, spawnBossProjectile);
     Extraction.updateExtraction(dt);
     updateBossProjectiles(dt);
 
