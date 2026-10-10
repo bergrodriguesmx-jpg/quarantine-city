@@ -1160,6 +1160,8 @@ function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
   if (ragdolls.length >= CONFIG.ragdoll.maxActive) { const oldest = ragdolls.shift(); oldest.dispose(); }
   ragdolls.push(new Ragdoll(mesh, hitDir, hitStrength, missingParts));
 }
+
+// ===== FASE 5.5: membro INTEIRO voa, corpo ganha toco de sangue =====
 function detachLimb(z, key, hitDir) {
   const ud = z.mesh.userData;
   let limbObj = null;
@@ -1169,41 +1171,60 @@ function detachLimb(z, key, hitDir) {
   else if (key === 'legL') limbObj = ud.legL;
   else if (key === 'legR') limbObj = ud.legR;
   if (!limbObj || z.dismembered[key]) return;
+
   z.mesh.updateMatrixWorld(true);
   limbObj.getWorldPosition(_wpTmp);
   limbObj.getWorldQuaternion(_wqTmp);
-  if (key === 'head') {
-    ud.skullBone.visible = true; ud.jawBone.visible = true; ud.sk1.visible = true; ud.sk2.visible = true;
-    ud.skTeeth.forEach(t => t.visible = true);
-    limbObj.children.forEach(c => {
-      if (c === ud.skullBone || c === ud.jawBone || c === ud.sk1 || c === ud.sk2) return;
-      if (ud.skTeeth.includes(c)) return;
-      if (c.isMesh) c.visible = false;
-    });
-  } else {
-    if (limbObj.userData.outerMeshes) limbObj.userData.outerMeshes.forEach(m => m.visible = false);
-    if (limbObj.userData.boneMeshes) limbObj.userData.boneMeshes.forEach(m => m.visible = true);
-  }
   z.dismembered[key] = true;
-  const bt = ud.bodyType || BODY_TYPES[1];
-  let size, color;
-  if (key === 'head') { size = new THREE.Vector3(0.4, 0.4, 0.4); color = ud.skinColor; }
-  else if (key === 'armL' || key === 'armR') { size = new THREE.Vector3(bt.arm * 1.2, 1.0, bt.arm * 1.2); color = ud.shirtColor; }
-  else { size = new THREE.Vector3(bt.leg * 1.1, 1.1, bt.leg * 1.1); color = ud.pantsColor; }
-  const geo = geoBox(size.x, size.y, size.z, 2);
-  const mat = zMat(color);
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.copy(_wpTmp);
-  mesh.quaternion.copy(_wqTmp);
-  mesh.castShadow = true;
-  scene.add(mesh);
-  const piece = new Debris(mesh, size, 1.2, CONFIG.dismember.limbLife);
+
+  // 1) Toco de sangue no lugar onde o membro estava (fica preso ao corpo)
+  const parent = limbObj.parent;
+  const stumpR = key === 'head' ? 0.065
+    : (key === 'armL' || key === 'armR') ? 0.055
+    : 0.075;
+  const stumpMat = zMat(0x5A0000);
+  const stump = new THREE.Mesh(geoSphere(stumpR, 10), stumpMat);
+  stump.position.copy(limbObj.position);
+  stump.scale.set(1, 0.8, 1);
+  stump.castShadow = true;
+  parent.add(stump);
+
+  // 2) Move o membro INTEIRO (com roupa + pele) para a cena
+  limbObj.rotation.set(0, 0, 0);
+  if (limbObj.parent) limbObj.parent.remove(limbObj);
+  scene.add(limbObj);
+  limbObj.position.copy(_wpTmp);
+  limbObj.quaternion.copy(_wqTmp);
+  limbObj.updateMatrixWorld(true);
+
+  // 3) Envolve num wrapper pra física
+  const box = new THREE.Box3().setFromObject(limbObj);
+  if (box.isEmpty()) { limbObj.visible = false; return; }
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const wrapper = new THREE.Group();
+  wrapper.position.copy(center);
+  scene.add(wrapper);
+  limbObj.position.sub(center);
+  wrapper.add(limbObj);
+
+  // 4) Física + empurrão direcional
+  const piece = new Debris(wrapper, size, 1.2, CONFIG.dismember.limbLife);
   piece.key = key;
   const dir = hitDir.clone().normalize();
   const speed = CONFIG.dismember.limbSpeed;
-  piece.velocity.set(dir.x * speed + (Math.random() - 0.5) * 6, speed * 0.8 + Math.random() * 5, dir.z * speed + (Math.random() - 0.5) * 6);
-  piece.angularVelocity.set((Math.random() - 0.5) * 35, (Math.random() - 0.5) * 35, (Math.random() - 0.5) * 35);
+  piece.velocity.set(
+    dir.x * speed + (Math.random() - 0.5) * 6,
+    speed * 0.8 + Math.random() * 5,
+    dir.z * speed + (Math.random() - 0.5) * 6
+  );
+  piece.angularVelocity.set(
+    (Math.random() - 0.5) * 35,
+    (Math.random() - 0.5) * 35,
+    (Math.random() - 0.5) * 35
+  );
   flyingLimbs.push(piece);
+
   spawnBlood(_wpTmp, dir, 35, true);
   spawnBlood(_wpTmp, null, 15, true);
   bus.emit(Ev.DISMEMBER, { zombieId: z.id, part: key, pos: { x: _wpTmp.x, y: _wpTmp.y, z: _wpTmp.z } });
@@ -1298,7 +1319,7 @@ function checkDebrisZombieCollision() {
 }
 
 // ============================================================
-// RAYCAST — com broadphase (FASE 3)
+// RAYCAST — com broadphase
 // ============================================================
 function rayAABB(origin, dir, min, max, maxDist) {
   let tMin = 0, tMax = maxDist;
@@ -1342,9 +1363,6 @@ function getZombiePartBoxes(z, out) {
 }
 const _partBoxesCache = [];
 
-// Broadphase: filtra zumbis que podem ser atingidos por um tiro.
-// Rejeita por distância (XZ) e por direção (fora de um cone).
-// Atualiza matriz mundial 1× por zumbi (em vez de 1× por pellet).
 function collectRaycastCandidates(origin, forward, maxDist) {
   const out = [];
   const maxDPlusR = maxDist + 1.5;
@@ -1512,7 +1530,6 @@ function updateTracers(dt) {
 }
 const explosions = [];
 
-// ===== FASE 5: reação em área a explosão =====
 function reactToExplosion(pos, radius) {
   const now = performance.now() / 1000;
   const r2 = radius * radius;
@@ -1547,7 +1564,6 @@ function spawnExplosion(pos) {
   spawnBlood(pos, null, 30, true);
   addShake(CONFIG.shake.explosion);
   const radius = CONFIG.launcher.explosionRadius;
-  // ===== FASE 5: zumbis perto reagem à explosão (flinch direcional + alerta) =====
   reactToExplosion(pos, radius * 1.5);
   const baseDamage = WEAPONS.launcher.damage * state.damageMult;
   const snapshot = [...zombies];
@@ -1752,7 +1768,6 @@ function attack() {
   const forward = new THREE.Vector3(); camera.getWorldDirection(forward);
   const range = weapon.range + state.rangeBonus;
   const baseSpread = state.aiming ? weapon.spread * 0.25 : weapon.spread;
-  // ===== FASE 3: broadphase 1× por tiro (não por pellet) =====
   const candidates = collectRaycastCandidates(origin, forward, range);
   for (let i = 0; i < weapon.pellets; i++) {
     const dir = forward.clone();
@@ -2330,17 +2345,17 @@ function resolvePlayerZombieCollision() {
 }
 
 // ============================================================
-// ZOMBIE UPDATE — FASE 5 (idle, wind-up)
+// ZOMBIE UPDATE — FASE 5.5 (springs mais soltas)
 // ============================================================
-const K_THIGH = 110, C_THIGH = 14;
-const K_KNEE = 90, C_KNEE = 12;
-const K_FOOT = 130, C_FOOT = 12;
-const K_PELVIS = 130, C_PELVIS = 15;
-const K_SPINE = 140, C_SPINE = 16;
-const K_HEAD = 180, C_HEAD = 17;
-const K_ARM = 95, C_ARM = 13;
-const K_ELBOW = 110, C_ELBOW = 12;
-const K_BANK = 60, C_BANK = 8;
+const K_THIGH = 85,  C_THIGH = 9.5;
+const K_KNEE = 75,   C_KNEE = 8.5;
+const K_FOOT = 110,  C_FOOT = 9;
+const K_PELVIS = 100, C_PELVIS = 10;
+const K_SPINE = 110, C_SPINE = 11;
+const K_HEAD = 140,  C_HEAD = 12;
+const K_ARM = 70,    C_ARM = 8.5;
+const K_ELBOW = 85,  C_ELBOW = 8.5;
+const K_BANK = 45,   C_BANK = 6;
 
 function updateZombies(dt) {
   const now = performance.now() / 1000;
@@ -2409,7 +2424,6 @@ function updateZombies(dt) {
     const walkStyle = z.walkStyle;
     const shuffling = dist < 3.0;
 
-    // ===== FASE 5: idle blend =====
     const idleTarget = speedNorm < 0.08 ? 1 : 0;
     anim.idleBlend += (idleTarget - anim.idleBlend) * Math.min(1, dt * 3);
     const idle = anim.idleBlend;
@@ -2417,8 +2431,9 @@ function updateZombies(dt) {
     const breathe = Math.sin(z.idlePhase) * 0.5 + Math.sin(z.idlePhase * 0.37 + 1.3) * 0.5;
     const idleSway = Math.sin(z.idlePhase * 0.6 + walkStyle * 6.28) * 0.02;
 
+    // ===== FASE 5.5: cadência mais lenta (passos maiores, mais cambaleio) =====
     const strideLength = 0.85;
-    const idealCadence = (actualSpeed / strideLength) * Math.PI * 2 + 1.2;
+    const idealCadence = (actualSpeed / strideLength) * Math.PI * 2 + 0.8;
     const styleMul = (1 - walkStyle * 0.35) * (shuffling ? 1.35 : 1.0) * (alerted ? 1.15 : 1);
     z.walkPhase += dt * idealCadence * styleMul * emerge;
     const phase = z.walkPhase;
@@ -2446,14 +2461,15 @@ function updateZombies(dt) {
     let footLTarget = -stepL * 0.35 * (1 + walkStyle * 0.4);
     let footRTarget = -stepR * 0.35 * (1 + walkStyle * 0.4);
 
-    let pelvisRollTarget = -Math.cos(phase) * 0.06 * speedNorm;
-    let pelvisTwistTarget = stepL * 0.14 * speedNorm;
-    let pelvisBobTarget = -Math.abs(Math.sin(phase)) * 0.035 * speedNorm - 0.008 * speedNorm;
+    // ===== FASE 5.5: sway lateral amplificado =====
+    let pelvisRollTarget = -Math.cos(phase) * 0.10 * speedNorm;
+    let pelvisTwistTarget = stepL * 0.20 * speedNorm;
+    let pelvisBobTarget = -Math.abs(Math.sin(phase)) * 0.05 * speedNorm - 0.010 * speedNorm;
 
     let spineTwistTarget = -stepL * 0.14 * speedNorm;
     const leanBase = isWounded ? 0.22 : 0.10;
     let spineLeanTarget = leanBase + (dist < 3 ? 0.10 : 0) + speedNorm * 0.06;
-    let spineSideTarget = Math.cos(phase) * 0.04 * speedNorm;
+    let spineSideTarget = Math.cos(phase) * 0.07 * speedNorm;
     let spineRollTarget = 0;
 
     let headRollTarget = z.headLoll + Math.cos(phase) * 0.08 * speedNorm + anim.bankZ * 2.5;
@@ -2476,7 +2492,6 @@ function updateZombies(dt) {
     let elbowLXTarget = reaching ? -0.9 + Math.sin(phase * 0.8) * 0.1 : -0.15 - Math.max(0, armLXTarget) * 0.4;
     let elbowRXTarget = reaching ? -0.9 + Math.sin(phase * 0.8 + 1.5) * 0.1 : -0.15 - Math.max(0, armRXTarget) * 0.4;
 
-    // ===== FASE 5: blend idle (parado vs andando) =====
     if (idle > 0.01) {
       const inv = 1 - idle;
       spineLeanTarget = spineLeanTarget * inv + (0.06 + breathe * 0.02) * idle;
@@ -2499,7 +2514,6 @@ function updateZombies(dt) {
       footRTarget *= inv;
     }
 
-    // ===== blend de pose "hunting" =====
     if (hunt > 0.01) {
       spineLeanTarget -= hunt * 0.08;
       headPitchTarget += hunt * 0.25;
@@ -2616,7 +2630,6 @@ function updateZombies(dt) {
       continue;
     }
 
-    // ===== FASE 5: ataque com wind-up (telegrafado) =====
     if (emerge >= 0.5 && !staggering && !z.attackWindupActive
         && now - z.lastAttackTime > z.attackCooldown
         && dist < z.attackRange + 0.3) {
@@ -2653,7 +2666,6 @@ function updateZombies(dt) {
     resolveWallCollisions(z.mesh.position, z.radius);
   }
 
-  // Colisão zumbi-zumbi
   for (let i = 0; i < zombies.length; i++) {
     for (let j = i + 1; j < zombies.length; j++) {
       const a = zombies[i], b = zombies[j];
