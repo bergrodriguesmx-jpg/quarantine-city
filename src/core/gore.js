@@ -1,50 +1,60 @@
 import * as THREE from 'three';
 
-// ============================================================
-// GORE SYSTEM — gibs, blood fountains, blood pools
-// Ported / inspired by Zumbi Blocks 2's Gore.cs + BloodFountainManager
-// ============================================================
+const gibs = [];
+const bloodPools = [];
+const fountains = [];
+const MAX_GIBS = 60;
+const MAX_POOLS = 20;
 
-const gibs = [];         // pedaços voando
-const bloodPools = [];   // poças no chão
-const fountains = [];    // jatos contínuos
-const MAX_GIBS = 40;
-const MAX_POOLS = 12;
+const GIB_GEO_SMALL = new THREE.BoxGeometry(0.12, 0.12, 0.12);
+const GIB_GEO_BIG = new THREE.BoxGeometry(0.22, 0.22, 0.22);
+const GIB_MATS = [
+  new THREE.MeshLambertMaterial({ color: 0x8B0000 }),
+  new THREE.MeshLambertMaterial({ color: 0xC0392B }),
+  new THREE.MeshLambertMaterial({ color: 0x6B0000 }),
+];
 
-const GIB_GEO = new THREE.BoxGeometry(0.22, 0.22, 0.22);
-const GIB_MAT = new THREE.MeshLambertMaterial({ color: 0x8B0000 });
+// Curva de "squirt" — copiada do conceito de AnimationCurve squirtCurve do C#
+function squirtCurve(t) {
+  // Bate forte no começo, decai
+  return Math.pow(1 - t, 1.6);
+}
 
 let sceneRef = null;
 
-export function initGore(scene) {
-  sceneRef = scene;
-}
+export function initGore(scene) { sceneRef = scene; }
 
-export function spawnGib(position, direction, force = 1) {
+export function spawnGib(position, direction, force = 1, type = 'small') {
   if (!sceneRef || gibs.length >= MAX_GIBS) return;
-  const mat = GIB_MAT.clone();
-  mat.color.setHex(Math.random() > 0.5 ? 0x8B0000 : 0xC0392B);
-  const m = new THREE.Mesh(GIB_GEO, mat);
+  const isBig = type === 'big' || type === 'head';
+  const geo = isBig ? GIB_GEO_BIG : GIB_GEO_SMALL;
+  const mat = GIB_MATS[(Math.random() * GIB_MATS.length) | 0].clone();
+  const m = new THREE.Mesh(geo, mat);
   m.position.copy(position);
+  const speedMul = isBig ? 0.7 : 1.0;
   const vel = new THREE.Vector3(
-    direction.x * force * 6 + (Math.random()-0.5)*4,
-    3 + Math.random()*5,
-    direction.z * force * 6 + (Math.random()-0.5)*4
+    direction.x * force * 6 * speedMul + (Math.random() - 0.5) * 4,
+    3 + Math.random() * 5,
+    direction.z * force * 6 * speedMul + (Math.random() - 0.5) * 4,
   );
   const angVel = new THREE.Vector3(
-    (Math.random()-0.5)*20, (Math.random()-0.5)*20, (Math.random()-0.5)*20
+    (Math.random() - 0.5) * 20,
+    (Math.random() - 0.5) * 20,
+    (Math.random() - 0.5) * 20,
   );
   sceneRef.add(m);
-  gibs.push({ mesh: m, vel, angVel, life: 8 });
+  gibs.push({ mesh: m, vel, angVel, life: isBig ? 10 : 6 });
 }
 
-export function spawnBloodFountain(position, direction, duration = 2) {
+export function spawnBloodFountain(position, direction, duration = 2, freq = 55) {
   if (!sceneRef) return;
   fountains.push({
     position: position.clone(),
     direction: direction.clone().normalize(),
     timeLeft: duration,
+    totalTime: duration,
     tick: 0,
+    freq,
   });
 }
 
@@ -63,6 +73,7 @@ export function spawnBloodPool(position, size = 1) {
   });
   const m = new THREE.Mesh(geo, mat);
   m.rotation.x = -Math.PI / 2;
+  m.rotation.z = Math.random() * Math.PI * 2;
   m.position.set(position.x, 0.03, position.z);
   m.renderOrder = 1;
   sceneRef.add(m);
@@ -70,7 +81,7 @@ export function spawnBloodPool(position, size = 1) {
 }
 
 export function updateGore(dt) {
-  // Gibs
+  // Gibs com gravidade
   for (let i = gibs.length - 1; i >= 0; i--) {
     const g = gibs[i];
     g.vel.y -= 22 * dt;
@@ -92,23 +103,26 @@ export function updateGore(dt) {
     }
   }
 
-  // Fountains
+  // Fountains com curva tipo squirt
   for (let i = fountains.length - 1; i >= 0; i--) {
     const f = fountains[i];
     f.timeLeft -= dt;
-    f.tick += dt;
-    if (f.tick > 0.05) {
-      f.tick = 0;
-      const dir = f.direction.clone().multiplyScalar(0.6);
-      dir.x += (Math.random()-0.5)*0.6;
-      dir.z += (Math.random()-0.5)*0.6;
-      spawnGib(f.position, dir, 0.4);
-      if (Math.random() < 0.3) spawnBloodPool(f.position, 0.4);
+    const t = 1 - f.timeLeft / f.totalTime; // 0 → 1
+    const curve = squirtCurve(t);
+    f.tick += dt * f.freq * curve;
+    while (f.tick > 1) {
+      f.tick -= 1;
+      const dir = f.direction.clone().multiplyScalar(0.7);
+      dir.x += (Math.random() - 0.5) * 0.9;
+      dir.z += (Math.random() - 0.5) * 0.9;
+      dir.y = 0.5 + Math.random() * 0.8;
+      spawnGib(f.position, dir, 0.45, 'small');
+      if (Math.random() < 0.25) spawnBloodPool(f.position, 0.35);
     }
     if (f.timeLeft <= 0) fountains.splice(i, 1);
   }
 
-  // Pools fade
+  // Poças com fade
   for (let i = bloodPools.length - 1; i >= 0; i--) {
     const p = bloodPools[i];
     p.life -= dt;
@@ -122,10 +136,12 @@ export function updateGore(dt) {
   }
 }
 
-// Chamado quando um zumbi morre — combina gibs + fountain + pool
 export function onZombieDeath(position, hitDir, isBoss) {
-  const count = isBoss ? 14 : 6;
-  for (let i = 0; i < count; i++) spawnGib(position, hitDir, 1.5);
-  spawnBloodFountain(position, hitDir, isBoss ? 4 : 1.8);
-  spawnBloodPool(position, isBoss ? 2 : 1);
+  const count = isBoss ? 20 : 8;
+  for (let i = 0; i < count; i++) {
+    const type = Math.random() < 0.25 ? 'big' : 'small';
+    spawnGib(position, hitDir, 1.5, type);
+  }
+  spawnBloodFountain(position, hitDir, isBoss ? 5 : 2.2, isBoss ? 80 : 55);
+  spawnBloodPool(position, isBoss ? 2.2 : 1);
 }
