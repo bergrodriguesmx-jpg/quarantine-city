@@ -12,12 +12,10 @@ import { SpatialGrid } from './src/core/spatial-grid.js';
 import { geoBox, geoSphere, geoCyl, geoTorus, matL, matB, zMat } from './src/core/geo-cache.js';
 import { computePartLocalBoxes } from './src/core/part-box.js';
 import { enrichWeapons, MELEE_TYPES, ZOMBIE_LORE, formatWeaponTooltip } from './src/core/lore.js';
+import { initPhysics, stepPhysics, addStaticBox, clearPhysics, Ragdoll as PhysicsRagdoll } from './src/core/ragdoll-physics.js';
 
 bus.setAdapter(new LocalAdapter());
 
-// ============================================================
-// ROUNDED BOX
-// ============================================================
 const roundedBoxCache = new Map();
 function geoRoundBox(w, h, d, radius = 0.03, seg = 3) {
   const k = `rb:${w.toFixed(3)}:${h.toFixed(3)}:${d.toFixed(3)}:${radius.toFixed(3)}`;
@@ -25,9 +23,7 @@ function geoRoundBox(w, h, d, radius = 0.03, seg = 3) {
   if (!g) {
     const r = Math.min(radius, Math.min(w, h, d) * 0.45);
     const minDim = Math.min(w, h, d);
-    g = minDim < 0.08
-      ? new THREE.BoxGeometry(w, h, d)
-      : new RoundedBoxGeometry(w, h, d, 2, r);
+    g = minDim < 0.08 ? new THREE.BoxGeometry(w, h, d) : new RoundedBoxGeometry(w, h, d, 2, r);
     roundedBoxCache.set(k, g);
   }
   return g;
@@ -38,9 +34,6 @@ const MAT_EYE_BLACK = matB(0x000000);
 const MAT_WOUND = matB(0xC0392B);
 const MAT_BONE_TEETH = matB(0xE8E0D0);
 
-// ============================================================
-// PLAYER SKINS
-// ============================================================
 const PLAYER_SKINS = {
   default:   { name:'PADRÃO',      shirt:0xCC1111, pants:0x2C3E50, hair:0x2C1810, skin:0xD4A574 },
   casual:    { name:'CASUAL',      shirt:0x3498DB, pants:0x4A4A4A, hair:0x4A2818, skin:0xD4A574 },
@@ -53,12 +46,9 @@ const PLAYER_SKINS = {
   ninja:     { name:'NINJA',       shirt:0x0A0A0A, pants:0x0A0A0A, hair:0x000000, skin:0xD4A574, mask:'ninja' },
 };
 
-// ============================================================
-// WEAPONS
-// ============================================================
 const WEAPONS = {
   knife:       { id:'knife',       name:'FACA',           slot:1, type:'melee',  damage:35, range:3.0, cooldown:0.55, cost:0,    color:0xBDC3C7, arc:0.35, hitCount:1, chop:0.65 },
-  woodenClub:  { id:'woodenClub',  name:'PORRETE',        slot:1, type:'melee',  damage:55, range:2.8, cooldown:0.75, cost:30,   color:0x8B5A2B, arc:0.4,  hitCount:2, chop:0.15, legBreak:0.5 },
+  woodenClub:  { id:'woodenClub',  name:'PORRETE',        slot:1, type:'melee',  damage:55, range:2.8, cooldown:0.75, cost:30,   color:0x8B5A2B, arc:0.4,  hitCount:2, chop:0.15 },
   pipe:        { id:'pipe',        name:'CANO DE FERRO',  slot:1, type:'melee',  damage:60, range:3.2, cooldown:0.65, cost:50,   color:0x7F8C8D, arc:0.35, hitCount:2, chop:0.25 },
   cleaver:     { id:'cleaver',     name:'CUTELO',         slot:1, type:'melee',  damage:70, range:2.5, cooldown:0.7,  cost:80,   color:0xC0C0C0, arc:0.3,  hitCount:1, chop:0.8 },
   shovel:      { id:'shovel',      name:'PÁ',             slot:1, type:'melee',  damage:45, range:3.5, cooldown:0.8,  cost:60,   color:0x5D4030, arc:0.35, hitCount:2, chop:0.1, push:true },
@@ -93,9 +83,6 @@ const SKILLS = [
   { id:'dodge',      icon:'D', name:'ESQUIVA',      desc:'-15% cooldown rolamento', apply:()=>{ state.dodgeCd*=0.85; } },
 ];
 
-// ============================================================
-// ZOMBIE TYPES
-// ============================================================
 const ZOMBIE_TYPES = {
   pt:        { tier:1, hpMul:1.00, dmgMul:1.00, speedMul:1.00, xpMul:1.00, coinMul:1.00, scale:1.00, weight:42, attackRange:1.6, cooldown:1.20, tint:0xffffff, variant:'normal' },
   pt_donkey: { tier:1, hpMul:0.75, dmgMul:0.85, speedMul:1.35, xpMul:1.30, coinMul:1.30, scale:0.95, weight:28, attackRange:1.4, cooldown:0.95, tint:0xffeebb, variant:'donkey' },
@@ -160,10 +147,6 @@ const state = {
   vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
   currentBoss:null,
 };
-
-// ============================================================
-// 3D SETUP
-// ============================================================
 const container = document.getElementById('game-container');
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xC5E0F5, 50, 130);
@@ -198,6 +181,15 @@ scene.add(sun);
 }
 
 const world = buildWorld(scene, CONFIG.arena.size);
+
+// ===== Física (Cannon) =====
+initPhysics(scene);
+for (const box of world.wallColliders) {
+  addStaticBox(box.minX, box.maxX, box.minZ, box.maxZ, 4);
+}
+for (const box of world.furnitureColliders) {
+  addStaticBox(box.minX, box.maxX, box.minZ, box.maxZ, 1.2);
+}
 
 scene.traverse(obj => {
   if (obj.isMesh && !obj.userData.dynamic && obj !== sun) {
@@ -255,9 +247,6 @@ const invisible = new THREE.MeshBasicMaterial({ visible:false });
   world.wallColliders.push({ minX:x-w/2, maxX:x+w/2, minZ:z-d/2, maxZ:z+d/2 });
 });
 
-// ============================================================
-// BRAZIER
-// ============================================================
 const brazierGroup = new THREE.Group();
 {
   const base = new THREE.Mesh(geoCyl(0.7, 0.9, 1.2, 8), matL(0x3A3A3A, { flatShading:true }));
@@ -274,9 +263,6 @@ const brazierGroup = new THREE.Group();
 }
 scene.add(brazierGroup);
 
-// ============================================================
-// VENDOR VAN
-// ============================================================
 const vendorVan = new THREE.Group();
 {
   const body = new THREE.Mesh(geoRoundBox(2.4, 1.8, 4.5, 0.15, 3), matL(0x8B5A2B));
@@ -294,9 +280,6 @@ const vendorVan = new THREE.Group();
 }
 scene.add(vendorVan);
 
-// ============================================================
-// HEADGEAR MATS
-// ============================================================
 const headgearMats = {
   cap_red: matL(0xE74C3C), cap_brown: matL(0x5D4030), cap_black: matL(0x1A1A1A),
   helmet_yellow: matL(0xFFCC00), helmet_green: matL(0x2E7D32), beanie_red: matL(0xCC1111),
@@ -304,9 +287,6 @@ const headgearMats = {
   gasMask: matL(0x2A2A2A), riotShield: matL(0x2C3E50, { transparent:true, opacity:0.6 }),
 };
 
-// ============================================================
-// VIEWMODELS
-// ============================================================
 const weaponGroup = new THREE.Group();
 camera.add(weaponGroup);
 scene.add(camera);
@@ -318,7 +298,6 @@ const MAT = {
   skin:matL(0xD4A574), skinDark:matL(0xC09065), nail:matL(0xE8C8A0),
   blood:matL(0x6B0000),
 };
-
 function buildViewModel(weaponId) {
   if (currentViewModel) { weaponGroup.remove(currentViewModel); currentViewModel = null; }
   const g = new THREE.Group();
@@ -488,9 +467,6 @@ function resolveWallCollisions(pos, radius) {
   resolveCollidersAgainstBoxes(pos, radius, world.furnitureColliders);
 }
 
-// ============================================================
-// ZUMBIS
-// ============================================================
 const zombies = [];
 const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
 const SKIN_COLORS = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
@@ -505,7 +481,6 @@ const P_SHOULDER_Y = 0.14;
 const BONE_MAT = matL(0xE8E0D0);
 const BONE_DARK_MAT = matL(0xC8BFA8);
 const BONE_DARKER = matL(0xA89F88);
-
 function applyHeadgear(head, headgear, HR) {
   if (!headgear) return;
   if (headgear === 'cap_brown' || headgear === 'cap_red' || headgear === 'cap_black') {
@@ -842,9 +817,6 @@ function createZombieMesh(opts = {}) {
   return g;
 }
 
-// ============================================================
-// ANIM STATE / SPAWN
-// ============================================================
 function makeAnimState() {
   return {
     pelvisRoll:0, pelvisTwist:0, pelvisBob:0,
@@ -921,9 +893,6 @@ function spawnZombie(forceType) {
   updateHUD();
 }
 
-// ============================================================
-// SANGUE
-// ============================================================
 const bloodGeoShared = new THREE.BoxGeometry(1, 1, 1);
 const bloodPool = [], bloodActive = [];
 function acquireBloodParticle() {
@@ -985,9 +954,6 @@ function updateBloodPools(dt) {
   }
 }
 
-// ============================================================
-// DEBRIS / RAGDOLL
-// ============================================================
 class Debris {
   constructor(mesh, size, mass, life = 35) {
     this.mesh = mesh; this.size = size; this.mass = mass;
@@ -1037,112 +1003,16 @@ class Debris {
 const ragdolls = [];
 const _wpTmp = new THREE.Vector3();
 const _wqTmp = new THREE.Quaternion();
-class Ragdoll {
-  constructor(zombieMesh, hitDir, hitStrength, missingParts) {
-    zombieMesh.updateMatrixWorld(true);
-    this.pieces = [];
-    this.lastHitTime = performance.now()/1000;
-    this.settleStart = 0; this.state = 'falling'; this.fadeProgress = 0;
-    const ud = zombieMesh.userData;
-    const hitDirN = hitDir.clone(); hitDirN.y = 0; hitDirN.normalize();
-    const defs = [
-      { key:'torso', obj:ud.torso, size:new THREE.Vector3(0.36,0.85,0.22), mass:8 },
-      { key:'head', obj:ud.head, size:new THREE.Vector3(0.4,0.4,0.4), mass:2.5 },
-      { key:'armL', obj:ud.armL, size:new THREE.Vector3(0.10,1.0,0.10), mass:0.9 },
-      { key:'armR', obj:ud.armR, size:new THREE.Vector3(0.10,1.0,0.10), mass:0.9 },
-      { key:'legL', obj:ud.legL, size:new THREE.Vector3(0.16,1.1,0.16), mass:1.3 },
-      { key:'legR', obj:ud.legR, size:new THREE.Vector3(0.16,1.1,0.16), mass:1.3 },
-    ];
-    const order = ['head','armL','armR','legL','legR','torso'];
-    const defMap = Object.fromEntries(defs.map(d => [d.key, d]));
-    for (const key of order) {
-      const def = defMap[key];
-      if (missingParts[key] || !def || !def.obj) continue;
-      const obj = def.obj;
-      obj.getWorldPosition(_wpTmp); obj.getWorldQuaternion(_wqTmp);
-      obj.rotation.set(0,0,0);
-      if (obj.parent) obj.parent.remove(obj);
-      scene.add(obj);
-      obj.position.copy(_wpTmp); obj.quaternion.copy(_wqTmp);
-      obj.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(obj);
-      if (box.isEmpty()) { obj.visible = false; continue; }
-      const center = box.getCenter(new THREE.Vector3());
-      const wrapper = new THREE.Group(); wrapper.position.copy(center); scene.add(wrapper);
-      obj.position.sub(center); wrapper.add(obj);
-      const piece = new Debris(wrapper, def.size, def.mass, 9999);
-      piece.key = key;
-      const base = CONFIG.ragdoll.impactImpulse * hitStrength;
-      piece.applyImpulse(new THREE.Vector3(
-        hitDirN.x*base + (Math.random()-0.5)*2,
-        base*0.6 + Math.random()*2,
-        hitDirN.z*base + (Math.random()-0.5)*2
-      ));
-      piece.applyTorque(new THREE.Vector3((Math.random()-0.5)*20,(Math.random()-0.5)*20,(Math.random()-0.5)*20));
-      this.pieces.push(piece);
-    }
-    scene.remove(zombieMesh);
-  }
-  sliceAt(cameraPos, forward3D, range) {
-    if (this.state === 'fading' || this.pieces.length <= 1) return false;
-    let best = null, bestIdx = -1, bestScore = -Infinity;
-    for (let i = 0; i < this.pieces.length; i++) {
-      const p = this.pieces[i];
-      const to = new THREE.Vector3().subVectors(p.mesh.position, cameraPos);
-      const dist = to.length();
-      if (dist > range) continue;
-      to.normalize();
-      const dot = forward3D.dot(to);
-      if (dot < CONFIG.ragdoll.sliceDotMin) continue;
-      const score = dot - dist*0.05;
-      if (score > bestScore) { bestScore = score; best = p; bestIdx = i; }
-    }
-    if (!best) return false;
-    const dir = new THREE.Vector3().subVectors(best.mesh.position, cameraPos); dir.y = 0; dir.normalize();
-    best.settled = false; best.settleTimer = 0;
-    best.life = CONFIG.dismember.limbLife; best.maxLife = CONFIG.dismember.limbLife;
-    best.velocity.set(dir.x*12 + (Math.random()-0.5)*6, 6 + Math.random()*5, dir.z*12 + (Math.random()-0.5)*6);
-    best.angularVelocity.set((Math.random()-0.5)*35, (Math.random()-0.5)*35, (Math.random()-0.5)*35);
-    spawnBlood(best.mesh.position.clone(), dir, 15, true);
-    this.pieces.splice(bestIdx, 1);
-    flyingLimbs.push(best);
-    this.lastHitTime = performance.now()/1000; this.settleStart = 0; this.state = 'falling';
-    return true;
-  }
-  update(dt) {
-    if (this.state === 'fading') {
-      this.fadeProgress += dt / CONFIG.ragdoll.fadeDuration;
-      const op = Math.max(0, 1 - this.fadeProgress);
-      this.pieces.forEach(p => {
-        p.mesh.traverse(c => {
-          if (c.material) {
-            const mats = Array.isArray(c.material) ? c.material : [c.material];
-            mats.forEach(m => { m.transparent = true; m.opacity = op; });
-          }
-        });
-      });
-      return this.fadeProgress >= 1;
-    }
-    for (let i = this.pieces.length - 1; i >= 0; i--) this.pieces[i].update(dt);
-    const all = this.pieces.length === 0 || this.pieces.every(p => p.settled);
-    if (this.state === 'falling') { if (all) { this.state = 'settled'; this.settleStart = performance.now()/1000; } }
-    else if (this.state === 'settled') {
-      const el = performance.now()/1000 - this.settleStart;
-      const sh = performance.now()/1000 - this.lastHitTime;
-      if (el > CONFIG.ragdoll.settleTime && sh > CONFIG.ragdoll.settleTime) {
-        this.state = 'fading'; this.fadeProgress = 0;
-        const t = this.pieces.find(p => p.key === 'torso');
-        if (t) spawnBloodPool(t.mesh.position);
-      }
-    }
-    return false;
-  }
-  dispose() { this.pieces.forEach(p => p.dispose()); this.pieces = []; }
-}
+// Classe Ragdoll agora vem de src/core/ragdoll-physics.js
 const flyingLimbs = [];
 function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
-  if (ragdolls.length >= CONFIG.ragdoll.maxActive) { const oldest = ragdolls.shift(); oldest.dispose(); }
-  ragdolls.push(new Ragdoll(mesh, hitDir, hitStrength, missingParts));
+  if (ragdolls.length >= CONFIG.ragdoll.maxActive) {
+    const oldest = ragdolls.shift();
+    oldest.dispose();
+  }
+  const r = new PhysicsRagdoll(mesh, hitDir, hitStrength, missingParts);
+  r.onFadeStart = (pos) => spawnBloodPool(pos);
+  ragdolls.push(r);
 }
 
 function detachLimb(z, key, hitDir) {
@@ -1209,9 +1079,6 @@ function randomDismemberOnDeath(z) {
   }
 }
 
-// ============================================================
-// DEBRIS GRID
-// ============================================================
 const debrisGrid = new SpatialGrid(4);
 const zCollGrid = new SpatialGrid(2);
 const _allPiecesScratch = [];
@@ -1259,7 +1126,7 @@ function checkDebrisZombieCollision() {
       const dot = (piece.velocity.x*nx + piece.velocity.z*nz) / velMag;
       if (dot < 0.15) continue;
       piece.lastHitZombie.set(z.id, now); piece.lastGlobalHit = now;
-      const force = Math.min(3.0, Math.sqrt(speed2) * Math.min(2, piece.mass) * 0.12);
+      const force = Math.min(3.0, Math.sqrt(speed2) * Math.min(2, piece.mass || 1) * 0.12);
       _debrisDir.set(nx, 0, nz);
       applyHitReaction(z, 'torso', _debrisDir, force);
       z.hitReactEndTime = now + 0.15 + force*0.18;
@@ -1279,9 +1146,6 @@ function checkDebrisZombieCollision() {
 }
 const _debrisDir = new THREE.Vector3();
 
-// ============================================================
-// RAYCAST
-// ============================================================
 function rayAABB(origin, dir, min, max, maxDist) {
   let tMin = 0, tMax = maxDist;
   const axes = [
@@ -1411,10 +1275,6 @@ function applyHitReaction(z, part, hitDirWorld, force = 1) {
     springKick(anim, 'kneeRXVel', s*24);
   }
 }
-
-// ============================================================
-// FX
-// ============================================================
 const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
 function showHitMarker(critical = false) {
@@ -1531,9 +1391,6 @@ function updateExplosions(dt) {
   }
 }
 
-// ============================================================
-// NOISE RIPPLE
-// ============================================================
 const _noiseRipples = [];
 function spawnNoiseRipple(pos, radius) {
   const ring = new THREE.Mesh(
@@ -1556,9 +1413,6 @@ function updateNoiseRipples(dt) {
   }
 }
 
-// ============================================================
-// DAMAGE
-// ============================================================
 function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   if (z.dying) return;
   z.health -= damage;
@@ -1657,9 +1511,6 @@ function makeNoise(position, radius) {
 
 function rollCrit() { return Math.random() < state.critChance; }
 
-// ============================================================
-// RELOAD / ATTACK
-// ============================================================
 function startReload(wid) {
   if (state.reload.active) return;
   const w = WEAPONS[wid], am = state.ammo[wid];
@@ -1767,7 +1618,23 @@ function attack(isRightClick = false) {
       Sfx.playKnifeHitFlesh();
     }
     const camPos = camera.position.clone();
-    for (const r of ragdolls) { if (r.sliceAt(camPos, forward, CONFIG.ragdoll.sliceRange)) { Sfx.playKnifeHitFlesh(); showHitMarker(false); break; } }
+    for (let ri = ragdolls.length - 1; ri >= 0; ri--) {
+      const r = ragdolls[ri];
+      const detached = r.sliceAt(camPos, forward, CONFIG.ragdoll.sliceRange);
+      if (detached) {
+        const piece = new Debris(detached.mesh, detached.size, 1.2, CONFIG.dismember.limbLife);
+        piece.key = detached.key;
+        piece.velocity.copy(detached.velocity);
+        piece.angularVelocity.copy(detached.angularVelocity);
+        piece.settled = false;
+        piece.settleTimer = 0;
+        flyingLimbs.push(piece);
+        Sfx.playKnifeHitFlesh();
+        showHitMarker(false);
+        spawnBlood(detached.mesh.position.clone(), detached.velocity.clone().normalize(), 15, true);
+        break;
+      }
+    }
     return true;
   }
   const origin = camera.position.clone();
@@ -1795,7 +1662,6 @@ function attack(isRightClick = false) {
       spawnExplosion(hitPos);
       continue;
     }
-    // PIERCE
     const maxPierce = (weapon.pierce || 0) + 1;
     let pierceCount = 0;
     const hitIds = new Set();
@@ -1825,9 +1691,6 @@ function attack(isRightClick = false) {
   return true;
 }
 
-// ============================================================
-// LEVEL / WAVES
-// ============================================================
 function checkLevelUp() {
   let leveled = false;
   while (state.xp >= state.xpToNextLevel) {
@@ -1958,9 +1821,6 @@ function updateWeaponSlotsHUD() {
 }
 function updateCrosshair() { document.body.classList.toggle('aiming', state.aiming); }
 
-// ============================================================
-// DOWNED
-// ============================================================
 function enterDownedState() {
   if (state.downed) return;
   if (state.revivesLeft <= 0) { gameOver(); return; }
@@ -2011,9 +1871,6 @@ function updateDownedState(dt) {
   if (remaining <= 0) { exitDownedState(0); gameOver(); }
 }
 
-// ============================================================
-// PING
-// ============================================================
 const pings = [];
 const PING_COLORS = { enemy:0xff2020, help:0xffdd00, go:0x22dd22, careful:0xff8800 };
 function updatePingHighlight() {
@@ -2062,9 +1919,6 @@ function updatePings(dt) {
   }
 }
 
-// ============================================================
-// SHOP
-// ============================================================
 const shopEl = document.getElementById('shop');
 const shopItemsEl = document.getElementById('shop-items');
 const shopCoinsEl = document.getElementById('shop-coins');
@@ -2107,9 +1961,6 @@ function renderShop() {
   }
 }
 
-// ============================================================
-// BRAZIER
-// ============================================================
 function tryLightBrazier() {
   if (state.brazierFuel <= 0) return;
   if (state.brazierBurning) return;
@@ -2130,9 +1981,6 @@ function tryLightBrazier() {
   updateHUD();
 }
 
-// ============================================================
-// VENDOR VAN
-// ============================================================
 function spawnVendorVan() {
   const angle = Math.random() * Math.PI * 2;
   const dist = CONFIG.arena.size * 0.35;
@@ -2158,10 +2006,6 @@ function updateVendorVan() {
     showWaveBanner('Vendedor foi embora...');
   }
 }
-
-// ============================================================
-// INPUT
-// ============================================================
 document.addEventListener('keydown', e => {
   state.keys[e.code] = true;
   if (e.code === 'Digit1') switchToSlot(1);
@@ -2305,9 +2149,6 @@ function setupMobile() {
 }
 setupMobile();
 
-// ============================================================
-// PAUSE
-// ============================================================
 const pauseEl = document.getElementById('pause');
 function togglePause() {
   if (!state.running) return;
@@ -2316,9 +2157,6 @@ function togglePause() {
   else { pauseEl.classList.add('hidden'); if (!isMobile()) renderer.domElement.requestPointerLock(); }
 }
 
-// ============================================================
-// PLAYER UPDATE
-// ============================================================
 const clock = new THREE.Clock();
 let shadowFrame = 0;
 const _fwdV = new THREE.Vector3(), _rightV = new THREE.Vector3(), _moveV = new THREE.Vector3();
@@ -2395,9 +2233,6 @@ function resolvePlayerZombieCollision() {
   }
 }
 
-// ============================================================
-// ZOMBIE UPDATE
-// ============================================================
 const K_THIGH = 85, C_THIGH = 9.5;
 const K_KNEE = 75, C_KNEE = 8.5;
 const K_FOOT = 110, C_FOOT = 9;
@@ -2736,9 +2571,6 @@ function updateZombies(dt) {
   }
 }
 
-// ============================================================
-// DOORS / PICKUPS
-// ============================================================
 function updateDoors(dt) {
   for (const door of world.doors) {
     const dx = player.position.x - door.worldX;
@@ -2851,9 +2683,6 @@ function updateFlyingLimbs(dt) {
   }
 }
 
-// ============================================================
-// HUD
-// ============================================================
 function updateHUD() {
   const hp = Math.max(0, state.health);
   document.getElementById('hp-fill').style.width = `${(hp/state.maxHealth)*100}%`;
@@ -2891,9 +2720,6 @@ function updateHUD() {
   }
 }
 
-// ============================================================
-// ANIMATE
-// ============================================================
 let lastTimeText = '';
 function animate() {
   requestAnimationFrame(animate);
@@ -2918,6 +2744,7 @@ function animate() {
     updateWeaponPickups(dt);
     updateVendorVan();
     checkWaveComplete();
+    stepPhysics(dt);
     updateRagdolls(dt);
     updateFlyingLimbs(dt);
     checkDebrisZombieCollision();
@@ -2945,6 +2772,7 @@ function animate() {
     const revBtn = document.getElementById('btn-revive');
     if (revBtn) revBtn.classList.toggle('visible', state.downed);
   } else if (!state.running) {
+    stepPhysics(dt);
     updateParticles(dt); updateBloodPools(dt); updateTracers(dt);
     updateRagdolls(dt); updateFlyingLimbs(dt); updateExplosions(dt);
   }
@@ -2952,9 +2780,6 @@ function animate() {
 }
 animate();
 
-// ============================================================
-// START / OVER
-// ============================================================
 function getRecord() { try { return parseInt(localStorage.getItem('qb_record_wave') || '0', 10); } catch { return 0; } }
 function saveRecord(wave, level) {
   try { const prev = getRecord(); if (wave > prev) { localStorage.setItem('qb_record_wave', String(wave)); localStorage.setItem('qb_record_level', String(level)); return true; } } catch {}
@@ -3010,6 +2835,10 @@ function startGame() {
   zombies.forEach(z => scene.remove(z.mesh));
   zombies.length = 0;
   ragdolls.forEach(r => r.dispose()); ragdolls.length = 0;
+  clearPhysics();
+  // Re-registra as paredes
+  for (const box of world.wallColliders) addStaticBox(box.minX, box.maxX, box.minZ, box.maxZ, 4);
+  for (const box of world.furnitureColliders) addStaticBox(box.minX, box.maxX, box.minZ, box.maxZ, 1.2);
   flyingLimbs.forEach(l => l.dispose()); flyingLimbs.length = 0;
   bloodActive.forEach(p => scene.remove(p.mesh)); bloodActive.length = 0;
   bloodPool.forEach(p => { scene.remove(p.mesh); p.mesh.material.dispose(); });
@@ -3077,9 +2906,6 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ============================================================
-// FEEDBACK MP-READY
-// ============================================================
 const playerStats = new Map();
 playerStats.set(player.id, { id:player.id, name:'VOCÊ', kills:0, headshots:0, damage:0, coins:0, deaths:0, local:true });
 const _projV = new THREE.Vector3();
