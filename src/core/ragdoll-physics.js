@@ -72,12 +72,17 @@ export function clearPhysics() {
 }
 
 // ============================================================
-// RAGDOLL ZUMBI BLOCKS 2 STYLE
-// - ConeTwistConstraint em todas as juntas (limita ângulo)
-// - Massas realistas
-// - Damping angular alto
-// - Pose inicial levemente dobrada
-// - Impulso inicial suave e direcional
+// RAGDOLL ESTILO GTA IV (EUPHORIA SIMPLIFICADO)
+//
+// Sistema de músculos ativos em 3 fases:
+//  1. BALANCE  (0.0s - 0.6s): corpo resiste, tenta ficar em pé
+//  2. COLLAPSE (0.6s - 1.2s): músculos enfraquecem progressivamente
+//  3. LIMP     (1.2s+):       ragdoll puro, sem resistência
+//
+// Cada junta tem:
+//  - ConeTwistConstraint (limite de ângulo realista)
+//  - "Rest angle" (pose de equilíbrio)
+//  - Torque corretivo proporcional a muscleStrength
 // ============================================================
 
 const BONE_DEFS = {
@@ -92,6 +97,8 @@ const BONE_DEFS = {
 const ORDER = ['torso', 'head', 'armL', 'armR', 'legL', 'legR'];
 const _v1 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
+const _q2 = new THREE.Quaternion();
+const _v3 = new THREE.Vector3();
 
 const JOINT_LOCAL = {
   neck:      { torso: new CANNON.Vec3(0,  0.22, 0), head:  new CANNON.Vec3(0, -0.12, 0) },
@@ -102,6 +109,163 @@ const JOINT_LOCAL = {
 };
 
 const AXIS_UP = new CANNON.Vec3(0, 1, 0);
+
+// Pose de equilíbrio (em euler local, XYZ)
+// Quando músculos estão fortes, corpo vai para essa pose.
+const BALANCE_POSE = {
+  armL: new CANNON.Quaternion().setFromEuler(0, 0, -0.15),
+  armR: new CANNON.Quaternion().setFromEuler(0, 0, 0.15),
+  legL: new CANNON.Quaternion().setFromEuler(0, 0, 0),
+  legR: new CANNON.Quaternion().setFromEuler(0, 0, 0),
+};
+
+// ============================================================
+// SISTEMA DE MÚSCULOS — aplica torque corretivo nas juntas
+// ============================================================
+class MuscleSystem {
+  constructor(ragdoll) {
+    this.ragdoll = ragdoll;
+    this.timer = 0;
+    this.phase = 'balance';
+    this.strength = 1.0;
+
+    // Config por junta: quanto de força muscular tentar
+    this.muscleStrength = {
+      neck: 0.9,      // cabeça tenta ficar erguida
+      shoulderL: 0.5,
+      shoulderR: 0.5,
+      hipL: 0.8,      // pernas tentam manter em pé
+      hipR: 0.8,
+    };
+
+    // Pose alvo (quaternion local) para cada junta
+    this.targets = {
+      neck: new CANNON.Quaternion().setFromEuler(-0.15, 0, 0),
+      armL: BALANCE_POSE.armL.clone(),
+      armR: BALANCE_POSE.armR.clone(),
+      legL: BALANCE_POSE.legL.clone(),
+      legR: BALANCE_POSE.legR.clone(),
+    };
+
+    // Guarda rotação inicial de cada body para calcular torque relativo
+    this.initialLocalRot = {};
+    const map = ragdoll.bodyMap;
+    for (const childKey in map) {
+      const child = map[childKey];
+      let parentKey = null;
+      if (childKey === 'head')  parentKey = 'torso';
+      if (childKey === 'armL' || childKey === 'armR' || childKey === 'legL' || childKey === 'legR') parentKey = 'torso';
+      if (!parentKey) continue;
+      const parent = map[parentKey];
+      if (!parent) continue;
+      const invP = parent.quaternion.clone().inverse();
+      const local = invP.mult(child.quaternion);
+      this.initialLocalRot[childKey] = local;
+    }
+  }
+
+  update(dt) {
+    this.timer += dt;
+
+    // Fase 1: BALANCE (0 → 0.5s)
+    if (this.timer < 0.5) {
+      this.phase = 'balance';
+      this.strength = 1.0;
+    }
+    // Fase 2: COLLAPSE (0.5 → 1.2s) — interpola linear
+    else if (this.timer < 1.2) {
+      this.phase = 'collapse';
+      const t = (this.timer - 0.5) / 0.7;
+      this.strength = 1.0 - t;
+    }
+    // Fase 3: LIMP (1.2s+)
+    else {
+      this.phase = 'limp';
+      this.strength = 0;
+      return;
+    }
+
+    if (this.strength <= 0.01) return;
+
+    const map = this.ragdoll.bodyMap;
+    for (const childKey in this.targets) {
+      const targetLocal = this.targets[childKey];
+      const child = map[childKey];
+      let parentKey = null;
+      if (childKey === 'head')  parentKey = 'torso';
+      if (childKey === 'armL' || childKey === 'armR' || childKey === 'legL' || childKey === 'legR') parentKey = 'torso';
+      if (!parentKey) continue;
+      const parent = map[parentKey];
+      if (!parent) continue;
+
+      // Rotação local atual
+      const invP = parent.quaternion.clone().inverse();
+      const currentLocal = invP.mult(child.quaternion);
+
+      // Diferença entre atual e alvo (quaternion delta)
+      const delta = targetLocal.mult(currentLocal.inverse());
+      if (delta.w < 0) { delta.x = -delta.x; delta.y = -delta.y; delta.z = -delta.z; delta.w = -delta.w; }
+
+      // Converte para eixo-ângulo
+      const angle = 2 * Math.acos(Math.min(1, Math.max(-1, delta.w)));
+      const sinHalf = Math.sqrt(1 - delta.w * delta.w);
+      if (sinHalf < 0.0001 || angle < 0.001) continue;
+
+      const axis = new CANNON.Vec3(delta.x / sinHalf, delta.y / sinHalf, delta.z / sinHalf);
+
+      // Torque proporcional ao ângulo, força muscular e inércia do filho
+      const muscle = this.muscleStrength[childKey] || 0.5;
+      const stiffness = 12.0;   // força-base do "músculo"
+      const torqueMag = angle * stiffness * muscle * this.strength;
+      const maxTorque = 30;     // clamp
+      const t = Math.min(maxTorque, torqueMag);
+
+      // Aplica torque em torno do eixo local do pai
+      // Converte eixo local para world
+      const worldAxis = parent.quaternion.vmult(axis);
+      const torque = new CANNON.Vec3(worldAxis.x * t, worldAxis.y * t, worldAxis.z * t);
+
+      child.torque.x += torque.x;
+      child.torque.y += torque.y;
+      child.torque.z += torque.z;
+
+      // Damping angular extra durante balance (evita oscilação)
+      child.angularVelocity.scale(1 - 0.15 * this.strength, child.angularVelocity);
+
+      // Avisa o body pra acordar
+      if (child.sleepState === CANNON.Body.SLEEPING) child.wakeUp();
+    }
+
+    // Reforço específico: manter torso vertical durante BALANCE
+    if (this.phase === 'balance') {
+      const torso = map['torso'];
+      if (torso) {
+        // Eixo "up" local do torso (Y)
+        const upLocal = new CANNON.Vec3(0, 1, 0);
+        const upWorld = torso.quaternion.vmult(upLocal);
+        // Quanto mais "deitado" o torso, mais torque pra levantar
+        const tilt = 1 - Math.max(0, upWorld.y); // 0 = em pé, 1 = deitado
+        if (tilt > 0.01) {
+          // Torque em torno do eixo perpendicular à inclinação
+          const side = new CANNON.Vec3(upWorld.z, 0, -upWorld.x);
+          const sideLen = Math.sqrt(side.x*side.x + side.z*side.z);
+          if (sideLen > 0.001) {
+            side.x /= sideLen; side.z /= sideLen;
+            const liftTorque = tilt * 18 * this.strength;
+            torso.torque.x += side.x * liftTorque;
+            torso.torque.z += side.z * liftTorque;
+          }
+        }
+      }
+    }
+  }
+
+  // Quando um membro é removido, não tenta mais controlá-lo
+  forget(key) {
+    delete this.targets[key];
+    delete this.muscleStrength[key];
+  }
+}
 
 export class Ragdoll {
   constructor(zombieMesh, hitDir, hitStrength, missingParts) {
@@ -124,13 +288,13 @@ export class Ragdoll {
     this._uid        = Math.random().toString(36).slice(2, 8);
 
     this._build(zombieMesh, hitDir, hitStrength, missingParts);
+    this.muscles = new MuscleSystem(this);
   }
 
   _build(zombieMesh, hitDir, hitStrength, missingParts) {
     const ud = zombieMesh.userData;
     zombieMesh.updateMatrixWorld(true);
 
-    // --- 1) Extrair meshes ---
     const rawParts = {};
     for (const key of ORDER) {
       const obj = (key === 'torso') ? ud.torso : ud[key];
@@ -161,7 +325,6 @@ export class Ragdoll {
 
     if (zombieMesh.parent) zombieMesh.parent.remove(zombieMesh);
 
-    // --- 2) Criar bodies ---
     for (const key of ORDER) {
       const part = rawParts[key];
       if (!part) continue;
@@ -177,7 +340,7 @@ export class Ragdoll {
         position: new CANNON.Vec3(part.center.x, part.center.y, part.center.z),
         quaternion: new CANNON.Quaternion(part.quat.x, part.quat.y, part.quat.z, part.quat.w),
         linearDamping: 0.20,
-        angularDamping: 0.60,
+        angularDamping: 0.55,
         sleepSpeedLimit: 0.3,
         sleepTimeLimit: 0.4,
         allowSleep: true,
@@ -204,7 +367,6 @@ export class Ragdoll {
       });
     }
 
-    // --- 3) Constraints com limites de ângulo (ConeTwist) ---
     const makeConeTwist = (parentKey, childKey, jointName, angleLimit, twistLimit) => {
       const parent = this.bodyMap[parentKey];
       const child  = this.bodyMap[childKey];
@@ -225,17 +387,13 @@ export class Ragdoll {
       return c;
     };
 
-    // Pescoço: cone pequeno (cabeça não pode ir longe)
     makeConeTwist('torso', 'head', 'neck', 0.7, 0.5);
-    // Ombros: cone médio (braço pode abrir até ~80°)
     makeConeTwist('torso', 'armL', 'shoulderL', 1.4, 0.9);
     makeConeTwist('torso', 'armR', 'shoulderR', 1.4, 0.9);
-    // Quadris: cone médio, twist pequeno (perna balança mas não roda)
     makeConeTwist('torso', 'legL', 'hipL', 1.1, 0.4);
     makeConeTwist('torso', 'legR', 'hipR', 1.1, 0.4);
 
-    // --- 4) Pose inicial levemente curvada ---
-    // Braços para trás, pernas abertas — sensação de "colapso"
+    // Pose inicial curvada
     for (const key in this.bodyMap) {
       const body = this.bodyMap[key];
       if (key === 'armL') body.quaternion.setFromEuler(0, 0, -0.3);
@@ -244,29 +402,27 @@ export class Ragdoll {
       else if (key === 'legR') body.quaternion.setFromEuler(-0.2, 0, 0);
     }
 
-    // --- 5) Impulso inicial direcional suave ---
+    // Impulso inicial direcional suave
     const dir = hitDir.clone(); dir.y = 0;
     if (dir.lengthSq() < 0.0001) dir.set(1, 0, 0);
     dir.normalize();
 
     const strength = Math.min(2.5, Math.max(0.6, hitStrength));
-    const baseImpulse = strength * 2.2;   // <<< reduzido de 5.5
+    const baseImpulse = strength * 1.6;
 
     for (const key in this.bodyMap) {
       const body = this.bodyMap[key];
-      // Torso empurra o conjunto todo, membros seguem
       const w = (key === 'torso' ? 0.8 : 0.4);
       const imp = new CANNON.Vec3(
         dir.x * baseImpulse * body.mass * w,
-        (0.8 + Math.random() * 1.0) * body.mass * w,
+        (0.6 + Math.random() * 0.8) * body.mass * w,
         dir.z * baseImpulse * body.mass * w
       );
       body.applyImpulse(imp, new CANNON.Vec3(0, 0, 0));
-      // Rotação suave, não caótica
       body.angularVelocity.set(
-        (Math.random() - 0.5) * 2,
-        (Math.random() - 0.5) * 2,
-        (Math.random() - 0.5) * 2
+        (Math.random() - 0.5) * 1.5,
+        (Math.random() - 0.5) * 1.5,
+        (Math.random() - 0.5) * 1.5
       );
     }
   }
@@ -302,6 +458,9 @@ export class Ragdoll {
     if (wi >= 0) this.wrappers.splice(wi, 1);
     const pi = this.pieces.findIndex(p => p.key === bestKey);
     if (pi >= 0) this.pieces.splice(pi, 1);
+
+    // Músculos "esquecem" o membro
+    if (this.muscles) this.muscles.forget(bestKey);
 
     return {
       mesh: bestWrapper,
@@ -340,6 +499,14 @@ export class Ragdoll {
     nearest.applyImpulse(imp, new CANNON.Vec3(0, 0, 0));
     this.lastHitTime = performance.now() / 1000;
     this.state = 'falling'; this.settleStart = 0;
+
+    // Reforça músculos por 0.4s (reação de "levar um soco")
+    if (this.muscles) {
+      this.muscles.timer = 0;      // reset fase → volta pra BALANCE
+      this.muscles.phase = 'balance';
+      this.muscles.strength = 0.7; // reação de meio-termo
+    }
+
     for (const b of this.bodies) b.wakeUp();
   }
 
@@ -359,13 +526,15 @@ export class Ragdoll {
       return this.fadeProgress >= 1;
     }
 
+    // Aplica músculos antes do próximo step
+    if (this.muscles) this.muscles.update(dt);
+
     let allAsleep = true;
     for (const key in this.bodyMap) {
       const body = this.bodyMap[key];
       const wrapper = this.wrapperMap[key];
       if (!body || !wrapper) continue;
 
-      // Interpolação visual suave
       wrapper.position.x += (body.position.x - wrapper.position.x) * 0.7;
       wrapper.position.y += (body.position.y - wrapper.position.y) * 0.7;
       wrapper.position.z += (body.position.z - wrapper.position.z) * 0.7;
