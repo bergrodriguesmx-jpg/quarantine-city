@@ -14,7 +14,6 @@ bus.setAdapter(new LocalAdapter());
 // ============================================================
 const geoCache = new Map();
 const matCache = new Map();
-// Polígonos maiores
 const HQ = 4, MQ = 3, LQ = 2;
 
 function geoBox(w, h, d, seg = MQ) {
@@ -107,12 +106,7 @@ const ZOMBIE_VARIANTS = {
 const CONFIG = {
   player: { speed: 5.5, height: 1.7, maxHealth: 100, radius: 0.4 },
   zombie: { speed: 1.9, maxHealth: 40, damage: 8, attackRange: 1.6, attackCooldown: 1.2, xpReward: 10, coinReward: 2, knockbackStagger: 0.25, radius: 0.4 },
-  // Movimento fluido do zumbi (pursuit suave)
-  pursuit: {
-    responsiveness: 3.8,   // quanto maior, mais rápido acelera/desacelera
-    arrivalRadius: 1.15,   // para dentro disso antes do attackRange (evita tremer na borda)
-    minSpeedFactor: 0.35,  // velocidade mínima quando perto (evita parada seca)
-  },
+  pursuit: { responsiveness: 3.8, arrivalRadius: 1.15, minSpeedFactor: 0.35 },
   wave: { baseZombies: 6, zombiesPerWave: 2, maxZombies: 40, breakTime: 5, coinBonus: 50, bossEvery: 5 },
   arena: { size: 80 },
   ragdoll: { maxActive: 6, settleTime: 20, fadeDuration: 1.5, impactImpulse: 10, sliceRange: 3.5, sliceDotMin: 0.25 },
@@ -272,19 +266,108 @@ const MAT = {
   metalDark: matL(0x1A1A1A), metalMid: matL(0x2C3E50), metalLight: matL(0x7F8C8D),
   metalSteel: matL(0xBDC3C7), wood: matL(0x5D4030), woodLight: matL(0x8B5A2B),
   grip: matL(0x1A1A1A), accent: matL(0xCC0000),
+  skin: matL(0xD4A574),       // ← NOVO: pele da mão
+  skinDark: matL(0xC09065),
+  nail: matL(0xE8C8A0),
 };
 
 function buildViewModel(weaponId) {
   if (currentViewModel) { weaponGroup.remove(currentViewModel); currentViewModel = null; }
   const g = new THREE.Group();
+
   if (weaponId === 'knife') {
-    g.add(new THREE.Mesh(geoBox(0.06, 0.20, 0.06, LQ), MAT.grip));
-    for (let i = 0; i < 4; i++) { const r = new THREE.Mesh(geoBox(0.065, 0.02, 0.065, LQ), MAT.metalDark); r.position.y = -0.07 + i * 0.05; g.add(r); }
-    const pom = new THREE.Mesh(geoBox(0.075, 0.035, 0.075, LQ), MAT.metalLight); pom.position.set(0, -0.12, 0); g.add(pom);
-    const gu = new THREE.Mesh(geoBox(0.16, 0.025, 0.09, LQ), MAT.metalDark); gu.position.set(0, 0.11, 0); g.add(gu);
-    const bl = new THREE.Mesh(geoBox(0.05, 0.48, 0.015, LQ), MAT.metalSteel); bl.position.set(0, 0.37, 0); g.add(bl);
-    const ed = new THREE.Mesh(geoBox(0.008, 0.46, 0.016, LQ), matB(0xFFFFFF)); ed.position.set(-0.024, 0.37, 0); g.add(ed);
-    const tp = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.08, 4), MAT.metalSteel); tp.rotation.y = Math.PI / 4; tp.position.set(0, 0.65, 0); g.add(tp);
+    // ============================================================
+    // FACA COM MÃO VISÍVEL
+    // ============================================================
+    // Grupo da mão (contém antebraço, mão, dedos e a faca)
+    const handGroup = new THREE.Group();
+    handGroup.position.set(0, 0, 0);
+    g.add(handGroup);
+
+    // Antebraço estendido vindo de trás/direita
+    const forearm = new THREE.Mesh(geoCyl(0.045, 0.055, 0.38, 14), MAT.skin);
+    forearm.rotation.z = Math.PI / 2;
+    forearm.rotation.y = -0.10;
+    forearm.position.set(0.22, -0.01, 0.14);
+    forearm.castShadow = true;
+    handGroup.add(forearm);
+    // Borda escura do cotovelo
+    const elbowCap = new THREE.Mesh(geoSphere(0.052, 12), MAT.skinDark);
+    elbowCap.position.set(0.40, -0.01, 0.14);
+    handGroup.add(elbowCap);
+
+    // Pulso
+    const wrist = new THREE.Mesh(geoCyl(0.042, 0.042, 0.06, 12), MAT.skin);
+    wrist.rotation.z = Math.PI / 2;
+    wrist.position.set(0.045, -0.01, 0.08);
+    handGroup.add(wrist);
+
+    // Mão fechada (fist) — bloco principal
+    const hand = new THREE.Mesh(geoBox(0.10, 0.11, 0.13, MQ), MAT.skin);
+    hand.position.set(0, 0, 0.02);
+    hand.castShadow = true;
+    handGroup.add(hand);
+
+    // Dedos enrolados na empunhadura (4 dedos)
+    for (let i = 0; i < 4; i++) {
+      const finger = new THREE.Mesh(geoBox(0.028, 0.045, 0.10, LQ), MAT.skin);
+      finger.position.set(-0.036 + i * 0.024, 0.025, -0.03);
+      handGroup.add(finger);
+      // Nó do dedo
+      const knuckle = new THREE.Mesh(geoBox(0.028, 0.028, 0.06, LQ), MAT.skinDark);
+      knuckle.position.set(-0.036 + i * 0.024, 0.045, -0.055);
+      handGroup.add(knuckle);
+    }
+    // Polegar
+    const thumb = new THREE.Mesh(geoBox(0.04, 0.035, 0.07, LQ), MAT.skin);
+    thumb.position.set(0.052, 0.015, 0.02);
+    handGroup.add(thumb);
+
+    // ============================================================
+    // FACA (na mão)
+    // ============================================================
+    const knifeG = new THREE.Group();
+    knifeG.position.set(0, 0.02, 0.02);
+    handGroup.add(knifeG);
+
+    // Empunhadura (dentro da mão)
+    const handle = new THREE.Mesh(geoBox(0.05, 0.22, 0.05, LQ), MAT.grip);
+    handle.position.set(0, -0.04, 0.02);
+    knifeG.add(handle);
+
+    // Anéis da empunhadura
+    for (let i = 0; i < 4; i++) {
+      const ring = new THREE.Mesh(geoBox(0.055, 0.018, 0.055, LQ), MAT.metalDark);
+      ring.position.set(0, -0.13 + i * 0.055, 0.02);
+      knifeG.add(ring);
+    }
+
+    // Pommel
+    const pommel = new THREE.Mesh(geoBox(0.065, 0.03, 0.065, LQ), MAT.metalLight);
+    pommel.position.set(0, -0.18, 0.02);
+    knifeG.add(pommel);
+
+    // Guarda
+    const guard = new THREE.Mesh(geoBox(0.16, 0.022, 0.09, LQ), MAT.metalDark);
+    guard.position.set(0, 0.09, 0.02);
+    knifeG.add(guard);
+
+    // Lâmina (aponta pra cima a partir da mão)
+    const blade = new THREE.Mesh(geoBox(0.048, 0.50, 0.014, LQ), MAT.metalSteel);
+    blade.position.set(0, 0.36, 0.02);
+    blade.castShadow = true;
+    knifeG.add(blade);
+
+    // Fio branco brilhante
+    const edge = new THREE.Mesh(geoBox(0.008, 0.48, 0.015, LQ), matB(0xFFFFFF));
+    edge.position.set(-0.024, 0.36, 0.02);
+    knifeG.add(edge);
+
+    // Ponta cônica
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.08, 4), MAT.metalSteel);
+    tip.rotation.y = Math.PI / 4; tip.position.set(0, 0.63, 0.02);
+    knifeG.add(tip);
+
   } else if (weaponId === 'pistol') {
     const s = new THREE.Mesh(geoBox(0.065, 0.09, 0.30, LQ), MAT.metalMid); s.position.set(0, 0.06, -0.06); g.add(s);
     const st = new THREE.Mesh(geoBox(0.05, 0.03, 0.28, LQ), MAT.metalDark); st.position.set(0, 0.11, -0.06); g.add(st);
@@ -292,6 +375,10 @@ function buildViewModel(weaponId) {
     const gr = new THREE.Mesh(geoBox(0.055, 0.18, 0.08, LQ), MAT.grip); gr.position.set(0, -0.07, 0.06); gr.rotation.x = 0.28; g.add(gr);
     const re = new THREE.Mesh(geoBox(0.035, 0.02, 0.02, LQ), MAT.metalDark); re.position.set(0, 0.13, 0.07); g.add(re);
     const fr = new THREE.Mesh(geoBox(0.008, 0.018, 0.015, LQ), MAT.metalDark); fr.position.set(0, 0.13, -0.20); g.add(fr);
+    // Mão na pistola
+    const hand = new THREE.Mesh(geoBox(0.09, 0.11, 0.10, MQ), MAT.skin);
+    hand.position.set(0, -0.06, 0.07); hand.rotation.x = 0.28;
+    g.add(hand);
   } else if (weaponId === 'revolver') {
     const b = new THREE.Mesh(geoCyl(0.018, 0.018, 0.24, 8), MAT.metalMid); b.rotation.x = Math.PI / 2; b.position.set(0, 0.055, -0.16); g.add(b);
     const cy = new THREE.Mesh(geoCyl(0.045, 0.045, 0.10, 10), MAT.metalDark); cy.rotation.x = Math.PI / 2; cy.position.set(0, 0.045, 0); g.add(cy);
@@ -300,6 +387,8 @@ function buildViewModel(weaponId) {
     const gr = new THREE.Mesh(geoBox(0.05, 0.20, 0.09, LQ), MAT.wood); gr.position.set(0, -0.08, 0.08); gr.rotation.x = 0.32; g.add(gr);
     const hm = new THREE.Mesh(geoBox(0.015, 0.05, 0.03, LQ), MAT.metalDark); hm.position.set(0, 0.09, 0.08); g.add(hm);
     const tg = new THREE.Mesh(geoTorus(0.028, 0.006, 6, 10, Math.PI), MAT.metalDark); tg.rotation.z = Math.PI; tg.position.set(0, -0.02, 0.03); g.add(tg);
+    const hand = new THREE.Mesh(geoBox(0.09, 0.11, 0.10, MQ), MAT.skin);
+    hand.position.set(0, -0.07, 0.08); hand.rotation.x = 0.32; g.add(hand);
   } else if (weaponId === 'smg') {
     const b = new THREE.Mesh(geoBox(0.07, 0.10, 0.36, LQ), MAT.metalMid); b.position.set(0, 0.04, -0.06); g.add(b);
     const sh = new THREE.Mesh(geoCyl(0.025, 0.025, 0.12, 8), MAT.metalDark); sh.rotation.x = Math.PI / 2; sh.position.set(0, 0.04, -0.30); g.add(sh);
@@ -307,6 +396,8 @@ function buildViewModel(weaponId) {
     const fg = new THREE.Mesh(geoBox(0.045, 0.10, 0.05, LQ), MAT.grip); fg.position.set(0, -0.06, -0.17); g.add(fg);
     const rg = new THREE.Mesh(geoBox(0.045, 0.13, 0.06, LQ), MAT.grip); rg.position.set(0, -0.07, 0.10); rg.rotation.x = 0.22; g.add(rg);
     const st = new THREE.Mesh(geoBox(0.04, 0.07, 0.10, LQ), MAT.metalDark); st.position.set(0, 0.03, 0.20); g.add(st);
+    const hand = new THREE.Mesh(geoBox(0.08, 0.11, 0.10, MQ), MAT.skin);
+    hand.position.set(0, -0.06, 0.11); hand.rotation.x = 0.22; g.add(hand);
   } else if (weaponId === 'rifle') {
     const b = new THREE.Mesh(geoBox(0.06, 0.09, 0.55, LQ), MAT.metalMid); b.position.set(0, 0.035, -0.12); g.add(b);
     const hg = new THREE.Mesh(geoBox(0.055, 0.07, 0.20, LQ), MAT.metalDark); hg.position.set(0, 0.035, -0.35); g.add(hg);
@@ -318,6 +409,8 @@ function buildViewModel(weaponId) {
     const sf = new THREE.Mesh(geoCyl(0.038, 0.038, 0.03, 10), MAT.metalDark); sf.rotation.x = Math.PI / 2; sf.position.set(0, 0.14, -0.17); g.add(sf);
     const ln = new THREE.Mesh(new THREE.CircleGeometry(0.03, 10), matB(0x4A90D9)); ln.rotation.y = Math.PI; ln.position.set(0, 0.14, -0.185); g.add(ln);
     const bo = new THREE.Mesh(geoCyl(0.012, 0.012, 0.08, 6), MAT.metalDark); bo.rotation.z = Math.PI / 2; bo.position.set(0.05, 0.10, 0.05); g.add(bo);
+    const hand = new THREE.Mesh(geoBox(0.08, 0.11, 0.10, MQ), MAT.skin);
+    hand.position.set(0, -0.06, 0.14); hand.rotation.x = 0.2; g.add(hand);
   } else if (weaponId === 'shotgun') {
     const b1 = new THREE.Mesh(geoCyl(0.022, 0.022, 0.5, 10), MAT.metalDark); b1.rotation.x = Math.PI / 2; b1.position.set(-0.022, 0.045, -0.24); g.add(b1);
     const b2 = new THREE.Mesh(geoCyl(0.022, 0.022, 0.5, 10), MAT.metalDark); b2.rotation.x = Math.PI / 2; b2.position.set(0.022, 0.045, -0.24); g.add(b2);
@@ -326,6 +419,8 @@ function buildViewModel(weaponId) {
     const st = new THREE.Mesh(geoBox(0.06, 0.11, 0.22, LQ), MAT.wood); st.position.set(0, 0.01, 0.22); g.add(st);
     const rg = new THREE.Mesh(geoBox(0.05, 0.14, 0.07, LQ), MAT.wood); rg.position.set(0, -0.07, 0.10); rg.rotation.x = 0.18; g.add(rg);
     const hm = new THREE.Mesh(geoBox(0.02, 0.03, 0.025, LQ), MAT.metalDark); hm.position.set(0, 0.09, 0.14); g.add(hm);
+    const hand = new THREE.Mesh(geoBox(0.08, 0.11, 0.10, MQ), MAT.skin);
+    hand.position.set(0, -0.07, 0.12); hand.rotation.x = 0.18; g.add(hand);
   } else if (weaponId === 'launcher') {
     const tu = new THREE.Mesh(geoCyl(0.07, 0.08, 0.75, 12), MAT.metalMid); tu.rotation.x = Math.PI / 2; tu.position.set(0, 0.03, -0.12); g.add(tu);
     const r1 = new THREE.Mesh(geoCyl(0.082, 0.082, 0.03, 12), MAT.metalDark); r1.rotation.x = Math.PI / 2; r1.position.set(0, 0.03, -0.30); g.add(r1);
@@ -335,6 +430,8 @@ function buildViewModel(weaponId) {
     const rg = new THREE.Mesh(geoBox(0.05, 0.15, 0.08, LQ), MAT.grip); rg.position.set(0, -0.11, 0.15); rg.rotation.x = 0.15; g.add(rg);
     const sB = new THREE.Mesh(geoBox(0.025, 0.06, 0.08, LQ), MAT.metalDark); sB.position.set(0, 0.10, 0.05); g.add(sB);
     const sR = new THREE.Mesh(geoTorus(0.028, 0.006, 6, 10), MAT.metalDark); sR.rotation.y = Math.PI / 2; sR.position.set(0, 0.15, 0.05); g.add(sR);
+    const hand = new THREE.Mesh(geoBox(0.08, 0.12, 0.10, MQ), MAT.skin);
+    hand.position.set(0, -0.10, 0.16); hand.rotation.x = 0.15; g.add(hand);
   }
   g.position.set(0.32, -0.32, -0.6);
   g.rotation.set(-0.15, -0.35, 0.15);
@@ -343,6 +440,9 @@ function buildViewModel(weaponId) {
   return g;
 }
 
+// ============================================================
+// SWING (wind-up + slash)
+// ============================================================
 let swingProgress = 0, swinging = false;
 function triggerSwing() { swinging = true; swingProgress = 0; }
 function updateWeaponViewModel(dt) {
@@ -355,12 +455,34 @@ function updateWeaponViewModel(dt) {
     return;
   }
   if (swinging) {
-    swingProgress += dt * 5;
+    swingProgress += dt * 4.2;
     if (swingProgress >= 1) { swinging = false; swingProgress = 0; }
     else {
-      const arc = Math.sin(swingProgress * Math.PI);
-      currentViewModel.position.set(0.32 - arc * 0.35, -0.32 + arc * 0.12, -0.6 - arc * 0.15);
-      currentViewModel.rotation.set(-0.15 - arc * 0.5, -0.35 + arc * 0.7, 0.15 - arc * 0.4);
+      const t = swingProgress;
+      // Wind-up (0 → 0.25): sobe pro lado direito, gira pra trás
+      // Slash (0.25 → 1): corta em arco pela esquerda/baixo
+      let arcX, arcY, arcZ, posX, posY, posZ;
+      if (t < 0.25) {
+        const p = t / 0.25;
+        const ease = p * p; // ease-in
+        arcX = -0.15 - ease * 0.6;
+        arcY = -0.35 - ease * 0.4;
+        arcZ = 0.15 + ease * 0.9;
+        posX = 0.32 + ease * 0.15;
+        posY = -0.32 + ease * 0.15;
+        posZ = -0.6 + ease * 0.1;
+      } else {
+        const p = (t - 0.25) / 0.75;
+        const ease = 1 - Math.pow(1 - p, 3); // ease-out
+        arcX = -0.75 + ease * 1.6;
+        arcY = -0.75 + ease * 1.9;
+        arcZ = 1.05 - ease * 2.2;
+        posX = 0.47 - ease * 0.65;
+        posY = -0.17 - ease * 0.25;
+        posZ = -0.5 - ease * 0.25;
+      }
+      currentViewModel.position.set(posX, posY, posZ);
+      currentViewModel.rotation.set(arcX, arcY, arcZ);
     }
   } else {
     const a = state.aiming;
@@ -799,7 +921,6 @@ function createZombieMesh(variantKey) {
     ankleBall.castShadow = true; foot.add(ankleBall);
     const shoeMesh = new THREE.Mesh(geoBox(FOOT_W, FOOT_H, FOOT_L, HQ), shoeMat);
     shoeMesh.position.set(0, -FOOT_H * 0.6, FOOT_L * 0.15); shoeMesh.castShadow = true; foot.add(shoeMesh);
-    // Toe detail
     const toeMesh = new THREE.Mesh(geoBox(FOOT_W * 0.95, FOOT_H * 0.55, FOOT_L * 0.25, MQ), shoeMat);
     toeMesh.position.set(0, -FOOT_H * 0.7, FOOT_L * 0.55); foot.add(toeMesh);
 
@@ -856,31 +977,27 @@ function createZombieMesh(variantKey) {
     armDroopR: -(Math.random() * 0.3),
     limpAmount: Math.random() * 0.12,
     limpSide: Math.random() < 0.5 ? 'L' : 'R',
-    // Personalidade de cadência (alguns mais arrastados que outros)
-    walkStyle: Math.random(), // 0 = normal, 1 = muito arrastado
+    walkStyle: Math.random(),
   };
 
   return g;
 }
 
 // ============================================================
-// ANIM STATE — agora com velocity pursuit
+// ANIM STATE
 // ============================================================
 function makeAnimState() {
   return {
-    // rotações de juntas
     pelvisRoll: 0, pelvisTwist: 0, pelvisBob: 0,
     spineTwist: 0, spineLean: 0.10, spineRoll: 0, spineSide: 0,
     headTwist: 0, headRoll: 0, headPitch: 0,
     armLX: 0, armRX: 0, elbowLX: 0, elbowRX: 0,
     thighLX: 0, thighRX: 0, kneeLX: 0, kneeRX: 0, footLX: 0, footRX: 0,
-    // velocidades (springs)
     pelvisRollVel: 0, pelvisTwistVel: 0, pelvisBobVel: 0,
     spineTwistVel: 0, spineLeanVel: 0, spineRollVel: 0, spineSideVel: 0,
     headTwistVel: 0, headRollVel: 0, headPitchVel: 0,
     armLXVel: 0, armRXVel: 0, elbowLXVel: 0, elbowRXVel: 0,
     thighLXVel: 0, thighRXVel: 0, kneeLXVel: 0, kneeRXVel: 0, footLXVel: 0, footRXVel: 0,
-    // banking (curvas)
     bankX: 0, bankZ: 0, bankXVel: 0, bankZVel: 0,
   };
 }
@@ -933,10 +1050,12 @@ function spawnZombie(forceVariant) {
     limpAmount: mesh.userData.limpAmount,
     limpSide: mesh.userData.limpSide,
     walkStyle: mesh.userData.walkStyle,
-    // ============ MOVIMENTO FLUIDO (Gemini-inspired) ============
-    vx: 0, vz: 0,           // velocidade real (m/s)
-    velYaw: 0,              // yaw atual suavizado
-    yawVel: 0,              // velocidade angular (para bank)
+    vx: 0, vz: 0,
+    yawVel: 0,
+    // ============ FLINCH POR MEMBRO ============
+    flinch: {
+      head: null, armL: null, armR: null, legL: null, legR: null, torso: null,
+    },
   };
   zombies.push(z);
   state.zombiesAlive++;
@@ -1296,7 +1415,6 @@ function checkDebrisZombieCollision() {
       const pushZ = force * 0.09 / Math.max(0.5, z.scale);
       z.mesh.position.x += nx * pushZ;
       z.mesh.position.z += nz * pushZ;
-      // Também adiciona na velocity para parecer natural
       z.vx -= nx * pushZ * 2;
       z.vz -= nz * pushZ * 2;
       const bounce = Math.min(5, force * 2.0);
@@ -1371,6 +1489,9 @@ function raycastZombie(origin, dir, maxDist) {
   return { zombie: bestZ, part: bestPart, distance: bestDist, point: bestPoint };
 }
 
+// ============================================================
+// HIT REACTION — FLINCH POR MEMBRO INDEPENDENTE
+// ============================================================
 function applyHitReaction(z, part, hitDirWorld, force = 1) {
   const localDir = hitDirWorld.clone();
   const zQuat = z.mesh.quaternion.clone();
@@ -1378,46 +1499,100 @@ function applyHitReaction(z, part, hitDirWorld, force = 1) {
   localDir.applyQuaternion(zQuat);
   const s = Math.min(2.0, force);
   const anim = z.anim;
+  const now = performance.now() / 1000;
+
   if (part === 'head') {
-    springKick(anim, 'headTwistVel', localDir.x * s * 9);
-    springKick(anim, 'headRollVel', -localDir.x * s * 7);
-    springKick(anim, 'headPitchVel', localDir.z * s * 8);
-    springKick(anim, 'spineTwistVel', localDir.x * s * 3);
-    springKick(anim, 'spineLeanVel', localDir.z * s * 2);
+    // CABEÇA: chicoteia e volta
+    z.flinch.head = { until: now + 0.6, dirX: localDir.x, dirZ: localDir.z, strength: s };
+    springKick(anim, 'headTwistVel', localDir.x * s * 16);
+    springKick(anim, 'headRollVel', -localDir.x * s * 14);
+    springKick(anim, 'headPitchVel', localDir.z * s * 18);
+    // Pescoço/coluna transmite
+    springKick(anim, 'spineTwistVel', localDir.x * s * 5);
+    springKick(anim, 'spineLeanVel', localDir.z * s * 4);
+    // Joelhos tremem levemente
+    springKick(anim, 'kneeLXVel', s * 3);
+    springKick(anim, 'kneeRXVel', s * 3);
+
   } else if (part === 'torso') {
-    springKick(anim, 'spineTwistVel', localDir.x * s * 7);
-    springKick(anim, 'spineRollVel', -localDir.x * s * 6);
-    springKick(anim, 'spineLeanVel', localDir.z * s * 6);
-    springKick(anim, 'spineSideVel', localDir.x * s * 5);
-    springKick(anim, 'pelvisTwistVel', localDir.x * s * 3);
-    springKick(anim, 'pelvisRollVel', -localDir.x * s * 4);
-    springKick(anim, 'headTwistVel', -localDir.x * s * 2);
-    springKick(anim, 'headPitchVel', localDir.z * s * 3);
+    // TORSO: dobra em torno do impacto
+    z.flinch.torso = { until: now + 0.5, dirX: localDir.x, dirZ: localDir.z, strength: s };
+    springKick(anim, 'spineLeanVel', localDir.z * s * 10);
+    springKick(anim, 'spineTwistVel', localDir.x * s * 9);
+    springKick(anim, 'spineRollVel', -localDir.x * s * 8);
+    springKick(anim, 'spineSideVel', localDir.x * s * 7);
+    // Pélvis dá contragolpe
+    springKick(anim, 'pelvisTwistVel', localDir.x * s * 4);
+    springKick(anim, 'pelvisRollVel', -localDir.x * s * 5);
+    // Cabeça chicoteia por inércia
+    springKick(anim, 'headTwistVel', -localDir.x * s * 5);
+    springKick(anim, 'headPitchVel', localDir.z * s * 7);
+    // Braços balançam soltos
+    springKick(anim, 'armLXVel', localDir.z * s * 5);
+    springKick(anim, 'armRXVel', localDir.z * s * 5);
+
   } else if (part === 'armL') {
-    springKick(anim, 'armLXVel', localDir.z * s * 9);
-    springKick(anim, 'elbowLXVel', localDir.z * s * 6);
-    springKick(anim, 'spineTwistVel', localDir.x * s * 2);
-    springKick(anim, 'spineSideVel', localDir.x * s * 2);
+    // BRAÇO ESQUERDO: puxa para trás + cotovelo fecha (reflexo de proteção)
+    z.flinch.armL = { until: now + 0.55, dirX: localDir.x, dirZ: localDir.z, strength: s };
+    springKick(anim, 'armLXVel', -s * 18);        // braço VAI PRA TRÁS
+    springKick(anim, 'elbowLXVel', s * 22);       // cotovelo FECHA forte (proteção)
+    springKick(anim, 'spineTwistVel', -localDir.x * s * 4);
+    springKick(anim, 'spineSideVel', localDir.x * s * 3);
+    // Corpo desequilibra pro lado oposto
+    springKick(anim, 'pelvisRollVel', localDir.x * s * 4);
+    springKick(anim, 'headTwistVel', -localDir.x * s * 4);
+
   } else if (part === 'armR') {
-    springKick(anim, 'armRXVel', localDir.z * s * 9);
-    springKick(anim, 'elbowRXVel', localDir.z * s * 6);
-    springKick(anim, 'spineTwistVel', localDir.x * s * 2);
-    springKick(anim, 'spineSideVel', localDir.x * s * 2);
+    // BRAÇO DIREITO: mesmo reflexo
+    z.flinch.armR = { until: now + 0.55, dirX: localDir.x, dirZ: localDir.z, strength: s };
+    springKick(anim, 'armRXVel', -s * 18);
+    springKick(anim, 'elbowRXVel', s * 22);
+    springKick(anim, 'spineTwistVel', -localDir.x * s * 4);
+    springKick(anim, 'spineSideVel', -localDir.x * s * 3);
+    springKick(anim, 'pelvisRollVel', -localDir.x * s * 4);
+    springKick(anim, 'headTwistVel', localDir.x * s * 4);
+
   } else if (part === 'legL') {
-    springKick(anim, 'thighLXVel', localDir.z * s * 8);
-    springKick(anim, 'kneeLXVel', localDir.z * s * 4);
-    springKick(anim, 'pelvisTwistVel', localDir.x * s * 3);
-    springKick(anim, 'pelvisRollVel', -localDir.x * s * 3);
+    // ============================================================
+    // PERNA ESQUERDA ATINGIDA → PUXA E DOBRA (reflexo de retirada)
+    // ============================================================
+    z.flinch.legL = { until: now + 0.75, dirX: localDir.x, dirZ: localDir.z, strength: s };
+    // Coxa SOBE (puxa o joelho pra frente/cima)
+    springKick(anim, 'thighLXVel', -s * 14);
+    // Joelho DOBRA forte (puxa o pé pra trás)
+    springKick(anim, 'kneeLXVel', s * 24);
+    // Bico do pé aponta pra baixo
+    springKick(anim, 'footLXVel', -s * 6);
+    // Peso vai pra perna DIREITA
+    springKick(anim, 'pelvisRollVel', localDir.x * s * 8);
+    springKick(anim, 'pelvisTwistVel', localDir.x * s * 6);
+    // Coluna compensa o desequilíbrio
+    springKick(anim, 'spineSideVel', -localDir.x * s * 7);
+    springKick(anim, 'spineLeanVel', Math.abs(localDir.z) * s * 5);
+    // Braços se ABREM pra equilibrar (natural)
+    springKick(anim, 'armLXVel', -s * 6);
+    springKick(anim, 'armRXVel', -s * 6);
+    // Cabeça olha pra baixo (reflexo)
+    springKick(anim, 'headPitchVel', s * 8);
+    springKick(anim, 'headTwistVel', -localDir.x * s * 4);
+
   } else if (part === 'legR') {
-    springKick(anim, 'thighRXVel', localDir.z * s * 8);
-    springKick(anim, 'kneeRXVel', localDir.z * s * 4);
-    springKick(anim, 'pelvisTwistVel', localDir.x * s * 3);
-    springKick(anim, 'pelvisRollVel', localDir.x * s * 3);
+    // ============================================================
+    // PERNA DIREITA ATINGIDA
+    // ============================================================
+    z.flinch.legR = { until: now + 0.75, dirX: localDir.x, dirZ: localDir.z, strength: s };
+    springKick(anim, 'thighRXVel', -s * 14);
+    springKick(anim, 'kneeRXVel', s * 24);
+    springKick(anim, 'footRXVel', -s * 6);
+    springKick(anim, 'pelvisRollVel', -localDir.x * s * 8);
+    springKick(anim, 'pelvisTwistVel', -localDir.x * s * 6);
+    springKick(anim, 'spineSideVel', localDir.x * s * 7);
+    springKick(anim, 'spineLeanVel', Math.abs(localDir.z) * s * 5);
+    springKick(anim, 'armLXVel', -s * 6);
+    springKick(anim, 'armRXVel', -s * 6);
+    springKick(anim, 'headPitchVel', s * 8);
+    springKick(anim, 'headTwistVel', localDir.x * s * 4);
   }
-  const ww = s / Math.max(0.7, z.scale);
-  springKick(anim, 'spineSideVel', localDir.x * ww * 5);
-  springKick(anim, 'pelvisRollVel', -localDir.x * ww * 4);
-  springKick(anim, 'spineLeanVel', localDir.z * ww * 3);
 }
 
 // ============================================================
@@ -1555,7 +1730,6 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   } else {
     z.hitReactEndTime = performance.now() / 1000 + CONFIG.zombie.knockbackStagger * (isCrit || isHead ? 1.5 : 1);
     z.hitDirection.copy(hitDir);
-    // Empurrão na velocidade (retrocesso fluido)
     const impulse = (isCrit || isHead ? 4.5 : 3.0) / z.scale;
     z.vx += hitDir.x * impulse;
     z.vz += hitDir.z * impulse;
@@ -2137,7 +2311,7 @@ function resolvePlayerZombieCollision() {
 }
 
 // ============================================================
-// ZOMBIE UPDATE — MOVIMENTO FLUIDO + ANIMAÇÃO SINCRONIZADA
+// ZOMBIE UPDATE — ANIMAÇÃO + FLINCH
 // ============================================================
 const K_THIGH = 110, C_THIGH = 14;
 const K_KNEE = 90, C_KNEE = 12;
@@ -2165,149 +2339,158 @@ function updateZombies(dt) {
     const joints = ud.joints;
     const anim = z.anim;
 
-    // distância ao player
     const dxP = player.position.x - z.mesh.position.x;
     const dzP = player.position.z - z.mesh.position.z;
     const dist = Math.hypot(dxP, dzP);
     const staggering = z.hitReactEndTime > now;
 
-    // =====================================================
-    // 1. ROTAÇÃO SUAVE (o zumbi gira o corpo, não teleporta)
-    // =====================================================
+    // Rotação suave
     const targetYaw = Math.atan2(dxP, dzP);
     let yawDiff = targetYaw - z.mesh.rotation.y;
     while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
     while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
     const yawStep = yawDiff * Math.min(1, dt * 7);
     z.mesh.rotation.y += yawStep;
-    // Velocidade angular para banking
     z.yawVel = yawStep / Math.max(dt, 0.001);
 
-    // =====================================================
-    // 2. MOVIMENTO FLUIDO (padrão Gemini aplicado em 3D)
-    //    - desejado: vetor em direção ao player com magnitude = speed
-    //    - real: interpola suavemente (spring/damping com dt)
-    //    - friction é implícita via interpolação
-    // =====================================================
+    // Movimento fluido
     const arrival = z.attackRange + CONFIG.pursuit.arrivalRadius;
     let desiredVx = 0, desiredVz = 0;
     if (!staggering && emerge >= 0.5 && dist > arrival) {
-      // Fora da zona de ataque → segue em direção ao player
       const speedFactor = isWounded ? 0.6 : 1.0;
       const target = z.speed * speedFactor;
       desiredVx = (dxP / dist) * target;
       desiredVz = (dzP / dist) * target;
     } else if (!staggering && emerge >= 0.5 && dist > z.attackRange) {
-      // Perto, mas não colado → reduz velocidade (arrival)
       const t = (dist - z.attackRange) / CONFIG.pursuit.arrivalRadius;
       const target = z.speed * Math.max(CONFIG.pursuit.minSpeedFactor, t) * (isWounded ? 0.6 : 1);
       desiredVx = (dxP / dist) * target;
       desiredVz = (dzP / dist) * target;
     }
-
-    // Suave interpolação frame-rate-independent (não é spring crítico, é ease-out)
     const k = 1 - Math.exp(-dt * CONFIG.pursuit.responsiveness);
     z.vx += (desiredVx - z.vx) * k;
     z.vz += (desiredVz - z.vz) * k;
 
-    // Stagger atrapalha movimento (desliza um pouco)
     if (staggering) {
       const lean = (z.hitReactEndTime - now) / CONFIG.zombie.knockbackStagger;
       z.vx *= Math.pow(0.85, dt * 60 / Math.max(0.1, lean + 0.1));
       z.vz *= Math.pow(0.85, dt * 60 / Math.max(0.1, lean + 0.1));
-      // Knockback adicional
       z.vx -= z.hitDirection.x * dt * 5 * lean;
       z.vz -= z.hitDirection.z * dt * 5 * lean;
     }
 
-    // Aplicar à posição
     z.mesh.position.x += z.vx * dt;
     z.mesh.position.z += z.vz * dt;
 
-    // =====================================================
-    // 3. ANIMAÇÃO sincronizada com VELOCIDADE REAL
-    // =====================================================
+    // Animação sincronizada com velocidade
     const actualSpeed = Math.hypot(z.vx, z.vz);
     const speedNorm = Math.min(1.5, actualSpeed / Math.max(0.01, z.speed));
-    const walkStyle = z.walkStyle; // 0..1 (quanto mais alto, mais arrastado)
-
-    // Cadência proporcional à velocidade real
-    const cadence = (2.5 + speedNorm * 6.5) * emerge * (1 - walkStyle * 0.35);
+    const walkStyle = z.walkStyle;
+    const shuffling = dist < 3.0;
+    const cadence = (2.0 + speedNorm * 6.5) * emerge * (1 - walkStyle * 0.35) * (shuffling ? 1.35 : 1.0);
     z.walkPhase += dt * cadence;
     const phase = z.walkPhase;
-    const sinP = Math.sin(phase);
-    const cosP = Math.cos(phase);
 
-    // =====================================================
-    // 4. PASSADA DE ZUMBI
-    // =====================================================
-    const legAmp = 0.55 + walkStyle * 0.15; // passos mais largos se arrastado
+    const stumbleWave = Math.sin(phase * 0.31) * Math.sin(phase * 0.73);
+    const stumble = stumbleWave > 0.75 ? (stumbleWave - 0.75) * 4 * speedNorm : 0;
 
-    let legFwdL = sinP;
-    let legFwdR = -sinP;
-    if (z.limpSide === 'L') legFwdL *= (1 - z.limpAmount * 2);
-    else legFwdR *= (1 - z.limpAmount * 2);
+    const stepL = Math.sin(phase);
+    const stepR = Math.sin(phase + Math.PI);
+    const legAmp = (0.5 + walkStyle * 0.2) * (0.35 + speedNorm * 0.65);
 
-    const thighLTarget = legFwdL * legAmp;
-    const thighRTarget = legFwdR * legAmp;
+    let legL = stepL * legAmp;
+    let legR = stepR * legAmp;
+    if (z.limpSide === 'L') legL *= (1 - z.limpAmount * 2);
+    else legR *= (1 - z.limpAmount * 2);
+    if (stumble > 0) {
+      if (Math.random() < 0.5) legL += stumble * 0.8;
+      else legR += stumble * 0.8;
+    }
 
-    // Joelhos: dobram durante avanço, com lift
-    const kneeAmp = 0.75;
-    const kneeLTarget = Math.max(0, -legFwdL) * kneeAmp + 0.08 + walkStyle * 0.15;
-    const kneeRTarget = Math.max(0, -legFwdR) * kneeAmp + 0.08 + walkStyle * 0.15;
+    let thighLTarget = legL;
+    let thighRTarget = legR;
+    const kneeAmp = 0.9 * (0.4 + speedNorm * 0.6);
+    let kneeLTarget = Math.max(0, stepL) * kneeAmp + 0.08 + walkStyle * 0.2;
+    let kneeRTarget = Math.max(0, stepR) * kneeAmp + 0.08 + walkStyle * 0.2;
+    let footLTarget = -stepL * 0.35 * (1 + walkStyle * 0.4);
+    let footRTarget = -stepR * 0.35 * (1 + walkStyle * 0.4);
 
-    // Tornozelo rola pra baixo quando o pé sai (zumbi arrasta)
-    const footLTarget = -legFwdL * 0.30 - walkStyle * 0.15 * Math.max(0, legFwdL);
-    const footRTarget = -legFwdR * 0.30 - walkStyle * 0.15 * Math.max(0, legFwdR);
+    let pelvisRollTarget = -Math.cos(phase) * 0.06 * speedNorm;
+    let pelvisTwistTarget = stepL * 0.14 * speedNorm;
+    let pelvisBobTarget = -Math.abs(Math.sin(phase)) * 0.035 * speedNorm - 0.008 * speedNorm;
 
-    // =====================================================
-    // 5. PÉLVIS (sway lateral + twist + bob 2× por ciclo)
-    // =====================================================
-    const pelvisRollTarget = -cosP * 0.05 * speedNorm;
-    const pelvisTwistTarget = sinP * 0.12 * speedNorm;
-    const pelvisBobTarget = Math.abs(cosP) * 0.030 * speedNorm - 0.015 * speedNorm;
-
-    // =====================================================
-    // 6. COLUNA (counter-rotation)
-    // =====================================================
-    const spineTwistTarget = -sinP * 0.13 * speedNorm;
+    let spineTwistTarget = -stepL * 0.14 * speedNorm;
     const leanBase = isWounded ? 0.22 : 0.10;
-    const spineLeanTarget = leanBase + (dist < 3 ? 0.08 : 0) + speedNorm * 0.04;
-    const spineRollTarget = 0;
+    let spineLeanTarget = leanBase + (dist < 3 ? 0.10 : 0) + speedNorm * 0.06;
+    let spineSideTarget = Math.cos(phase) * 0.04 * speedNorm;
+    let spineRollTarget = 0;
 
-    // =====================================================
-    // 7. CABEÇA
-    // =====================================================
-    const headTwistTarget = spineTwistTarget * 0.3 + sinP * 0.05 * speedNorm;
-    const headRollTarget = z.headLoll + cosP * 0.05 * speedNorm;
-    const headPitchTarget = z.headPitchBase + (dist < 3 ? 0.1 : 0);
+    let headRollTarget = z.headLoll + Math.cos(phase) * 0.08 * speedNorm;
+    let headTwistTarget = spineTwistTarget * 0.4 + stepL * 0.06 * speedNorm;
+    let headPitchTarget = z.headPitchBase + speedNorm * 0.12 + (dist < 3 ? 0.15 : 0);
 
-    // =====================================================
-    // 8. BRAÇOS (opostos às pernas + reaching)
-    // =====================================================
-    const armAmp = 0.55;
     const reaching = dist < 3.5 && !staggering;
+    const armAmp = 0.5 * (0.4 + speedNorm * 0.6);
     let armLXTarget, armRXTarget;
     if (reaching) {
-      armLXTarget = -1.5 + Math.sin(phase * 0.6) * 0.10;
-      armRXTarget = -1.5 + Math.sin(phase * 0.6 + 1.5) * 0.10;
+      const reach = -1.55 + Math.sin(phase * 0.9) * 0.08;
+      armLXTarget = reach + Math.sin(phase * 1.7) * 0.06;
+      armRXTarget = reach + Math.cos(phase * 1.5) * 0.06;
     } else {
-      armLXTarget = -legFwdL * armAmp * speedNorm + z.armDroopL;
-      armRXTarget = -legFwdR * armAmp * speedNorm + z.armDroopR;
+      armLXTarget = -stepL * armAmp + z.armDroopL;
+      armRXTarget = -stepR * armAmp + z.armDroopR;
     }
-    const elbowLXTarget = reaching ? -0.9 + Math.sin(phase * 0.8) * 0.1 : -0.15 - Math.max(0, armLXTarget) * 0.4;
-    const elbowRXTarget = reaching ? -0.9 + Math.sin(phase * 0.8 + 1.5) * 0.1 : -0.15 - Math.max(0, armRXTarget) * 0.4;
+    let elbowLXTarget = reaching ? -0.9 + Math.sin(phase * 0.8) * 0.1 : -0.15 - Math.max(0, armLXTarget) * 0.4;
+    let elbowRXTarget = reaching ? -0.9 + Math.sin(phase * 0.8 + 1.5) * 0.1 : -0.15 - Math.max(0, armRXTarget) * 0.4;
 
-    // =====================================================
-    // 9. BANKING (curva do corpo ao virar)
-    // =====================================================
+    // ============================================================
+    // OVERRIDE DE FLINCH — cada membro reage independente
+    // ============================================================
+    const flinch = z.flinch;
+    if (flinch.head && now < flinch.head.until) {
+      const t = (flinch.head.until - now) / 0.6;
+      headTwistTarget += flinch.head.dirX * flinch.head.strength * 0.7 * t;
+      headPitchTarget += -flinch.head.dirZ * flinch.head.strength * 0.8 * t;
+    }
+    if (flinch.torso && now < flinch.torso.until) {
+      const t = (flinch.torso.until - now) / 0.5;
+      spineLeanTarget += -flinch.torso.dirZ * flinch.torso.strength * 0.6 * t;
+      spineTwistTarget += flinch.torso.dirX * flinch.torso.strength * 0.5 * t;
+    }
+    if (flinch.armL && now < flinch.armL.until) {
+      const t = (flinch.armL.until - now) / 0.55;
+      // Braço esquerdo puxa pra trás e cotovelo fecha
+      armLXTarget += -flinch.armL.strength * 0.9 * t;
+      elbowLXTarget += flinch.armL.strength * 1.2 * t;
+    }
+    if (flinch.armR && now < flinch.armR.until) {
+      const t = (flinch.armR.until - now) / 0.55;
+      armRXTarget += -flinch.armR.strength * 0.9 * t;
+      elbowRXTarget += flinch.armR.strength * 1.2 * t;
+    }
+    if (flinch.legL && now < flinch.legL.until) {
+      const t = (flinch.legL.until - now) / 0.75;
+      // PERNA PUXA: coxa levanta (thigh negativo), joelho DOBRA forte
+      thighLTarget += -flinch.legL.strength * 0.9 * t;
+      kneeLTarget += flinch.legL.strength * 1.6 * t;
+      footLTarget += -flinch.legL.strength * 0.4 * t;
+      // Corpo compensa
+      pelvisRollTarget += flinch.legL.dirX * flinch.legL.strength * 0.4 * t;
+    }
+    if (flinch.legR && now < flinch.legR.until) {
+      const t = (flinch.legR.until - now) / 0.75;
+      thighRTarget += -flinch.legR.strength * 0.9 * t;
+      kneeRTarget += flinch.legR.strength * 1.6 * t;
+      footRTarget += -flinch.legR.strength * 0.4 * t;
+      pelvisRollTarget += -flinch.legR.dirX * flinch.legR.strength * 0.4 * t;
+    }
+
+    // Banking
     const bankTarget = -z.yawVel * 0.05 * speedNorm;
     springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
     springStep(anim, 'bankZ', bankTarget, K_BANK, C_BANK, dt);
 
-    // =====================================================
-    // 10. APLICAR SPRINGS
-    // =====================================================
+    // Springs
     springStep(anim, 'thighLX', thighLTarget, K_THIGH, C_THIGH, dt);
     springStep(anim, 'thighRX', thighRTarget, K_THIGH, C_THIGH, dt);
     springStep(anim, 'kneeLX', kneeLTarget, K_KNEE, C_KNEE, dt);
@@ -2329,9 +2512,7 @@ function updateZombies(dt) {
     springStep(anim, 'elbowLX', elbowLXTarget, K_ELBOW, C_ELBOW, dt);
     springStep(anim, 'elbowRX', elbowRXTarget, K_ELBOW, C_ELBOW, dt);
 
-    // =====================================================
-    // 11. APLICAR NOS JOINT GROUPS
-    // =====================================================
+    // Aplicar
     joints.pelvis.rotation.z = anim.pelvisRoll;
     joints.pelvis.rotation.y = anim.pelvisTwist;
     joints.pelvis.position.y = P_PELVIS_Y + anim.pelvisBob;
@@ -2364,9 +2545,6 @@ function updateZombies(dt) {
       joints.spineUpper.rotation.x -= lean * 0.30;
     }
 
-    // =====================================================
-    // 12. HEADLESS → morte
-    // =====================================================
     if (z.dismembered.head) {
       Sfx.playZombieDeath(); state.zombiesAlive--;
       const idx = zombies.indexOf(z);
@@ -2378,9 +2556,6 @@ function updateZombies(dt) {
       continue;
     }
 
-    // =====================================================
-    // 13. ATAQUE
-    // =====================================================
     if (emerge >= 0.5) {
       if (z.isRanged && !staggering) {
         if (dist < z.rangedRange && now - z.lastRangedShot > z.rangedCooldown) {
@@ -2414,11 +2589,9 @@ function updateZombies(dt) {
         if (state.health <= 0 && !state.downed && performance.now() / 1000 >= state.invulnUntil) enterDownedState();
       }
     }
-
     resolveWallCollisions(z.mesh.position, z.radius);
   }
 
-  // Colisão zumbi-zumbi (empurra com massa + feedback de velocidade)
   for (let i = 0; i < zombies.length; i++) {
     for (let j = i + 1; j < zombies.length; j++) {
       const a = zombies[i], b = zombies[j];
@@ -2437,7 +2610,6 @@ function updateZombies(dt) {
         const nx = dx / d, nz = dz / d;
         a.mesh.position.x -= nx * pushA; a.mesh.position.z -= nz * pushA;
         b.mesh.position.x += nx * pushB; b.mesh.position.z += nz * pushB;
-        // Também empurra velocidades para não grudar
         a.vx -= nx * pushA * 3; a.vz -= nz * pushA * 3;
         b.vx += nx * pushB * 3; b.vz += nz * pushB * 3;
       }
