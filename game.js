@@ -933,7 +933,6 @@ function acquireBloodParticle() {
   return p;
 }
 function spawnBlood(position, direction = null, count = 16, big = false) {
-  // Reduzido o count pela metade para performance
   count = Math.max(4, Math.floor(count * 0.6));
   for (let i = 0; i < count; i++) {
     const p = acquireBloodParticle();
@@ -1022,7 +1021,13 @@ class Debris {
         const sSq = this.velocity.lengthSq(), aSq = this.angularVelocity.lengthSq();
         if (sSq < 0.12 && aSq < 0.35) {
           this.settleTimer += dt;
-          if (this.settleTimer > 0.4) { this.settled = true; this.velocity.set(0,0,0); this.angularVelocity.set(0,0,0); }
+          if (this.settleTimer > 0.4) {
+            this.settled = true;
+            this.velocity.set(0,0,0);
+            this.angularVelocity.set(0,0,0);
+            // PATCH #4: libera o Map para evitar leak de memória em ragdolls longevos
+            if (this.lastHitZombie && this.lastHitZombie.size > 0) this.lastHitZombie.clear();
+          }
         } else this.settleTimer = 0;
       }
     }
@@ -1212,6 +1217,9 @@ function randomDismemberOnDeath(z) {
 const debrisGrid = new SpatialGrid(4);
 const zCollGrid = new SpatialGrid(2);
 
+// PATCH #5: scratch reutilizado — evita alocação por frame em checkDebrisZombieCollision
+const _allPiecesScratch = [];
+
 function checkDebrisZombieCollision() {
   const now = performance.now()/1000;
   debrisGrid.clear();
@@ -1220,9 +1228,16 @@ function checkDebrisZombieCollision() {
     if (z.health <= 0) continue;
     debrisGrid.insert(z, z.mesh.position.x, z.mesh.position.z);
   }
-  const allPieces = [...flyingLimbs];
-  for (const r of ragdolls) { if (r.state === 'fading') continue; for (const p of r.pieces) allPieces.push(p); }
-  for (const piece of allPieces) {
+  const allPieces = _allPiecesScratch;
+  allPieces.length = 0;
+  for (let fl = 0; fl < flyingLimbs.length; fl++) allPieces.push(flyingLimbs[fl]);
+  for (let ri = 0; ri < ragdolls.length; ri++) {
+    const r = ragdolls[ri];
+    if (r.state === 'fading') continue;
+    for (let pi = 0; pi < r.pieces.length; pi++) allPieces.push(r.pieces[pi]);
+  }
+  for (let pi = 0; pi < allPieces.length; pi++) {
+    const piece = allPieces[pi];
     if (piece.settled) continue;
     const y = piece.mesh.position.y;
     if (y < 0.55 || y > 2.1) continue;
@@ -1418,6 +1433,12 @@ function addShake(amount) { state.shake = Math.min(0.7, state.shake + amount); }
 const muzzleLight = new THREE.PointLight(0xFFAA33, 0, 8, 2);
 scene.add(muzzleLight);
 let muzzleLightEnd = 0;
+
+// PATCH #3: point light reciclada para explosões — evita recompilar shaders
+const explosionLight = new THREE.PointLight(0xFF6600, 0, 14, 2);
+scene.add(explosionLight);
+let explosionLightEnd = 0;
+
 function spawnMuzzleFlash() {
   const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
   muzzleLight.position.copy(camera.position).addScaledVector(dir, 1.4);
@@ -1471,8 +1492,9 @@ function reactToExplosion(pos, radius) {
   }
 }
 function spawnExplosion(pos) {
-  const light = new THREE.PointLight(0xFF6600, 6, 12, 2);
-  light.position.copy(pos); light.position.y += 1; scene.add(light);
+  explosionLight.position.copy(pos); explosionLight.position.y += 1;
+  explosionLight.intensity = 6;
+  explosionLightEnd = performance.now()/1000 + 0.35;
   const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), new THREE.MeshBasicMaterial({ color:0xFFAA33, transparent:true, opacity:1 }));
   sphere.position.copy(pos); sphere.position.y += 0.5; scene.add(sphere);
   spawnBlood(pos, null, 20, true);
@@ -1497,16 +1519,20 @@ function spawnExplosion(pos) {
     state.health -= dmg; showDamageFlash(); updateHUD();
     if (state.health <= 0) enterDownedState();
   }
-  explosions.push({ sphere, light, life:0.35, maxLife:0.35 });
+  explosions.push({ sphere, life:0.35, maxLife:0.35 });
 }
 function updateExplosions(dt) {
+  if (explosionLightEnd > 0) {
+    const remain = explosionLightEnd - performance.now()/1000;
+    if (remain <= 0) { explosionLight.intensity = 0; explosionLightEnd = 0; }
+    else explosionLight.intensity = 6 * (remain / 0.35);
+  }
   for (let i = explosions.length - 1; i >= 0; i--) {
     const e = explosions[i]; e.life -= dt;
     const t = 1 - e.life/e.maxLife;
     e.sphere.scale.setScalar(1 + t*10);
     e.sphere.material.opacity = 1 - t;
-    e.light.intensity = 6 * (1 - t);
-    if (e.life <= 0) { scene.remove(e.sphere); scene.remove(e.light); e.sphere.geometry.dispose(); e.sphere.material.dispose(); explosions.splice(i, 1); }
+    if (e.life <= 0) { scene.remove(e.sphere); e.sphere.geometry.dispose(); e.sphere.material.dispose(); explosions.splice(i, 1); }
   }
 }
 
@@ -1659,10 +1685,11 @@ function attack(isRightClick = false) {
     const minDot = CONFIG.melee.coneDot;
     let hitCount = 0;
     const maxHits = weapon.hitCount || 1;
-    for (let i = 0; i < zombies.length; i++) {
+    // PATCH #1: iterar DE TRÁS PRA FRENTE — damageZombie faz splice()
+    for (let i = zombies.length - 1; i >= 0; i--) {
       if (hitCount >= maxHits) break;
       const z = zombies[i];
-      if (z.health <= 0) continue;
+      if (!z || z.health <= 0) continue;
       const dx = z.mesh.position.x - player.position.x, dz = z.mesh.position.z - player.position.z;
       const horizDist = Math.sqrt(dx*dx + dz*dz);
       if (horizDist > range) continue;
@@ -2329,7 +2356,6 @@ function updateZombieLOD() {
     const dx = z.mesh.position.x - camX;
     const dz = z.mesh.position.z - camZ;
     const d2 = dx*dx + dz*dz;
-    // Longe: esconde
     z.mesh.visible = d2 < 2500; // 50m
   }
 }
@@ -2343,12 +2369,13 @@ function updateZombies(dt) {
     const z = zombies[i];
     if (z.health <= 0) continue;
 
-    // LOD: zumbis longe atualizam em ~30Hz
+    // PATCH #2: LOD agora SÓ pula a parte visual (springs/juntas).
+    // IA, física, emerge, colisão e ataque SEMPRE rodam — senão zumbis
+    // distantes ficam congelados e "zombiesAlive" nunca chega a 0.
     const dxLod = z.mesh.position.x - player.position.x;
     const dzLod = z.mesh.position.z - player.position.z;
     const distLod2 = dxLod*dxLod + dzLod*dzLod;
-    const isFar = distLod2 > 400;
-    if (isFar && ((i & 1) !== (Math.floor(performance.now() / 33) & 1))) continue;
+    const skipVisual = distLod2 > 400 && ((i & 1) !== (Math.floor(performance.now() / 33) & 1));
 
     z.emergeTime += dt;
     const emerge = Math.min(1, z.emergeTime/1.5);
@@ -2523,52 +2550,58 @@ function updateZombies(dt) {
       armRXTarget -= hunt*0.25;
     }
 
-    springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
-    springStep(anim, 'bankZ', -z.yawVel*0.05*speedNorm, K_BANK, C_BANK, dt);
-    springStep(anim, 'thighLX', thighLTarget, K_THIGH, C_THIGH, dt);
-    springStep(anim, 'thighRX', thighRTarget, K_THIGH, C_THIGH, dt);
-    springStep(anim, 'kneeLX', kneeLTarget, K_KNEE, C_KNEE, dt);
-    springStep(anim, 'kneeRX', kneeRTarget, K_KNEE, C_KNEE, dt);
-    springStep(anim, 'footLX', footLTarget, K_FOOT, C_FOOT, dt);
-    springStep(anim, 'footRX', footRTarget, K_FOOT, C_FOOT, dt);
-    springStep(anim, 'pelvisRoll', pelvisRollTarget, K_PELVIS, C_PELVIS, dt);
-    springStep(anim, 'pelvisTwist', pelvisTwistTarget, K_PELVIS, C_PELVIS, dt);
-    springStep(anim, 'pelvisBob', pelvisBobTarget, K_PELVIS, C_PELVIS, dt);
-    springStep(anim, 'spineTwist', spineTwistTarget, K_SPINE, C_SPINE, dt);
-    springStep(anim, 'spineLean', spineLeanTarget, K_SPINE, C_SPINE, dt);
-    springStep(anim, 'spineRoll', spineRollTarget, K_SPINE, C_SPINE, dt);
-    springStep(anim, 'spineSide', spineSideTarget, K_SPINE, C_SPINE, dt);
-    springStep(anim, 'headTwist', headTwistTarget, K_HEAD, C_HEAD, dt);
-    springStep(anim, 'headRoll', headRollTarget, K_HEAD*0.7, C_HEAD, dt);
-    springStep(anim, 'headPitch', headPitchTarget, K_HEAD, C_HEAD, dt);
-    springStep(anim, 'armLX', armLXTarget, K_ARM, C_ARM, dt);
-    springStep(anim, 'armRX', armRXTarget, K_ARM, C_ARM, dt);
-    springStep(anim, 'elbowLX', elbowLXTarget, K_ELBOW, C_ELBOW, dt);
-    springStep(anim, 'elbowRX', elbowRXTarget, K_ELBOW, C_ELBOW, dt);
+    // PATCH #2: visual pesado só quando não está em skip
+    if (skipVisual) {
+      // Atualiza só a posição do pelvis para o corpo não "afundar"
+      joints.pelvis.position.y = P_PELVIS_Y + anim.pelvisBob;
+    } else {
+      springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
+      springStep(anim, 'bankZ', -z.yawVel*0.05*speedNorm, K_BANK, C_BANK, dt);
+      springStep(anim, 'thighLX', thighLTarget, K_THIGH, C_THIGH, dt);
+      springStep(anim, 'thighRX', thighRTarget, K_THIGH, C_THIGH, dt);
+      springStep(anim, 'kneeLX', kneeLTarget, K_KNEE, C_KNEE, dt);
+      springStep(anim, 'kneeRX', kneeRTarget, K_KNEE, C_KNEE, dt);
+      springStep(anim, 'footLX', footLTarget, K_FOOT, C_FOOT, dt);
+      springStep(anim, 'footRX', footRTarget, K_FOOT, C_FOOT, dt);
+      springStep(anim, 'pelvisRoll', pelvisRollTarget, K_PELVIS, C_PELVIS, dt);
+      springStep(anim, 'pelvisTwist', pelvisTwistTarget, K_PELVIS, C_PELVIS, dt);
+      springStep(anim, 'pelvisBob', pelvisBobTarget, K_PELVIS, C_PELVIS, dt);
+      springStep(anim, 'spineTwist', spineTwistTarget, K_SPINE, C_SPINE, dt);
+      springStep(anim, 'spineLean', spineLeanTarget, K_SPINE, C_SPINE, dt);
+      springStep(anim, 'spineRoll', spineRollTarget, K_SPINE, C_SPINE, dt);
+      springStep(anim, 'spineSide', spineSideTarget, K_SPINE, C_SPINE, dt);
+      springStep(anim, 'headTwist', headTwistTarget, K_HEAD, C_HEAD, dt);
+      springStep(anim, 'headRoll', headRollTarget, K_HEAD*0.7, C_HEAD, dt);
+      springStep(anim, 'headPitch', headPitchTarget, K_HEAD, C_HEAD, dt);
+      springStep(anim, 'armLX', armLXTarget, K_ARM, C_ARM, dt);
+      springStep(anim, 'armRX', armRXTarget, K_ARM, C_ARM, dt);
+      springStep(anim, 'elbowLX', elbowLXTarget, K_ELBOW, C_ELBOW, dt);
+      springStep(anim, 'elbowRX', elbowRXTarget, K_ELBOW, C_ELBOW, dt);
 
-    joints.pelvis.rotation.z = anim.pelvisRoll;
-    joints.pelvis.rotation.y = anim.pelvisTwist;
-    joints.pelvis.position.y = P_PELVIS_Y + anim.pelvisBob;
-    joints.spineLower.rotation.x = anim.spineLean*0.4;
-    joints.spineLower.rotation.z = anim.spineRoll*0.4 + anim.spineSide*0.3 + anim.bankZ;
-    joints.spineUpper.rotation.y = anim.spineTwist;
-    joints.spineUpper.rotation.x = anim.spineLean*0.6;
-    joints.spineUpper.rotation.z = anim.spineRoll*0.6 + anim.spineSide*0.7 + anim.bankZ*0.5;
-    joints.neck.rotation.y = anim.headTwist*0.4;
-    joints.neck.rotation.x = anim.headPitch*0.3;
-    joints.head.rotation.y = anim.headTwist;
-    joints.head.rotation.z = anim.headRoll;
-    joints.head.rotation.x = anim.headPitch;
-    joints.shoulderL.rotation.x = anim.armLX;
-    joints.shoulderR.rotation.x = anim.armRX;
-    joints.elbowL.rotation.x = anim.elbowLX;
-    joints.elbowR.rotation.x = anim.elbowRX;
-    joints.thighL.rotation.x = anim.thighLX;
-    joints.thighR.rotation.x = anim.thighRX;
-    joints.kneeL.rotation.x = anim.kneeLX;
-    joints.kneeR.rotation.x = anim.kneeRX;
-    joints.footL.rotation.x = anim.footLX;
-    joints.footR.rotation.x = anim.footRX;
+      joints.pelvis.rotation.z = anim.pelvisRoll;
+      joints.pelvis.rotation.y = anim.pelvisTwist;
+      joints.pelvis.position.y = P_PELVIS_Y + anim.pelvisBob;
+      joints.spineLower.rotation.x = anim.spineLean*0.4;
+      joints.spineLower.rotation.z = anim.spineRoll*0.4 + anim.spineSide*0.3 + anim.bankZ;
+      joints.spineUpper.rotation.y = anim.spineTwist;
+      joints.spineUpper.rotation.x = anim.spineLean*0.6;
+      joints.spineUpper.rotation.z = anim.spineRoll*0.6 + anim.spineSide*0.7 + anim.bankZ*0.5;
+      joints.neck.rotation.y = anim.headTwist*0.4;
+      joints.neck.rotation.x = anim.headPitch*0.3;
+      joints.head.rotation.y = anim.headTwist;
+      joints.head.rotation.z = anim.headRoll;
+      joints.head.rotation.x = anim.headPitch;
+      joints.shoulderL.rotation.x = anim.armLX;
+      joints.shoulderR.rotation.x = anim.armRX;
+      joints.elbowL.rotation.x = anim.elbowLX;
+      joints.elbowR.rotation.x = anim.elbowRX;
+      joints.thighL.rotation.x = anim.thighLX;
+      joints.thighR.rotation.x = anim.thighRX;
+      joints.kneeL.rotation.x = anim.kneeLX;
+      joints.kneeR.rotation.x = anim.kneeRX;
+      joints.footL.rotation.x = anim.footLX;
+      joints.footR.rotation.x = anim.footRX;
+    }
 
     if (z.dismembered.head && !z.dying) {
       z.dying = true;
@@ -2999,9 +3032,18 @@ function nameOf(id) {
   return ensureStats(id).name;
 }
 const damageNumbersEl = document.getElementById('damage-numbers');
+
+// PATCH #6: cap duro de damage numbers para evitar DOM explodindo com SMG
+const DAMAGE_NUMBERS_MAX = 40;
+let damageNumbersActive = 0;
+
 function spawnDamageNumber(worldPos, amount, kind) {
   const screen = worldToScreen(worldPos);
   if (!screen.visible) return;
+  while (damageNumbersActive >= DAMAGE_NUMBERS_MAX && damageNumbersEl.firstChild) {
+    damageNumbersEl.removeChild(damageNumbersEl.firstChild);
+    damageNumbersActive--;
+  }
   const el = document.createElement('div');
   el.className = 'dmg-number dmg-' + kind;
   el.textContent = Math.round(amount);
@@ -3009,7 +3051,10 @@ function spawnDamageNumber(worldPos, amount, kind) {
   el.style.left = (screen.x + jX) + 'px';
   el.style.top = (screen.y + jY) + 'px';
   damageNumbersEl.appendChild(el);
-  setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 850);
+  damageNumbersActive++;
+  setTimeout(() => {
+    if (el.parentNode) { el.parentNode.removeChild(el); damageNumbersActive--; }
+  }, 850);
 }
 const killFeedEl = document.getElementById('kill-feed');
 const KILL_FEED_MAX = 5, KILL_FEED_LIFE = 4200;
