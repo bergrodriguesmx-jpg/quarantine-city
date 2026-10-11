@@ -314,7 +314,29 @@ const headgearMats = {
 // VIEWMODEL 3D
 // ============================================================
 scene.add(camera);
+// ============================================================
+// CALIBRADOR DE ARMAS
+// ============================================================
+let calibrator = null;
 
+function initCalibrator() {
+  if (calibrator) return;
+  calibrator = new WeaponCalibrator({
+    overlay:    document.getElementById('calibration'),
+    listEl:     document.getElementById('calib-list'),
+    viewportEl: document.getElementById('calib-viewport'),
+    slidersEl:  document.getElementById('calib-controls'),
+    statusEl:   document.getElementById('calib-status'),
+    saveBtn:    document.getElementById('btn-calib-save'),
+    resetBtn:   document.getElementById('btn-calib-reset'),
+    closeBtn:   document.getElementById('btn-calib-close'),
+  });
+}
+
+document.getElementById('btn-calibrate').addEventListener('click', () => {
+  initCalibrator();
+  calibrator.open();
+});
 let weaponView = null;
 
 function initWeaponView() {
