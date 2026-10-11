@@ -14,26 +14,15 @@ import { computePartLocalBoxes } from './src/core/part-box.js';
 import { enrichWeapons, MELEE_TYPES, ZOMBIE_LORE, formatWeaponTooltip } from './src/core/lore.js';
 import { initPhysics, stepPhysics, addStaticBox, clearPhysics, Ragdoll as PhysicsRagdoll } from './src/core/ragdoll-physics.js';
 
-// ====== FUSÃO ZB2 ======
 import * as Daytime from './src/core/daytime.js';
 import * as BossStages from './src/core/boss-stages.js';
 import * as Gore from './src/core/gore.js';
 import * as ZombieAI from './src/core/zombie-ai.js';
 import * as Extraction from './src/core/extraction.js';
-
-// ====== STUCK DETECTION ======
 import { initStuckState, updateStuckDetection, applyStuckPhysics } from './src/core/zombie-stuck.js';
-
-// ====== VIEWMODEL 3D ======
 import { Weapon3DView } from './src/render/viewmodel-3d.js';
-
-// ====== PICKUPS 3D ======
 import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pickup-3d.js';
-
-// ====== ÍCONES 3D DA LOJA ======
 import { getWeaponIconURL, getAmmoIconURL } from './src/render/weapon-icon-renderer.js';
-
-// ====== CALIBRADOR DE ARMAS ======
 import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 
 bus.setAdapter(new LocalAdapter());
@@ -142,6 +131,14 @@ const CONFIG = {
   brazier: { fuelPerWave:1, maxFuel:3, costPerBurn:1, waveSpeedBoost:3.0, rewardMult:2.0 },
   vendor: { spawnEveryWaves:3, durationSec:60, buyDiscount:0.8, sellRate:0.4 },
   crawl: { speedMul:0.35, attackRangeMul:0.75, cooldownMul:1.4 },
+  // ═══ IK / LOOK-AT ═══
+  ik: {
+    lookAtMaxYaw: 0.6,       // ±34° de giro da cabeça
+    lookAtHeadShare: 0.75,   // quanto do giro fica na cabeça (resto no corpo)
+    leanTowardPlayerDist: 4, // distância pra começar a inclinar
+    leanAmount: 0.10,        // radianos de inclinação
+    footMinY: -0.02,         // limite de penetração de pé
+  },
 };
 
 const state = {
@@ -313,15 +310,11 @@ const headgearMats = {
 };
 
 // ============================================================
-// VIEWMODEL 3D
+// VIEWMODEL + CALIBRADOR
 // ============================================================
 scene.add(camera);
 
 let weaponView = null;
-
-// ============================================================
-// CALIBRADOR DE ARMAS
-// ============================================================
 let calibrator = null;
 
 function initCalibrator() {
@@ -851,10 +844,115 @@ function makeAnimState() {
     alertBlend:0, idleBlend:0,
     crawlBlend:0,
     crawlPhase:0,
+    // ═══ NOVOS: look-at + IK ═══
+    lookAtYaw:0,        // yaw atual da cabeça (rad)
+    lookAtPitch:0,      // pitch atual da cabeça
+    footCorrectionL:0,  // correção de altura do pé esquerdo
+    footCorrectionR:0,  // correção de altura do pé direito
+    leanX:0,            // inclinação pra frente
+    leanXVel:0,
   };
 }
 
 let groanTimer = 0;
+
+// ════════════════════════════════════════════════════════════
+// IK / LOOK-AT HELPERS
+// ════════════════════════════════════════════════════════════
+const _ikScratchVec = new THREE.Vector3();
+
+/**
+ * Faz a cabeça do zumbi virar na direção do player com limite.
+ * Aplicado DEPOIS do spring, sobrescreve o head.rotation.y.
+ */
+function applyLookAt(z, joints, player, dt, alerted) {
+  const anim = z.anim;
+  const cfg = CONFIG.ik;
+
+  // Só rastreia quando alertado (aware/combat) — unaware olha a esmo
+  if (!alerted) {
+    anim.lookAtYaw = smoothDamp(anim.lookAtYaw, 0, 3, dt);
+    return;
+  }
+
+  // Direção do player em relação ao zumbi
+  const dx = player.position.x - z.mesh.position.x;
+  const dz = player.position.z - z.mesh.position.z;
+  const targetYaw = Math.atan2(dx, dz);
+
+  // Quanto o player está pra esquerda/direita do olhar do zumbi
+  let rel = targetYaw - z.mesh.rotation.y;
+  while (rel > Math.PI) rel -= Math.PI*2;
+  while (rel < -Math.PI) rel += Math.PI*2;
+
+  // Limita
+  const limited = Math.max(-cfg.lookAtMaxYaw, Math.min(cfg.lookAtMaxYaw, rel));
+
+  // Blending suave
+  const blend = Math.min(1, dt * 5);
+  anim.lookAtYaw += (limited - anim.lookAtYaw) * blend;
+
+  // Aplica no head — parcialmente (resto vai pro corpo via spineTwist)
+  // NÃO sobrescreve — ADICIONA ao que o spring já fez
+  joints.head.rotation.y += anim.lookAtYaw * cfg.lookAtHeadShare;
+}
+
+/**
+ * Anti-penetração de pé — se o pé ficou abaixo do chão,
+ * levanta levemente o joelho (rotação X do foot pai).
+ */
+function applyFootIK(z, joints, anim, dt) {
+  const cfg = CONFIG.ik;
+  // Estimativa heurística: quanto o pé afundou baseado em
+  // knee rotation (calcanhar no chão quando knee > 0) e pelve bob.
+  // Se bob do pé do spring for < minY, aplica correção.
+  const minY = cfg.footMinY;
+
+  // Pé esquerdo
+  const footLY = joints.footL.position.y;
+  const targetL = footLY < minY ? minY - footLY : 0;
+  anim.footCorrectionL = smoothDamp(anim.footCorrectionL, targetL, 12, dt);
+  joints.footL.position.y += anim.footCorrectionL;
+
+  // Pé direito
+  const footRY = joints.footR.position.y;
+  const targetR = footRY < minY ? minY - footRY : 0;
+  anim.footCorrectionR = smoothDamp(anim.footCorrectionR, targetR, 12, dt);
+  joints.footR.position.y += anim.footCorrectionR;
+}
+
+/**
+ * Inclinação do torso na direção do player quando perto.
+ * Adiciona ameaça — o zumbi "se joga" na sua direção.
+ */
+function applyBodyLean(z, joints, player, dt, alerted) {
+  const anim = z.anim;
+  const cfg = CONFIG.ik;
+  if (!alerted || z.dying) {
+    anim.leanX = smoothDamp(anim.leanX, 0, 4, dt);
+    return;
+  }
+
+  const dx = player.position.x - z.mesh.position.x;
+  const dz = player.position.z - z.mesh.position.z;
+  const dist = Math.hypot(dx, dz);
+
+  if (dist > cfg.leanTowardPlayerDist) {
+    anim.leanX = smoothDamp(anim.leanX, 0, 4, dt);
+    return;
+  }
+
+  const proximity = 1 - (dist / cfg.leanTowardPlayerDist); // 0 longe, 1 perto
+  const target = cfg.leanAmount * proximity;
+
+  anim.leanX = smoothDamp(anim.leanX, target, 5, dt);
+
+  // Aplica no spineLower (metade) e spineUpper (metade)
+  joints.spineLower.rotation.x += anim.leanX * 0.5;
+  joints.spineUpper.rotation.x += anim.leanX * 0.5;
+}
+
+// ════════════════════════════════════════════════════════════
 
 function spawnZombie(forceType) {
   const cave = caves[Math.floor(Math.random() * caves.length)];
@@ -907,7 +1005,6 @@ function spawnZombie(forceType) {
     flinch:{ head:null, armL:null, armR:null, legL:null, legR:null, torso:null },
     teleportCd:0, summonCd:0,
     crawling:false,
-    // sistemas novos
     growlCooldown: 3 + Math.random() * 2,
     aggroSoundCooldown: 0,
     _wasAlerted: false,
@@ -999,28 +1096,17 @@ function updateBloodPools(dt) {
 }
 
 // ============================================================
-// SANGUE CONTÍNUO DOS COTOS (após decapitação/dismember)
+// SANGUE CONTÍNUO DOS COTOS
 // ============================================================
 const bloodFountains = [];
-
 function spawnBloodFountain(position, duration = 2.5) {
-  bloodFountains.push({
-    x: position.x,
-    y: position.y,
-    z: position.z,
-    life: duration,
-    maxLife: duration,
-    tick: 0,
-  });
+  bloodFountains.push({ x: position.x, y: position.y, z: position.z, life: duration, maxLife: duration, tick: 0 });
 }
-
 function updateBloodFountains(dt) {
   for (let i = bloodFountains.length - 1; i >= 0; i--) {
     const f = bloodFountains[i];
     f.life -= dt;
     f.tick += dt;
-
-    // Emite 1 partícula a cada ~50ms
     while (f.tick > 0.05) {
       f.tick -= 0.05;
       const p = acquireBloodParticle();
@@ -1029,18 +1115,11 @@ function updateBloodFountains(dt) {
       p.mesh.position.set(f.x, f.y, f.z);
       p.mesh.material.color.setHex(0x6B0000);
       p.mesh.material.opacity = 1;
-      // Cai reto, só um pouquinho de desvio
-      p.vel.set(
-        (Math.random() - 0.5) * 0.4,
-        -0.5 - Math.random() * 0.5,
-        (Math.random() - 0.5) * 0.4
-      );
-      p.life = 0.6;
-      p.maxLife = 0.6;
+      p.vel.set((Math.random() - 0.5) * 0.4, -0.5 - Math.random() * 0.5, (Math.random() - 0.5) * 0.4);
+      p.life = 0.6; p.maxLife = 0.6;
       scene.add(p.mesh);
       bloodActive.push(p);
     }
-
     if (f.life <= 0) bloodFountains.splice(i, 1);
   }
 }
@@ -1595,22 +1674,17 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     checkLevelUp();
     randomDismemberOnDeath(z);
 
-    // ─── FONTE DE SANGUE NOS COTOS ───
-    // Antes do ragdoll, salva a posição do torso
     const torsoWorldPos = new THREE.Vector3();
     z.mesh.userData.torso.getWorldPosition(torsoWorldPos);
 
     const overkill = Math.min(2, Math.max(0.7, -z.health/z.maxHealth + 1));
     startRagdoll(z.mesh, hitDir, isCrit ? overkill*1.4 : overkill, z.dismembered);
 
-    // Aplica fountains baseado no que foi decapitado
     if (z.dismembered.head) {
-      // Fonte principal no pescoço (3s)
       torsoWorldPos.y += 0.35;
       spawnBloodFountain(torsoWorldPos, 3.0);
     }
     if (z.dismembered.armL || z.dismembered.armR || z.dismembered.legL || z.dismembered.legR) {
-      // Fonte mais curta no torso (1.5s)
       torsoWorldPos.y += 0.1;
       spawnBloodFountain(torsoWorldPos, 1.5);
     }
@@ -1833,7 +1907,6 @@ function attack(isRightClick = false) {
         Sfx.playKnifeHitFlesh();
         showHitMarker(false);
         spawnBlood(detached.mesh.position.clone(), detached.velocity.clone().normalize(), 15, true);
-        // Fonte curta no ragdoll
         spawnBloodFountain(detached.mesh.position.clone(), 1.2);
         break;
       }
@@ -2546,11 +2619,9 @@ function updateZombies(dt) {
     const anim = z.anim;
     const alerted = z.alertedUntil > now;
 
-    // HP-based speed (suave entre 50% e 75% de HP)
     const hpFrac = z.health / z.maxHealth;
     const hpSpeedMul = 0.6 + 0.4 * Math.max(0, Math.min(1, (hpFrac - 0.5) / 0.25));
 
-    // ─── Growl individual (ZB2-style) ───
     z.growlCooldown -= dt;
     if (z.growlCooldown <= 0) {
       const mult = (z.typeKey === 'worker' || z.typeKey === 'miner') ? 0.25 : 1;
@@ -2662,7 +2733,6 @@ function updateZombies(dt) {
     z.mesh.position.z += z.vz * dt;
     resolveWallCollisions(z.mesh.position, z.radius);
 
-    // Stuck detection + hop physics
     updateStuckDetection(z, dt, world);
     applyStuckPhysics(z, dt);
 
@@ -2864,6 +2934,13 @@ function updateZombies(dt) {
       joints.kneeR.rotation.x = anim.kneeRX;
       joints.footL.rotation.x = anim.footLX;
       joints.footR.rotation.x = anim.footRX;
+
+      // ══════════════════════════════════════════════════
+      // IK / LOOK-AT — APLICADO DEPOIS DOS SPRINGS
+      // ══════════════════════════════════════════════════
+      applyLookAt(z, joints, player, dt, alerted);
+      applyFootIK(z, joints, anim, dt);
+      applyBodyLean(z, joints, player, dt, alerted);
     }
 
     if (z.dismembered.head && !z.dying) {
