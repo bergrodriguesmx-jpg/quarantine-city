@@ -21,9 +21,11 @@ import * as Gore from './src/core/gore.js';
 import * as ZombieAI from './src/core/zombie-ai.js';
 import * as Extraction from './src/core/extraction.js';
 
+// ====== STUCK DETECTION (NOVO) ======
+import { initStuckState, updateStuckDetection, applyStuckPhysics } from './src/core/zombie-stuck.js';
+
 // ====== VIEWMODEL 3D ======
 import { Weapon3DView } from './src/render/viewmodel-3d.js';
-import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 
 // ====== PICKUPS 3D ======
 import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pickup-3d.js';
@@ -31,8 +33,8 @@ import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pic
 // ====== ÍCONES 3D DA LOJA ======
 import { getWeaponIconURL, getAmmoIconURL } from './src/render/weapon-icon-renderer.js';
 
-// ====== PRELOAD DE GLB (modelos de alta qualidade) ======
-import { precacheAllWeaponGLBs, hasGLB } from './src/render/weapon-models.js';
+// ====== CALIBRADOR DE ARMAS ======
+import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 
 bus.setAdapter(new LocalAdapter());
 
@@ -314,6 +316,9 @@ const headgearMats = {
 // VIEWMODEL 3D
 // ============================================================
 scene.add(camera);
+
+let weaponView = null;
+
 // ============================================================
 // CALIBRADOR DE ARMAS
 // ============================================================
@@ -337,7 +342,6 @@ document.getElementById('btn-calibrate').addEventListener('click', () => {
   initCalibrator();
   calibrator.open();
 });
-let weaponView = null;
 
 function initWeaponView() {
   if (weaponView) weaponView.dispose();
@@ -903,8 +907,16 @@ function spawnZombie(forceType) {
     flinch:{ head:null, armL:null, armR:null, legL:null, legR:null, torso:null },
     teleportCd:0, summonCd:0,
     crawling:false,
+    // ====== NOVO: systems de stuck + aggro sound ======
+    aggroSoundCooldown: 0,
+    _wasAlerted: false,
+    _forceGroan: false,
+    _groundTime: 0,
   };
   zombies.push(z);
+
+  // ====== NOVO: init stuck state ======
+  initStuckState(z);
 
   ZombieAI.initZombieAIState(z);
   if (z.isBoss) {
@@ -2446,8 +2458,13 @@ function updateZombieLOD() {
 
 function updateZombies(dt) {
   const now = performance.now()/1000;
+
+  // ====== Ambiente: groans aleatórios (mais espaçados) ======
   groanTimer -= dt;
-  if (groanTimer <= 0 && zombies.length > 0) { groanTimer = 1.5 + Math.random()*3; Sfx.playGroan(); }
+  if (groanTimer <= 0 && zombies.length > 0) {
+    groanTimer = 4 + Math.random() * 4;
+    Sfx.playGroan();
+  }
 
   for (let i = zombies.length - 1; i >= 0; i--) {
     const z = zombies[i];
@@ -2463,11 +2480,33 @@ function updateZombies(dt) {
 
     z.emergeTime += dt;
     const emerge = Math.min(1, z.emergeTime/1.5);
-    const isWounded = z.health / z.maxHealth < 0.5;
     const ud = z.mesh.userData;
     const joints = ud.joints;
     const anim = z.anim;
     const alerted = z.alertedUntil > now;
+
+    // ====== NOVO: HP-based speed (suave entre 50% e 75% de HP) ======
+    const hpFrac = z.health / z.maxHealth;
+    const hpSpeedMul = 0.6 + 0.4 * Math.max(0, Math.min(1, (hpFrac - 0.5) / 0.25));
+    // hpFrac 1.00 → 1.0    (full speed)
+    // hpFrac 0.75 → 1.0
+    // hpFrac 0.50 → 0.6
+    // hpFrac 0.00 → 0.6    (min 60% speed)
+
+    // ====== NOVO: Aggro sound (uma vez por transição) ======
+    if (alerted && !z._wasAlerted && z.aggroSoundCooldown <= 0) {
+      Sfx.playGroan();
+      z.aggroSoundCooldown = 10;
+    }
+    z._wasAlerted = alerted;
+    if (z.aggroSoundCooldown > 0) z.aggroSoundCooldown -= dt;
+    if (z._forceGroan) {
+      z._forceGroan = false;
+      if (z.aggroSoundCooldown <= 0) {
+        Sfx.playGroan();
+        z.aggroSoundCooldown = 8;
+      }
+    }
 
     const lostBothLegs = z.dismembered.legL && z.dismembered.legR;
     const crawlTarget = lostBothLegs ? 1 : 0;
@@ -2526,7 +2565,12 @@ function updateZombies(dt) {
           _prevX:sx, _prevZ:sz,
           flinch:{ head:null, armL:null, armR:null, legL:null, legR:null, torso:null },
           crawling:false,
+          aggroSoundCooldown: 0,
+          _wasAlerted: false,
+          _forceGroan: false,
+          _groundTime: 0,
         };
+        initStuckState(minion);
         ZombieAI.initZombieAIState(minion);
         zombies.push(minion); state.zombiesAlive++;
       }
@@ -2544,12 +2588,12 @@ function updateZombies(dt) {
     const alertMul = alerted ? CONFIG.aggro.alertSpeedMult : 1;
     let desiredVx = 0, desiredVz = 0;
     if (!staggering && emerge >= 0.5 && dist > arrival) {
-      const speedFactor = isWounded ? 0.6 : 1.0;
-      const target = z.speed * speedFactor * alertMul * speedFactorCrawl * aiMult;
+      // ====== NOVO: usa hpSpeedMul em vez de isWounded ? 0.6 : 1 ======
+      const target = z.speed * hpSpeedMul * alertMul * speedFactorCrawl * aiMult;
       desiredVx = (dxP/dist) * target; desiredVz = (dzP/dist) * target;
     } else if (!staggering && emerge >= 0.5 && dist > z.attackRange * attackRangeCrawl) {
       const t = (dist - z.attackRange * attackRangeCrawl) / CONFIG.pursuit.arrivalRadius;
-      const target = z.speed * Math.max(CONFIG.pursuit.minSpeedFactor, t) * (isWounded ? 0.6 : 1) * alertMul * speedFactorCrawl * aiMult;
+      const target = z.speed * Math.max(CONFIG.pursuit.minSpeedFactor, t) * hpSpeedMul * alertMul * speedFactorCrawl * aiMult;
       desiredVx = (dxP/dist) * target; desiredVz = (dzP/dist) * target;
     }
     const k = 1 - Math.exp(-dt * CONFIG.pursuit.responsiveness * (alerted ? 1.3 : 1));
@@ -2567,6 +2611,10 @@ function updateZombies(dt) {
     z.mesh.position.x += z.vx * dt;
     z.mesh.position.z += z.vz * dt;
     resolveWallCollisions(z.mesh.position, z.radius);
+
+    // ====== NOVO: stuck detection + hop physics ======
+    updateStuckDetection(z, dt, world);
+    applyStuckPhysics(z, dt);
 
     const realDx = z.mesh.position.x - z._prevX;
     const realDz = z.mesh.position.z - z._prevZ;
@@ -2633,7 +2681,7 @@ function updateZombies(dt) {
     let pelvisBobTarget = -Math.abs(Math.sin(phase)) * 0.04 * speedNorm - 0.008 * speedNorm;
     let pelvisYTmp = P_PELVIS_Y;
     let spineTwistTarget = -stepL * 0.13 * speedNorm;
-    const leanBase = isWounded ? 0.22 : 0.10;
+    const leanBase = hpFrac < 0.5 ? 0.22 : 0.10;
     let spineLeanTarget = leanBase + (dist < 3 ? 0.10 : 0) + speedNorm * 0.05;
     let spineSideTarget = Math.cos(phase) * 0.06 * speedNorm;
     let spineRollTarget = 0;
@@ -3115,41 +3163,6 @@ function updateRecordDisplay() {
 }
 updateRecordDisplay();
 
-// ============================================================
-// PRELOAD DE MODELOS GLB (roda em background)
-// ============================================================
-let glbPreloadDone = false;
-let glbPreloadResults = null;
-
-function startGLBPreload() {
-  if (glbPreloadDone) return;
-  console.log('[glb] Iniciando preload de modelos 3D...');
-  precacheAllWeaponGLBs((cur, total, id, ok) => {
-    console.log(`[glb] ${cur}/${total} ${id}: ${ok ? '✓ GLB' : '✗ procedural'}`);
-  }).then(results => {
-    glbPreloadResults = results;
-    glbPreloadDone = true;
-    const okCount = Object.values(results).filter(Boolean).length;
-    const total = Object.values(results).length;
-    console.log(`[glb] Preload completo: ${okCount}/${total} modelos GLB carregados`);
-    if (okCount < total) {
-      console.log('[glb] Faltando:', Object.keys(results).filter(k => !results[k]).join(', '));
-      console.log('[glb] Esses usarão o modelo procedural. Baixe os GLBs em assets/models/');
-    }
-    // Reconstrói viewmodel atual pra trocar pra GLB se disponível
-    if (state.running && weaponView) {
-      const curWid = state.inventory[state.currentSlot] || 'knife';
-      setWeaponViewModel(curWid);
-    }
-  }).catch(err => {
-    console.warn('[glb] Preload falhou:', err);
-    glbPreloadDone = true;
-  });
-}
-
-// Inicia o preload imediatamente (não bloqueia o menu)
-startGLBPreload();
-
 function startGame() {
   if (state.waveIntervalId !== null) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; }
   if (state.waveStartTimeoutId !== null) { clearTimeout(state.waveStartTimeoutId); state.waveStartTimeoutId = null; }
@@ -3224,11 +3237,6 @@ function startGame() {
   document.getElementById('hud').classList.remove('hidden');
   updateHUD();
   startWave();
-
-  // Se o GLB ainda não terminou de carregar, espera e atualiza
-  if (!glbPreloadDone) {
-    console.log('[glb] Aguardando preload para atualizar viewmodel...');
-  }
 }
 
 function gameOver() {
