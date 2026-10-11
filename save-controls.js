@@ -23,7 +23,6 @@ export const Action = Object.freeze({
   Slot2:        'Slot2',
   Slot3:        'Slot3',
   Slot4:        'Slot4',
-  Dodge:        'Dodge',
   Attack:       'Attack',
   Aim:          'Aim',
 });
@@ -33,7 +32,6 @@ export const ACTION_ORDER = [
   Action.Jump, Action.Sprint, Action.Crouch, Action.Interact,
   Action.Reload, Action.Ping, Action.Mute, Action.Pause,
   Action.Scoreboard, Action.Slot1, Action.Slot2, Action.Slot3, Action.Slot4,
-  Action.Dodge,
 ];
 
 export const ACTION_LABELS = {
@@ -54,7 +52,6 @@ export const ACTION_LABELS = {
   Slot2:        'Slot 2',
   Slot3:        'Slot 3',
   Slot4:        'Slot 4',
-  Dodge:        'Esquiva',
 };
 
 const DEFAULTS = {
@@ -75,10 +72,9 @@ const DEFAULTS = {
   Slot2:        'Digit2',
   Slot3:        'Digit3',
   Slot4:        'Digit4',
-  Dodge:        'Space',
 };
 
-const STORAGE_KEY = 'qb_controls_v1';
+const STORAGE_KEY = 'qb_controls_v2';
 const BASE_SENS   = 0.001;
 const AIM_SENS    = 0.6;
 
@@ -120,7 +116,6 @@ export class SaveControls {
     return k ? !!keys[k] : false;
   }
 
-  // Porte de ApplyControls(refControls) do C#
   applyControls(refControls) {
     if (!refControls) return;
 
