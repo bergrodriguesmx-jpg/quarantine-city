@@ -1,0 +1,8 @@
+  player: {
+    speed:5.5, height:1.7, maxHealth:100, radius:0.4,
+    dodgeSpeed:14, dodgeDuration:0.22, dodgeCooldown:0.75,
+    staminaMax:100, staminaRegen:25, staminaDrainRun:14,
+    sprintMult:1.55,
+    jumpForce:7.0,
+    gravity:22,
+  },
