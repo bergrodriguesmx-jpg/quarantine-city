@@ -1,7 +1,7 @@
 // ============================================================
-// weapon-models.js — v6
-// AUTO-CALIBRAÇÃO: detecta cano/altura/grip sozinho.
-// Sem override manual necessário.
+// weapon-models.js — v7 (limpo)
+// Só carrega o GLB, centraliza e aplica targetSize.
+// Posicionamento fica 100% pro calibrador.
 // ============================================================
 
 import * as THREE from 'three';
@@ -33,26 +33,6 @@ export const GLB_PATHS = {
   launcher:     'assets/models/launcher.glb',
 };
 
-// Overrides são OPCIONAIS — só use se a auto-calibração errar.
-// targetSize ainda é útil pra ajustar tamanho final.
-export const GLB_OVERRIDES = {
-  knife:        { targetSize: 0.35 },
-  pistol:       { targetSize: 0.32 },
-  revolver:     { targetSize: 0.36 },
-  smg:          { targetSize: 0.55 },
-  rifle:        { targetSize: 0.75 },
-  shotgun:      { targetSize: 0.65 },
-  woodenClub:   { targetSize: 0.95 },
-  pipe:         { targetSize: 0.95 },
-  pipeWrench:   { targetSize: 0.95 },
-  cleaver:      { targetSize: 0.75 },
-  katana:       { targetSize: 1.4 },
-  kukri:        { targetSize: 0.75 },
-  shovel:       { targetSize: 1.5 },
-  reaperScythe: { targetSize: 2.0 },
-  launcher:     { targetSize: 1.3 },
-};
-
 const glbPromises = new Map();
 const glbReady = new Map();
 
@@ -68,94 +48,20 @@ function loadGLBRaw(url) {
   return p;
 }
 
-// ============================================================
-// AUTO-CALIBRAÇÃO
-// ============================================================
-// Detecta automaticamente:
-//   - qual eixo é o cano (maior dimensão)
-//   - qual eixo é a altura (menor dimensão)
-//   - onde fica o grip (fundo + trás)
-//
-// Rotaciona o modelo pra:
-//   cano → -Z (frente)
-//   altura → +Y (cima)
-//   grip → origem (0,0,0)
-// ============================================================
-function autoCalibrate(model, opts = {}) {
+// Apenas centraliza + normaliza escala global. Nada mais.
+function prepareModel(model, opts = {}) {
   model.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
 
-  // 1) Bounding box inicial
-  let box = new THREE.Box3().setFromObject(model);
-  let size = box.getSize(new THREE.Vector3());
-  let center = box.getCenter(new THREE.Vector3());
-
-  // 2) Centraliza
+  // Centraliza
   model.position.sub(center);
 
-  // 3) Descobre eixos por tamanho
-  const axes = [
-    { name: 'x', size: size.x },
-    { name: 'y', size: size.y },
-    { name: 'z', size: size.z },
-  ].sort((a, b) => b.size - a.size);
-
-  const longest = axes[0].name;   // cano
-  const middle  = axes[1].name;   // largura
-  const shortest = axes[2].name;  // altura
-
-  // 4) Rotação pra alinhar: longest → -Z, shortest → +Y
-  //    Aplicamos rotações em ordem, recalculando entre cada uma.
-  const euler = new THREE.Euler();
-
-  // Mapeamento (matriz identidade que queremos: x=right, y=up, z=back)
-  // barrel (longest) → z
-  // height (shortest) → y
-  // width (middle) → x
-
-  if (longest === 'x') {
-    // X → Z
-    euler.y = -Math.PI / 2;
-  } else if (longest === 'y') {
-    // Y → Z (gira 90° no X, depois 180° no Y pra ficar apontando -Z)
-    euler.x = Math.PI / 2;
-    euler.y = Math.PI;
-  } else {
-    // já é Z
-  }
-
-  model.rotation.copy(euler);
-  model.updateMatrixWorld(true);
-
-  // 5) Após a rotação, verifica se altura ficou em Y. Se não, corrige com rotação Z.
-  box = new THREE.Box3().setFromObject(model);
-  size = box.getSize(new THREE.Vector3());
-
-  // Se largura (X) > altura (Y), gira 90° no Z
-  if (size.x > size.y * 1.3) {
-    model.rotation.z += Math.PI / 2;
-    model.updateMatrixWorld(true);
-  }
-
-  // 6) Recalcula bbox
-  box = new THREE.Box3().setFromObject(model);
-  size = box.getSize(new THREE.Vector3());
-  center = box.getCenter(new THREE.Vector3());
-
-  // 7) Centraliza X
-  model.position.x -= center.x;
-
-  // 8) Grip: fundo do Y (minY) + parte de trás do Z (maxZ * 0.35)
-  //    Assumindo que o cano aponta pra -Z, o grip fica atrás.
-  model.position.y -= box.min.y;
-  model.position.z -= box.max.z * 0.35;
-
-  // 9) Aplica targetSize
+  // Escala uniforme pra 1 unidade (o calibrador ajusta depois)
   const maxDim = Math.max(size.x, size.y, size.z) || 1;
-  const targetSize = opts.targetSize ?? 1.0;
-  const scale = targetSize / maxDim;
-  model.scale.multiplyScalar(scale);
+  model.scale.setScalar(1 / maxDim);
 
-  // Sombras + color space
   model.traverse(c => {
     if (c.isMesh) {
       c.castShadow = true;
@@ -174,32 +80,23 @@ function autoCalibrate(model, opts = {}) {
   return model;
 }
 
-// ============================================================
-// API GLB
-// ============================================================
-export async function getWeaponGLB(weaponId, opts = {}) {
+export async function getWeaponGLB(weaponId) {
   const path = GLB_PATHS[weaponId];
   if (!path) throw new Error('Sem GLB path: ' + weaponId);
-
-  const overrides = GLB_OVERRIDES[weaponId] || {};
-  const mergedOpts = { ...overrides, ...opts };
-
   const raw = await loadGLBRaw(path);
   const cloned = raw.clone(true);
-
   cloned.traverse(c => {
     if (c.isMesh && c.material) {
       if (Array.isArray(c.material)) c.material = c.material.map(m => m.clone());
       else c.material = c.material.clone();
     }
   });
-
-  return autoCalibrate(cloned, mergedOpts);
+  return prepareModel(cloned);
 }
 
-export async function precacheWeaponGLB(weaponId, opts = {}) {
+export async function precacheWeaponGLB(weaponId) {
   try {
-    const model = await getWeaponGLB(weaponId, opts);
+    const model = await getWeaponGLB(weaponId);
     glbReady.set(weaponId, model);
     return true;
   } catch (_) {
@@ -218,12 +115,10 @@ export async function precacheAllWeaponGLBs(onProgress) {
   return results;
 }
 
-export function hasGLB(weaponId) {
-  return glbReady.has(weaponId);
-}
+export function hasGLB(weaponId) { return glbReady.has(weaponId); }
 
 // ============================================================
-// MATERIAIS + BUILDERS PROCEDURAIS
+// MATERIAIS
 // ============================================================
 const MAT = {
   gunMetal:      new THREE.MeshStandardMaterial({ color: 0x1a1c20, metalness: 0.9,  roughness: 0.38 }),
@@ -313,8 +208,9 @@ function handGrip(height, width, mat) {
   return g;
 }
 
-// ----- Builders procedurais (resumidos, mesma qualidade de antes) -----
-
+// ============================================================
+// BUILDERS PROCEDURAIS
+// ============================================================
 function buildKnife(g) {
   const h = new THREE.Group();
   for (let i = 0; i < 5; i++) {
@@ -641,14 +537,8 @@ export const WEAPON_WORLD_SIZE = {
   pistol: 0.6, revolver: 0.65, smg: 0.95, rifle: 1.3,
   shotgun: 1.2, launcher: 1.3,
 };
-export function getWeaponWorldSize(id) {
-  return WEAPON_WORLD_SIZE[id] || 0.85;
-}
-
-export function getWeaponPickupColor(weaponId, isDrop) {
-  if (isDrop) return 0xff00ff;
-  return 0xffdd00;
-}
+export function getWeaponWorldSize(id) { return WEAPON_WORLD_SIZE[id] || 0.85; }
+export function getWeaponPickupColor(weaponId, isDrop) { return isDrop ? 0xff00ff : 0xffdd00; }
 
 const AMMO_COLORS = {
   pistol:   { box: 0x4a4a2a, accent: 0xc9a227 },
