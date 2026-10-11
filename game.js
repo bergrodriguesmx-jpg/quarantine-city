@@ -14,7 +14,6 @@ import { computePartLocalBoxes } from './src/core/part-box.js';
 import { enrichWeapons, MELEE_TYPES, ZOMBIE_LORE, formatWeaponTooltip } from './src/core/lore.js';
 import { initPhysics, stepPhysics, addStaticBox, clearPhysics, Ragdoll as PhysicsRagdoll } from './src/core/ragdoll-physics.js';
 
-// ════════ IMPORTS DO SISTEMA DE CONTROLES ════════
 import { Action, getControls } from './save-controls.js';
 import { ControlsUI } from './controls-ui.js';
 
@@ -31,7 +30,6 @@ import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 
 bus.setAdapter(new LocalAdapter());
 
-// ════════ SISTEMA DE CONTROLES (SaveControls portado) ════════
 const controls = getControls();
 
 // ============================================================
@@ -119,7 +117,14 @@ const ZOMBIE_TYPES = {
 const BOSS_ROTATION = ['riot','queen','reaper'];
 
 const CONFIG = {
-  player: { speed:5.5, height:1.7, maxHealth:100, radius:0.4, dodgeSpeed:12, dodgeDuration:0.25, dodgeCooldown:0.9, staminaMax:100, staminaRegen:25, staminaDrainRun:12 },
+  player: {
+    speed:5.5, height:1.7, maxHealth:100, radius:0.4,
+    dodgeSpeed:14, dodgeDuration:0.22, dodgeCooldown:0.75,
+    staminaMax:100, staminaRegen:25, staminaDrainRun:14,
+    sprintMult:1.55,
+    jumpForce:7.0,
+    gravity:22,
+  },
   zombie: { speed:1.9, maxHealth:40, damage:8, attackRange:1.6, attackCooldown:1.2, xpReward:10, coinReward:2, knockbackStagger:0.25, radius:0.4 },
   pursuit: { responsiveness:3.8, arrivalRadius:1.15, minSpeedFactor:0.35 },
   scaling: { hpPerWave:0.10, dmgPerWave:0.05, speedPerWave:0.02, speedCap:1.30 },
@@ -171,6 +176,9 @@ const state = {
   stamina: CONFIG.player.staminaMax, staminaMax: CONFIG.player.staminaMax,
   dodging:false, dodgeEnd:0, dodgeCd:0, dodgeDir:new THREE.Vector3(),
   hitstopUntil:0,
+  // ═══ FÍSICA VERTICAL / PULO ═══
+  isGrounded:true, velocityY:0, jumpOffset:0,
+  isSprinting:false,
   brazierFuel:1, brazierBurning:false, brazierBurnStart:0,
   vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
   currentBoss:null,
@@ -342,7 +350,6 @@ document.getElementById('btn-calibrate').addEventListener('click', () => {
   calibrator.open();
 });
 
-// ════════ UI DE CONTROLES ════════
 let controlsUI = null;
 function initControlsUI() {
   if (controlsUI) return;
@@ -876,44 +883,32 @@ function makeAnimState() {
   };
 }
 
-let groanTimer = 0;
-
-const _ikScratchVec = new THREE.Vector3();
-
 function applyLookAt(z, joints, player, dt, alerted) {
   const anim = z.anim;
   const cfg = CONFIG.ik;
-
   if (!alerted) {
     anim.lookAtYaw = smoothDamp(anim.lookAtYaw, 0, 3, dt);
     return;
   }
-
   const dx = player.position.x - z.mesh.position.x;
   const dz = player.position.z - z.mesh.position.z;
   const targetYaw = Math.atan2(dx, dz);
-
   let rel = targetYaw - z.mesh.rotation.y;
   while (rel > Math.PI) rel -= Math.PI*2;
   while (rel < -Math.PI) rel += Math.PI*2;
-
   const limited = Math.max(-cfg.lookAtMaxYaw, Math.min(cfg.lookAtMaxYaw, rel));
-
   const blend = Math.min(1, dt * 5);
   anim.lookAtYaw += (limited - anim.lookAtYaw) * blend;
-
   joints.head.rotation.y += anim.lookAtYaw * cfg.lookAtHeadShare;
 }
 
 function applyFootIK(z, joints, anim, dt) {
   const cfg = CONFIG.ik;
   const minY = cfg.footMinY;
-
   const footLY = joints.footL.position.y;
   const targetL = footLY < minY ? minY - footLY : 0;
   anim.footCorrectionL = smoothDamp(anim.footCorrectionL, targetL, 12, dt);
   joints.footL.position.y += anim.footCorrectionL;
-
   const footRY = joints.footR.position.y;
   const targetR = footRY < minY ? minY - footRY : 0;
   anim.footCorrectionR = smoothDamp(anim.footCorrectionR, targetR, 12, dt);
@@ -927,21 +922,16 @@ function applyBodyLean(z, joints, player, dt, alerted) {
     anim.leanX = smoothDamp(anim.leanX, 0, 4, dt);
     return;
   }
-
   const dx = player.position.x - z.mesh.position.x;
   const dz = player.position.z - z.mesh.position.z;
   const dist = Math.hypot(dx, dz);
-
   if (dist > cfg.leanTowardPlayerDist) {
     anim.leanX = smoothDamp(anim.leanX, 0, 4, dt);
     return;
   }
-
   const proximity = 1 - (dist / cfg.leanTowardPlayerDist);
   const target = cfg.leanAmount * proximity;
-
   anim.leanX = smoothDamp(anim.leanX, target, 5, dt);
-
   joints.spineLower.rotation.x += anim.leanX * 0.5;
   joints.spineUpper.rotation.x += anim.leanX * 0.5;
 }
@@ -2081,6 +2071,9 @@ function enterDownedState() {
   state.downed = true; state.downedElapsed = 0; state.health = 0;
   state.downedHP = CONFIG.downed.maxHP; state.downedMaxHP = CONFIG.downed.maxHP;
   state.reviveProgress = 0; state.aiming = false; state.mouseDown = false;
+  // Cancela física de pulo ao cair
+  state.isGrounded = true; state.velocityY = 0; state.jumpOffset = 0;
+  player.position.y = CONFIG.player.height;
   updateCrosshair(); cancelReload();
   document.body.classList.add('downed');
   document.getElementById('downed-overlay').classList.remove('hidden');
@@ -2114,7 +2107,6 @@ function updateDownedState(dt) {
   const progressBar = document.getElementById('downed-progress');
   if (state.downedElapsed >= CONFIG.downed.selfReviveAt && state.revivesLeft > 0) {
     prompt.classList.add('visible');
-    // ════════ AQUI: usa a ação Interact do sistema de controles ════════
     if (controls.isDown(Action.Interact, state.keys)) {
       state.reviveProgress += dt*1000;
       progressWrap.classList.add('visible');
@@ -2289,10 +2281,68 @@ function updateVendorVan() {
 }
 
 // ============================================================
-// INPUT — usa o sistema de controles
+// PULO E ESQUIVA — funções auxiliares
+// ============================================================
+function isAnyMoveDirHeld() {
+  return controls.isDown(Action.MoveForward,  state.keys) ||
+         controls.isDown(Action.MoveBackward, state.keys) ||
+         controls.isDown(Action.MoveLeft,     state.keys) ||
+         controls.isDown(Action.MoveRight,    state.keys);
+}
+
+function tryJump() {
+  if (state.downed) return false;
+  if (!state.isGrounded) return false;
+  if (performance.now()/1000 < state.hitstopUntil/1000) return false;
+  state.velocityY = CONFIG.player.jumpForce;
+  state.isGrounded = false;
+  Sfx.playJump();
+  return true;
+}
+
+function tryDodge() {
+  if (state.downed) return false;
+  const now = performance.now()/1000;
+  if (state.dodging) return false;
+  if (now < state.dodgeCd) return false;
+  if (state.stamina < 25) return false;
+
+  // Direção a partir do input local (relativo à câmera)
+  let mx = 0, mz = 0;
+  if (controls.isDown(Action.MoveForward,  state.keys)) mz -= 1;
+  if (controls.isDown(Action.MoveBackward, state.keys)) mz += 1;
+  if (controls.isDown(Action.MoveLeft,     state.keys)) mx -= 1;
+  if (controls.isDown(Action.MoveRight,    state.keys)) mx += 1;
+
+  // Sem direção? Não faz nada (o chamador decide se cai no jump)
+  if (mx === 0 && mz === 0) return false;
+
+  // Converte local → mundo usando yaw
+  const fwd   = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  const right = new THREE.Vector3( Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+
+  const dir = new THREE.Vector3();
+  dir.addScaledVector(fwd,   -mz);
+  dir.addScaledVector(right,  mx);
+  if (dir.lengthSq() < 0.0001) return false;
+  dir.normalize();
+
+  state.dodging = true;
+  state.dodgeEnd = now + CONFIG.player.dodgeDuration;
+  state.dodgeCd = now + CONFIG.player.dodgeCooldown;
+  state.stamina = Math.max(0, state.stamina - 25);
+  state.dodgeDir.copy(dir);
+  Sfx.playRoll();
+  return true;
+}
+
+// ============================================================
+// INPUT
 // ============================================================
 document.addEventListener('keydown', e => {
+  const wasDown = !!state.keys[e.code];
   state.keys[e.code] = true;
+  if (wasDown) return; // ignora auto-repeat
 
   if (e.code === controls.getKey(Action.Slot1)) switchToSlot(1);
   if (e.code === controls.getKey(Action.Slot2)) switchToSlot(2);
@@ -2333,10 +2383,36 @@ document.addEventListener('keydown', e => {
     if (nearWeapon && !nearWeapon.bought) tryBuyWeapon(); else openShop();
   }
 
-  if (e.code === controls.getKey(Action.Dodge) && state.running && !state.downed && !state.paused) {
-    e.preventDefault(); tryDodge();
+  // ═══════════════════════════════════════════════════════
+  // JUMP + DODGE (Space):
+  //  - Space + WASD → esquiva direcional
+  //  - Space sozinho → pulo
+  // ═══════════════════════════════════════════════════════
+  const jumpKey  = controls.getKey(Action.Jump);
+  const dodgeKey = controls.getKey(Action.Dodge);
+
+  if (jumpKey && e.code === jumpKey) {
+    e.preventDefault();
+    if (state.running && !state.downed && !state.paused && !state.levelUpActive && !state.shopOpen) {
+      if (isAnyMoveDirHeld()) {
+        tryDodge();
+      } else {
+        tryJump();
+      }
+    }
+    return;
+  }
+
+  // Se o usuário rebindar Dodge para outra tecla, ela sempre faz esquiva.
+  if (dodgeKey && e.code === dodgeKey && dodgeKey !== jumpKey) {
+    e.preventDefault();
+    if (state.running && !state.downed && !state.paused && !state.levelUpActive && !state.shopOpen) {
+      tryDodge();
+    }
+    return;
   }
 });
+
 document.addEventListener('keyup', e => {
   state.keys[e.code] = false;
   if (e.code === controls.getKey(Action.Ping) && state.pingWheelOpen) {
@@ -2346,6 +2422,7 @@ document.addEventListener('keyup', e => {
     state.pingHighlight = null;
   }
 });
+
 renderer.domElement.addEventListener('click', () => {
   if (!state.running || isMobile() || state.levelUpActive || state.shopOpen || state.paused) return;
   Sfx.initAudio(); Sfx.resumeAudio();
@@ -2354,7 +2431,6 @@ renderer.domElement.addEventListener('click', () => {
 document.addEventListener('mousemove', e => {
   if (document.pointerLockElement !== renderer.domElement) return;
   if (state.pingWheelOpen) { state.pingAccumX += e.movementX; state.pingAccumY += e.movementY; updatePingHighlight(); return; }
-  // ════════ AQUI: usa sensibilidade do SaveControls ════════
   const sens = controls.getEffectiveSens(state.aiming);
   player.yaw -= e.movementX * sens;
   player.pitch -= e.movementY * sens;
@@ -2380,15 +2456,6 @@ document.addEventListener('mouseup', e => {
   if (e.button === 2) { state.aiming = false; updateCrosshair(); }
 });
 document.addEventListener('contextmenu', e => { if (state.running) e.preventDefault(); });
-
-function tryDodge() {
-  if (state.stamina < 25 || state.dodging || performance.now()/1000 < state.dodgeCd) return;
-  state.dodging = true;
-  state.dodgeEnd = performance.now()/1000 + CONFIG.player.dodgeDuration;
-  state.stamina -= 25;
-  const forward = new THREE.Vector3(); camera.getWorldDirection(forward); forward.y = 0; forward.normalize();
-  state.dodgeDir.copy(forward);
-}
 
 function isMobile() { return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || 'ontouchstart' in window; }
 const mobile = { moveX:0, moveY:0, looking:false, lastX:0, lastY:0 };
@@ -2455,54 +2522,92 @@ function togglePause() {
   else { pauseEl.classList.add('hidden'); if (!isMobile()) renderer.domElement.requestPointerLock(); }
 }
 
+// ============================================================
+// PLAYER UPDATE
+// ============================================================
 const clock = new THREE.Clock();
 let shadowFrame = 0;
 const _fwdV = new THREE.Vector3(), _rightV = new THREE.Vector3(), _moveV = new THREE.Vector3();
 
 function updatePlayer(dt) {
-  let speedMult = state.aiming ? 0.5 : 1;
-  if (state.downed) speedMult = 0.25;
   const now = performance.now()/1000;
-  if (state.dodging) {
-    if (now >= state.dodgeEnd) { state.dodging = false; state.dodgeCd = now + CONFIG.player.dodgeCooldown; }
-    else player.position.addScaledVector(state.dodgeDir, CONFIG.player.dodgeSpeed * dt);
+
+  // ───── Física vertical (pulo) ─────
+  if (!state.isGrounded) {
+    state.velocityY -= CONFIG.player.gravity * dt;
+    state.jumpOffset += state.velocityY * dt;
+    if (state.jumpOffset <= 0) {
+      state.jumpOffset = 0;
+      state.velocityY = 0;
+      state.isGrounded = true;
+    }
   }
-  const speed = CONFIG.player.speed * state.speedMult * speedMult;
+  player.position.y = CONFIG.player.height + state.jumpOffset;
+
+  // ───── Esquiva ─────
+  if (state.dodging) {
+    if (now >= state.dodgeEnd) {
+      state.dodging = false;
+    } else {
+      player.position.addScaledVector(state.dodgeDir, CONFIG.player.dodgeSpeed * dt);
+    }
+  }
+
+  // ───── Input de movimento ─────
   _fwdV.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   _rightV.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+
   let mx = 0, mz = 0;
   if (isMobile()) { mx = mobile.moveX; mz = mobile.moveY; }
   else {
-    // ════════ AQUI: usa as ações do SaveControls ════════
     if (controls.isDown(Action.MoveForward,  state.keys)) mz -= 1;
     if (controls.isDown(Action.MoveBackward, state.keys)) mz += 1;
     if (controls.isDown(Action.MoveLeft,     state.keys)) mx -= 1;
     if (controls.isDown(Action.MoveRight,    state.keys)) mx += 1;
   }
+
   _moveV.set(0, 0, 0);
   _moveV.addScaledVector(_fwdV, -mz);
   _moveV.addScaledVector(_rightV, mx);
+
   state.isMoving = _moveV.lengthSq() > 0.0025;
   if (state.isMoving) _moveV.normalize();
-  player.position.addScaledVector(_moveV, speed * dt);
 
+  // ───── Sprint (Shift) ─────
+  let speedMult = state.aiming ? 0.5 : 1;
+  if (state.downed) speedMult = 0.25;
+
+  const sprintKeyHeld = controls.isDown(Action.Sprint, state.keys);
+  const canSprint = state.isMoving && !state.downed && !state.aiming && !state.dodging && state.stamina > 0;
+  state.isSprinting = canSprint && sprintKeyHeld;
+  const sprintMult = state.isSprinting ? CONFIG.player.sprintMult : 1;
+
+  const speed = CONFIG.player.speed * state.speedMult * speedMult * sprintMult;
+
+  // ───── Aplica movimento horizontal (não se estiver esquivando) ─────
+  if (!state.dodging) {
+    player.position.addScaledVector(_moveV, speed * dt);
+  }
+
+  // ───── Colisão com paredes ─────
   resolveWallCollisions(player.position, CONFIG.player.radius);
   const lim = CONFIG.arena.size/2 - 1;
   player.position.x = Math.max(-lim, Math.min(lim, player.position.x));
   player.position.z = Math.max(-lim, Math.min(lim, player.position.z));
 
-  // ════════ AQUI: usa Action.Sprint ════════
-  if (state.isMoving && controls.isDown(Action.Sprint, state.keys)) {
+  // ───── Stamina ─────
+  if (state.isSprinting) {
     state.stamina = Math.max(0, state.stamina - CONFIG.player.staminaDrainRun * dt);
   } else {
     state.stamina = Math.min(state.staminaMax, state.stamina + CONFIG.player.staminaRegen * dt);
   }
 
+  // ───── Câmera (bob + altura + pulo) ─────
   if (state.isMoving) state.bobTime += dt*9; else state.bobTime *= 0.9;
   const bobY = Math.sin(state.bobTime) * (state.aiming ? 0.02 : 0.055);
-  const camBaseY = state.downed ? 0.55 : CONFIG.player.height;
-  camera.position.copy(player.position);
-  camera.position.y = camBaseY + bobY;
+  const camBaseY = state.downed ? 0.55 : player.position.y;
+
+  camera.position.set(player.position.x, camBaseY + bobY, player.position.z);
   camera.rotation.order = 'YXZ';
   camera.rotation.y = player.yaw;
   camera.rotation.x = player.pitch;
@@ -2544,6 +2649,9 @@ function resolvePlayerZombieCollision() {
   }
 }
 
+// ============================================================
+// ZOMBIE UPDATE
+// ============================================================
 const K_THIGH = 55,  C_THIGH = 11;
 const K_KNEE  = 50,  C_KNEE  = 10;
 const K_FOOT  = 75,  C_FOOT  = 10;
@@ -2998,6 +3106,9 @@ function updateZombies(dt) {
   }
 }
 
+// ============================================================
+// DOORS / PICKUPS
+// ============================================================
 function updateDoors(dt) {
   for (const door of world.doors) {
     const dx = player.position.x - door.worldX;
@@ -3117,6 +3228,9 @@ function updateFlyingLimbs(dt) {
   }
 }
 
+// ============================================================
+// HUD
+// ============================================================
 function updateHUD() {
   const hp = Math.max(0, state.health);
   document.getElementById('hp-fill').style.width = `${(hp/state.maxHealth)*100}%`;
@@ -3154,6 +3268,9 @@ function updateHUD() {
   }
 }
 
+// ============================================================
+// ANIMATE
+// ============================================================
 let lastTimeText = '';
 function animate() {
   requestAnimationFrame(animate);
@@ -3236,6 +3353,9 @@ function animate() {
 }
 animate();
 
+// ============================================================
+// START / GAME OVER
+// ============================================================
 function getRecord() { try { return parseInt(localStorage.getItem('qb_record_wave') || '0', 10); } catch { return 0; } }
 function saveRecord(wave, level) {
   try { const prev = getRecord(); if (wave > prev) { localStorage.setItem('qb_record_wave', String(wave)); localStorage.setItem('qb_record_level', String(level)); return true; } } catch {}
@@ -3272,6 +3392,9 @@ function startGame() {
   state.stamina = CONFIG.player.staminaMax;
   state.dodging = false; state.dodgeCd = 0;
   state.hitstopUntil = 0;
+  // ═══ RESET FÍSICA VERTICAL ═══
+  state.isGrounded = true; state.velocityY = 0; state.jumpOffset = 0;
+  state.isSprinting = false;
   state.brazierFuel = 1; state.brazierBurning = false;
   state.vendorVanActive = false;
   state.currentBoss = null;
@@ -3372,6 +3495,9 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// ============================================================
+// MP FEEDBACK
+// ============================================================
 const playerStats = new Map();
 playerStats.set(player.id, { id:player.id, name:'VOCÊ', kills:0, headshots:0, damage:0, coins:0, deaths:0, local:true });
 const _projV = new THREE.Vector3();
