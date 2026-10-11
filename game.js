@@ -21,16 +21,14 @@ import * as Gore from './src/core/gore.js';
 import * as ZombieAI from './src/core/zombie-ai.js';
 import * as Extraction from './src/core/extraction.js';
 
-// ====== VIEWMODEL 3D (substitui sprite) ======
+// ====== VIEWMODEL 3D ======
 import { Weapon3DView } from './src/render/viewmodel-3d.js';
 
-// ====== SPRITES (ainda usados em pickups/loja) ======
-import { spawnPickupSprite, updatePickupSprites, clearPickupSprites } from './src/render/pickup-sprite.js';
-import { makeSpriteIcon } from './src/ui/shop-sprite.js';
-import {
-  getWeaponSprite, getItemSprite, getWeaponFrameCount,
-  preloadWeaponSprites,
-} from './src/core/sprite-registry.js';
+// ====== PICKUPS 3D ======
+import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pickup-3d.js';
+
+// ====== ÍCONES 3D DA LOJA ======
+import { getWeaponIconURL, getAmmoIconURL } from './src/render/weapon-icon-renderer.js';
 
 bus.setAdapter(new LocalAdapter());
 
@@ -311,7 +309,7 @@ const headgearMats = {
 // ============================================================
 // VIEWMODEL 3D
 // ============================================================
-scene.add(camera); // viewmodel preso à câmera
+scene.add(camera);
 
 let weaponView = null;
 
@@ -2052,42 +2050,57 @@ function renderShop() {
   shopCoinsEl.textContent = '$ ' + state.coins;
   shopItemsEl.innerHTML = '';
   const owned = Object.values(state.inventory).filter(x => x && x !== 'knife');
+
   if (owned.length === 0) {
     const el = document.createElement('div');
     el.style.color = '#888'; el.style.gridColumn = '1 / -1'; el.style.padding = '20px';
     el.textContent = 'Você ainda não tem armas. Compre em uma casa (marcador amarelo).';
     shopItemsEl.appendChild(el);
-  } else {
-    owned.forEach(wid => {
-      const w = WEAPONS[wid], am = state.ammo[wid];
-      if (!am || !AMMO_PACKS[wid]) return;
-      const pack = AMMO_PACKS[wid], price = AMMO_PRICES[wid];
-      const canBuy = state.coins >= price && am.reserve < w.reserveMax;
-      const el = document.createElement('button');
-      el.className = 'shop-item' + (canBuy ? '' : ' disabled');
-
-      const sprite = getWeaponSprite(wid, 0);
-      if (sprite) {
-        const icon = makeSpriteIcon(sprite, { size: 72 });
-        el.appendChild(icon);
-      }
-
-      const info = document.createElement('div');
-      info.innerHTML = `
-        <div class="item-name">${w.name}</div>
-        <div class="item-info">${am.mag}/${w.magSize} · reserva ${am.reserve}/${w.reserveMax}</div>
-        <div class="item-cost">+${pack} MUNIÇÃO — $${price}</div>
-      `;
-      el.appendChild(info);
-
-      if (canBuy) el.addEventListener('click', () => {
-        state.coins -= price;
-        am.reserve = Math.min(w.reserveMax, am.reserve + pack);
-        Sfx.playBuy(); renderShop(); updateHUD();
-      });
-      shopItemsEl.appendChild(el);
-    });
+    return;
   }
+
+  owned.forEach(wid => {
+    const w = WEAPONS[wid], am = state.ammo[wid];
+    if (!am || !AMMO_PACKS[wid]) return;
+    const pack = AMMO_PACKS[wid], price = AMMO_PRICES[wid];
+    const canBuy = state.coins >= price && am.reserve < w.reserveMax;
+
+    const el = document.createElement('button');
+    el.className = 'shop-item' + (canBuy ? '' : ' disabled');
+
+    // Ícone grande: caixa de munição 3D
+    const iconWrap = document.createElement('div');
+    iconWrap.className = 'shop-icon-main';
+    const img = document.createElement('img');
+    img.src = getAmmoIconURL(wid);
+    img.alt = wid;
+    iconWrap.appendChild(img);
+
+    // Ícone pequeno: arma 3D (canto)
+    const gunIcon = document.createElement('img');
+    gunIcon.src = getWeaponIconURL(wid);
+    gunIcon.className = 'shop-icon-gun';
+    gunIcon.alt = wid + '-weapon';
+    el.appendChild(gunIcon);
+
+    el.appendChild(iconWrap);
+
+    const info = document.createElement('div');
+    info.className = 'shop-info';
+    info.innerHTML = `
+      <div class="item-name">${w.name}</div>
+      <div class="item-info">${am.mag}/${w.magSize} · reserva ${am.reserve}/${w.reserveMax}</div>
+      <div class="item-cost">+${pack} MUNIÇÃO — $${price}</div>
+    `;
+    el.appendChild(info);
+
+    if (canBuy) el.addEventListener('click', () => {
+      state.coins -= price;
+      am.reserve = Math.min(w.reserveMax, am.reserve + pack);
+      Sfx.playBuy(); renderShop(); updateHUD();
+    });
+    shopItemsEl.appendChild(el);
+  });
 }
 
 function tryLightBrazier() {
@@ -2837,36 +2850,20 @@ const promptEl = document.getElementById('prompt');
 const promptText = document.getElementById('prompt-text');
 
 function spawnWeaponPickup(weaponId, x, z, y = 0.9, isDrop = false) {
-  const w = WEAPONS[weaponId];
-  const sprite = getWeaponSprite(weaponId, 0);
-  const iconW = sprite ? sprite.sheetW : 320;
-  const iconH = sprite ? sprite.sheetH : 128;
-
-  const spriteHandle = spawnPickupSprite(scene, {
-    url: sprite ? sprite.url : '',
-    width: iconW,
-    height: iconH,
+  const spriteHandle = spawnPickup3D(scene, {
+    weaponId,
     x, z,
     y: y + 0.3,
-    worldHeight: 0.9,
-    color: 0xffffff,
-    spinSpeed: 1.5,
+    isDrop,
+    spinSpeed: 1.2,
     bobAmp: 0.08,
   });
-
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(0.35, 0.04, 6, 12),
-    new THREE.MeshBasicMaterial({ color: isDrop ? 0xff00ff : 0xffdd00 })
-  );
-  ring.rotation.x = Math.PI / 2;
-  ring.position.set(x, y - 0.6, z);
-  scene.add(ring);
 
   world.weaponSpots.push({
     x, y, z,
     mesh: spriteHandle.group,
     spriteHandle,
-    ring,
+    ring: spriteHandle.ring,
     weaponId,
     bought: false,
     baseY: y + 0.3,
@@ -2886,18 +2883,7 @@ function setupWeaponSpawns() {
   houses.slice(5).forEach((h, i) => spawnWeaponPickup(shuffled[i % shuffled.length], h.x - 2, h.z + 0.5, 0.95));
 }
 function updateWeaponPickups(dt) {
-  const t = performance.now()/1000;
-
-  world.weaponSpots.forEach(s => {
-    if (s.bought) return;
-    s.ring.rotation.z += dt * 2;
-    if (s.spriteHandle) {
-      s.ring.position.y = s.spriteHandle.group.position.y - 0.75;
-    } else {
-      s.ring.position.y = s.baseY - 0.7;
-    }
-  });
-  updatePickupSprites(dt, camera);
+  updatePickups3D(dt, camera);
 
   let closest = null, closestDist = 2.0;
   world.weaponSpots.forEach(s => {
@@ -2947,9 +2933,6 @@ function tryBuyWeapon() {
   nearWeapon.bought = true;
 
   if (nearWeapon.spriteHandle) nearWeapon.spriteHandle.dispose();
-  scene.remove(nearWeapon.ring);
-  nearWeapon.ring.geometry.dispose();
-  nearWeapon.ring.material.dispose();
 
   if (state.currentSlot === w.slot) setWeaponViewModel(nearWeapon.weaponId);
   else switchToSlot(w.slot);
@@ -3052,7 +3035,6 @@ function animate() {
     Extraction.updateExtraction(dt);
     updateBossProjectiles(dt);
 
-    // Viewmodel 3D
     if (state.downed) {
       weaponView.setVisible(false);
     } else {
@@ -3089,7 +3071,7 @@ function animate() {
     stepPhysics(dt);
     updateParticles(dt); updateBloodPools(dt); updateTracers(dt);
     updateRagdolls(dt); updateFlyingLimbs(dt); updateExplosions(dt);
-    updatePickupSprites(dt, camera);
+    updatePickups3D(dt, camera);
   }
   renderer.render(scene, camera);
 }
@@ -3109,8 +3091,6 @@ function updateRecordDisplay() {
   if (el) el.textContent = r > 0 ? 'RECORDE: HORDA ' + r : 'RECORDE: —';
 }
 updateRecordDisplay();
-
-preloadWeaponSprites().then(() => console.log('[sprites] preloaded')).catch(() => {});
 
 function startGame() {
   if (state.waveIntervalId !== null) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; }
@@ -3150,13 +3130,14 @@ function startGame() {
   document.getElementById('pause').classList.add('hidden');
   pings.forEach(p => { scene.remove(p.group); p.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); }); });
   pings.length = 0;
+
   world.weaponSpots.forEach(s => {
     if (s.spriteHandle) s.spriteHandle.dispose();
-    if (s.ring) { scene.remove(s.ring); s.ring.geometry.dispose(); s.ring.material.dispose(); }
   });
   world.weaponSpots = [];
-  clearPickupSprites();
+  clearPickups3D();
   setupWeaponSpawns();
+
   zombies.forEach(z => scene.remove(z.mesh));
   zombies.length = 0;
   ragdolls.forEach(r => r.dispose()); ragdolls.length = 0;
