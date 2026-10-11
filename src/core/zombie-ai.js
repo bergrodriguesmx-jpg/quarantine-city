@@ -1,10 +1,9 @@
-import * as THREE from 'three';
+// ============================================================
+// zombie-ai.js
+// Máquina de estados: unaware | aware | combat | stagger
+// ============================================================
 
-// ============================================================
-// ZOMBIE AI STATE MACHINE (ZB2-inspired)
-// Estados: unaware | aware | combat | stagger | vaulting
-// Adiciona percepção de ruído, alerta em grupo, e stagger.
-// ============================================================
+import * as THREE from 'three';
 
 const AGGRO_RADIUS = 8;
 const ALERT_DURATION = 3;
@@ -18,7 +17,6 @@ export function initZombieAIState(z) {
   z.aiAttackCd = Math.random() * ATTACK_COOLDOWN;
 }
 
-// Propaga alerta para zumbis próximos quando um é atingido
 export function alertNearbyZombies(zombies, hitPos, radius = 8) {
   const now = performance.now() / 1000;
   const r2 = radius * radius;
@@ -42,7 +40,6 @@ export function updateZombieAIState(z, player, dt) {
   if (z.health <= 0) return;
   const now = performance.now() / 1000;
 
-  // Stagger trava tudo
   if (z.aiStaggerUntil > now) {
     z.aiState = 'stagger';
     return;
@@ -65,18 +62,9 @@ export function updateZombieAIState(z, player, dt) {
   }
 }
 
-// Retorna multiplicador de velocidade por estado
 export function getAIMultiplier(z) {
   if (z.aiState === 'stagger') return 0;
   if (z.aiState === 'aware')   return 1.15;
   if (z.aiState === 'combat')  return 1.0;
-  return 0.7; // unaware
-}
-
-// Cor tint para debug visual (opcional)
-export function getAITint(z) {
-  if (z.aiState === 'aware')   return 0xffff00;
-  if (z.aiState === 'combat')  return 0xff0000;
-  if (z.aiState === 'stagger') return 0x0000ff;
-  return null;
+  return 0.7;
 }
