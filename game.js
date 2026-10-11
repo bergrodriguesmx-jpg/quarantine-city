@@ -2531,7 +2531,7 @@ function updateZombies(dt) {
     const z = zombies[i];
     if (z.health <= 0) continue;
 
-    ZombieAI.updateZombieAIState(z, player, dt);
+    ZombieAI.updateZombieAIState(z, player, dt, world);
     const aiMult = ZombieAI.getAIMultiplier(z);
 
     const dxLod = z.mesh.position.x - player.position.x;
