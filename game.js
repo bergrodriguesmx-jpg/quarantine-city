@@ -21,8 +21,10 @@ import * as Gore from './src/core/gore.js';
 import * as ZombieAI from './src/core/zombie-ai.js';
 import * as Extraction from './src/core/extraction.js';
 
-// ====== SPRITES (NOVO) ======
-import { WeaponSpriteView } from './src/render/viewmodel-sprite.js';
+// ====== VIEWMODEL 3D (substitui sprite) ======
+import { Weapon3DView } from './src/render/viewmodel-3d.js';
+
+// ====== SPRITES (ainda usados em pickups/loja) ======
 import { spawnPickupSprite, updatePickupSprites, clearPickupSprites } from './src/render/pickup-sprite.js';
 import { makeSpriteIcon } from './src/ui/shop-sprite.js';
 import {
@@ -165,7 +167,6 @@ const state = {
   brazierFuel:1, brazierBurning:false, brazierBurnStart:0,
   vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
   currentBoss:null,
-  // mouse sway pro viewmodel sprite
   mouseDX: 0, mouseDY: 0,
 };
 
@@ -308,32 +309,21 @@ const headgearMats = {
 };
 
 // ============================================================
-// VIEWMODEL SPRITE (substitui o 3D procedural)
+// VIEWMODEL 3D
 // ============================================================
-scene.add(camera); // necessário para o viewmodel sprite ser renderizado
+scene.add(camera); // viewmodel preso à câmera
 
 let weaponView = null;
 
 function initWeaponView() {
   if (weaponView) weaponView.dispose();
-  weaponView = new WeaponSpriteView(camera, {
-    baseScale: 0.65,
-    basePos: new THREE.Vector3(0.30, -0.30, -0.55),
-    baseRot: new THREE.Euler(-0.12, -0.34, 0.14),
-    anchorX: 0.5,
-    anchorY: 0.0,
-  });
+  weaponView = new Weapon3DView(camera);
 }
 
 function setWeaponViewModel(weaponId) {
   if (!weaponView) initWeaponView();
-  const sprite = getWeaponSprite(weaponId, 0);
-  if (!sprite) {
-    weaponView.setVisible(false);
-    return;
-  }
   weaponView.setVisible(true);
-  weaponView.setWeapon(weaponId, sprite);
+  weaponView.setWeapon(weaponId);
 }
 
 function triggerSwing() {
@@ -351,7 +341,6 @@ const player = {
   userData: { _pendingDamage: 0 },
 };
 
-// ====== FUSÃO ZB2 — inicialização dos novos sistemas ======
 Daytime.initDaytime(scene, sun, ambientLight);
 Gore.initGore(scene);
 Extraction.initExtraction(scene, player);
@@ -2077,7 +2066,6 @@ function renderShop() {
       const el = document.createElement('button');
       el.className = 'shop-item' + (canBuy ? '' : ' disabled');
 
-      // Ícone sprite
       const sprite = getWeaponSprite(wid, 0);
       if (sprite) {
         const icon = makeSpriteIcon(sprite, { size: 72 });
@@ -2208,7 +2196,6 @@ document.addEventListener('mousemove', e => {
   player.yaw -= e.movementX * sens;
   player.pitch -= e.movementY * sens;
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
-  // mouse sway pro viewmodel sprite
   state.mouseDX += e.movementX;
   state.mouseDY += e.movementY;
 });
@@ -2849,16 +2836,12 @@ let nearWeapon = null;
 const promptEl = document.getElementById('prompt');
 const promptText = document.getElementById('prompt-text');
 
-// ============================================================
-// PICKUP — agora com sprite billboard
-// ============================================================
 function spawnWeaponPickup(weaponId, x, z, y = 0.9, isDrop = false) {
   const w = WEAPONS[weaponId];
   const sprite = getWeaponSprite(weaponId, 0);
   const iconW = sprite ? sprite.sheetW : 320;
   const iconH = sprite ? sprite.sheetH : 128;
 
-  // Billboard principal do sprite
   const spriteHandle = spawnPickupSprite(scene, {
     url: sprite ? sprite.url : '',
     width: iconW,
@@ -2871,7 +2854,6 @@ function spawnWeaponPickup(weaponId, x, z, y = 0.9, isDrop = false) {
     bobAmp: 0.08,
   });
 
-  // Anel no chão
   const ring = new THREE.Mesh(
     new THREE.TorusGeometry(0.35, 0.04, 6, 12),
     new THREE.MeshBasicMaterial({ color: isDrop ? 0xff00ff : 0xffdd00 })
@@ -2906,7 +2888,6 @@ function setupWeaponSpawns() {
 function updateWeaponPickups(dt) {
   const t = performance.now()/1000;
 
-  // Anima anéis + delega bob/spin dos sprites ao módulo
   world.weaponSpots.forEach(s => {
     if (s.bought) return;
     s.ring.rotation.z += dt * 2;
@@ -2918,7 +2899,6 @@ function updateWeaponPickups(dt) {
   });
   updatePickupSprites(dt, camera);
 
-  // Detecção de proximidade
   let closest = null, closestDist = 2.0;
   world.weaponSpots.forEach(s => {
     if (s.bought) return;
@@ -2966,7 +2946,6 @@ function tryBuyWeapon() {
   if (w.type === 'ranged') state.ammo[w.id] = { mag:w.magSize, reserve:w.reserveMax };
   nearWeapon.bought = true;
 
-  // Remove sprite billboard e anel
   if (nearWeapon.spriteHandle) nearWeapon.spriteHandle.dispose();
   scene.remove(nearWeapon.ring);
   nearWeapon.ring.geometry.dispose();
@@ -3067,14 +3046,13 @@ function animate() {
     updateExplosions(dt);
     updateNoiseRipples(dt);
 
-    // FUSÃO ZB2
     Daytime.updateDaytime(dt);
     Gore.updateGore(dt);
     BossStages.updateBossStages(dt, zombies, scene, player, spawnBossProjectile);
     Extraction.updateExtraction(dt);
     updateBossProjectiles(dt);
 
-    // Viewmodel sprite
+    // Viewmodel 3D
     if (state.downed) {
       weaponView.setVisible(false);
     } else {
@@ -3086,7 +3064,6 @@ function animate() {
         mouseDX: state.mouseDX,
         mouseDY: state.mouseDY,
       });
-      // Decai o acumulador de mouse pra sway voltar ao centro
       state.mouseDX *= 0.75;
       state.mouseDY *= 0.75;
     }
@@ -3133,7 +3110,6 @@ function updateRecordDisplay() {
 }
 updateRecordDisplay();
 
-// Preload de sprites (evita flicker no primeiro frame)
 preloadWeaponSprites().then(() => console.log('[sprites] preloaded')).catch(() => {});
 
 function startGame() {
