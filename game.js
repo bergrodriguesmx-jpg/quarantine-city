@@ -14,6 +14,10 @@ import { computePartLocalBoxes } from './src/core/part-box.js';
 import { enrichWeapons, MELEE_TYPES, ZOMBIE_LORE, formatWeaponTooltip } from './src/core/lore.js';
 import { initPhysics, stepPhysics, addStaticBox, clearPhysics, Ragdoll as PhysicsRagdoll } from './src/core/ragdoll-physics.js';
 
+// ════════ IMPORTS DO SISTEMA DE CONTROLES ════════
+import { Action, getControls } from './save-controls.js';
+import { ControlsUI } from './controls-ui.js';
+
 import * as Daytime from './src/core/daytime.js';
 import * as BossStages from './src/core/boss-stages.js';
 import * as Gore from './src/core/gore.js';
@@ -26,6 +30,9 @@ import { getWeaponIconURL, getAmmoIconURL } from './src/render/weapon-icon-rende
 import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 
 bus.setAdapter(new LocalAdapter());
+
+// ════════ SISTEMA DE CONTROLES (SaveControls portado) ════════
+const controls = getControls();
 
 // ============================================================
 // HELPERS
@@ -131,13 +138,12 @@ const CONFIG = {
   brazier: { fuelPerWave:1, maxFuel:3, costPerBurn:1, waveSpeedBoost:3.0, rewardMult:2.0 },
   vendor: { spawnEveryWaves:3, durationSec:60, buyDiscount:0.8, sellRate:0.4 },
   crawl: { speedMul:0.35, attackRangeMul:0.75, cooldownMul:1.4 },
-  // ═══ IK / LOOK-AT ═══
   ik: {
-    lookAtMaxYaw: 0.6,       // ±34° de giro da cabeça
-    lookAtHeadShare: 0.75,   // quanto do giro fica na cabeça (resto no corpo)
-    leanTowardPlayerDist: 4, // distância pra começar a inclinar
-    leanAmount: 0.10,        // radianos de inclinação
-    footMinY: -0.02,         // limite de penetração de pé
+    lookAtMaxYaw: 0.6,
+    lookAtHeadShare: 0.75,
+    leanTowardPlayerDist: 4,
+    leanAmount: 0.10,
+    footMinY: -0.02,
   },
 };
 
@@ -336,6 +342,24 @@ document.getElementById('btn-calibrate').addEventListener('click', () => {
   calibrator.open();
 });
 
+// ════════ UI DE CONTROLES ════════
+let controlsUI = null;
+function initControlsUI() {
+  if (controlsUI) return;
+  controlsUI = new ControlsUI({
+    openBtn:    document.getElementById('btn-controls'),
+    closeBtn:   document.getElementById('btn-controls-close'),
+    resetBtn:   document.getElementById('btn-controls-reset'),
+    saveBtn:    document.getElementById('btn-controls-save'),
+    sensSlider: document.getElementById('ctrl-sens-slider'),
+    sensValue:  document.getElementById('ctrl-sens-value'),
+    listEl:     document.getElementById('ctrl-list'),
+    hint:       document.getElementById('ctrl-hint'),
+    overlay:    document.getElementById('controls-menu'),
+  });
+}
+initControlsUI();
+
 function initWeaponView() {
   if (weaponView) weaponView.dispose();
   weaponView = new Weapon3DView(camera);
@@ -390,7 +414,6 @@ bus.on('extraction:success', () => {
   if (document.exitPointerLock) document.exitPointerLock();
 });
 
-// ====== PROJÉTEIS DE BOSS ======
 const bossProjectiles = [];
 function spawnBossProjectile({ type, origin, dir, speed, damage, radius }) {
   const geo = type === 'tox'
@@ -844,87 +867,59 @@ function makeAnimState() {
     alertBlend:0, idleBlend:0,
     crawlBlend:0,
     crawlPhase:0,
-    // ═══ NOVOS: look-at + IK ═══
-    lookAtYaw:0,        // yaw atual da cabeça (rad)
-    lookAtPitch:0,      // pitch atual da cabeça
-    footCorrectionL:0,  // correção de altura do pé esquerdo
-    footCorrectionR:0,  // correção de altura do pé direito
-    leanX:0,            // inclinação pra frente
+    lookAtYaw:0,
+    lookAtPitch:0,
+    footCorrectionL:0,
+    footCorrectionR:0,
+    leanX:0,
     leanXVel:0,
   };
 }
 
 let groanTimer = 0;
 
-// ════════════════════════════════════════════════════════════
-// IK / LOOK-AT HELPERS
-// ════════════════════════════════════════════════════════════
 const _ikScratchVec = new THREE.Vector3();
 
-/**
- * Faz a cabeça do zumbi virar na direção do player com limite.
- * Aplicado DEPOIS do spring, sobrescreve o head.rotation.y.
- */
 function applyLookAt(z, joints, player, dt, alerted) {
   const anim = z.anim;
   const cfg = CONFIG.ik;
 
-  // Só rastreia quando alertado (aware/combat) — unaware olha a esmo
   if (!alerted) {
     anim.lookAtYaw = smoothDamp(anim.lookAtYaw, 0, 3, dt);
     return;
   }
 
-  // Direção do player em relação ao zumbi
   const dx = player.position.x - z.mesh.position.x;
   const dz = player.position.z - z.mesh.position.z;
   const targetYaw = Math.atan2(dx, dz);
 
-  // Quanto o player está pra esquerda/direita do olhar do zumbi
   let rel = targetYaw - z.mesh.rotation.y;
   while (rel > Math.PI) rel -= Math.PI*2;
   while (rel < -Math.PI) rel += Math.PI*2;
 
-  // Limita
   const limited = Math.max(-cfg.lookAtMaxYaw, Math.min(cfg.lookAtMaxYaw, rel));
 
-  // Blending suave
   const blend = Math.min(1, dt * 5);
   anim.lookAtYaw += (limited - anim.lookAtYaw) * blend;
 
-  // Aplica no head — parcialmente (resto vai pro corpo via spineTwist)
-  // NÃO sobrescreve — ADICIONA ao que o spring já fez
   joints.head.rotation.y += anim.lookAtYaw * cfg.lookAtHeadShare;
 }
 
-/**
- * Anti-penetração de pé — se o pé ficou abaixo do chão,
- * levanta levemente o joelho (rotação X do foot pai).
- */
 function applyFootIK(z, joints, anim, dt) {
   const cfg = CONFIG.ik;
-  // Estimativa heurística: quanto o pé afundou baseado em
-  // knee rotation (calcanhar no chão quando knee > 0) e pelve bob.
-  // Se bob do pé do spring for < minY, aplica correção.
   const minY = cfg.footMinY;
 
-  // Pé esquerdo
   const footLY = joints.footL.position.y;
   const targetL = footLY < minY ? minY - footLY : 0;
   anim.footCorrectionL = smoothDamp(anim.footCorrectionL, targetL, 12, dt);
   joints.footL.position.y += anim.footCorrectionL;
 
-  // Pé direito
   const footRY = joints.footR.position.y;
   const targetR = footRY < minY ? minY - footRY : 0;
   anim.footCorrectionR = smoothDamp(anim.footCorrectionR, targetR, 12, dt);
   joints.footR.position.y += anim.footCorrectionR;
 }
 
-/**
- * Inclinação do torso na direção do player quando perto.
- * Adiciona ameaça — o zumbi "se joga" na sua direção.
- */
 function applyBodyLean(z, joints, player, dt, alerted) {
   const anim = z.anim;
   const cfg = CONFIG.ik;
@@ -942,17 +937,14 @@ function applyBodyLean(z, joints, player, dt, alerted) {
     return;
   }
 
-  const proximity = 1 - (dist / cfg.leanTowardPlayerDist); // 0 longe, 1 perto
+  const proximity = 1 - (dist / cfg.leanTowardPlayerDist);
   const target = cfg.leanAmount * proximity;
 
   anim.leanX = smoothDamp(anim.leanX, target, 5, dt);
 
-  // Aplica no spineLower (metade) e spineUpper (metade)
   joints.spineLower.rotation.x += anim.leanX * 0.5;
   joints.spineUpper.rotation.x += anim.leanX * 0.5;
 }
-
-// ════════════════════════════════════════════════════════════
 
 function spawnZombie(forceType) {
   const cave = caves[Math.floor(Math.random() * caves.length)];
@@ -1095,9 +1087,6 @@ function updateBloodPools(dt) {
   }
 }
 
-// ============================================================
-// SANGUE CONTÍNUO DOS COTOS
-// ============================================================
 const bloodFountains = [];
 function spawnBloodFountain(position, duration = 2.5) {
   bloodFountains.push({ x: position.x, y: position.y, z: position.z, life: duration, maxLife: duration, tick: 0 });
@@ -1238,9 +1227,6 @@ function detachLimb(z, key, hitDir, hitPoint) {
 
 function randomDismemberOnDeath(_z) { /* no-op */ }
 
-// ============================================================
-// DEBRIS GRID
-// ============================================================
 const debrisGrid = new SpatialGrid(4);
 const zCollGrid = new SpatialGrid(2);
 const _allPiecesScratch = [];
@@ -1308,9 +1294,6 @@ function checkDebrisZombieCollision() {
   }
 }
 
-// ============================================================
-// RAYCAST PRECISO (OBB)
-// ============================================================
 function rayAABB(origin, dir, min, max, maxDist) {
   let tMin = 0, tMax = maxDist;
   const axes = [
@@ -1462,9 +1445,6 @@ function applyHitReaction(z, part, hitDirWorld, force = 1) {
   }
 }
 
-// ============================================================
-// FX
-// ============================================================
 const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
 function showHitMarker(critical = false) {
@@ -1619,9 +1599,6 @@ function updateNoiseRipples(dt) {
   }
 }
 
-// ============================================================
-// DAMAGE
-// ============================================================
 function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   if (z.dying) return;
   z.health -= damage;
@@ -1736,9 +1713,6 @@ function makeNoise(position, radius) {
 
 function rollCrit() { return Math.random() < state.critChance; }
 
-// ============================================================
-// RELOAD / ATTACK
-// ============================================================
 function startReload(wid) {
   if (state.reload.active) return;
   const w = WEAPONS[wid], am = state.ammo[wid];
@@ -1968,9 +1942,6 @@ function attack(isRightClick = false) {
   return true;
 }
 
-// ============================================================
-// LEVEL / WAVES
-// ============================================================
 function checkLevelUp() {
   let leveled = false;
   while (state.xp >= state.xpToNextLevel) {
@@ -2104,9 +2075,6 @@ function updateWeaponSlotsHUD() {
 }
 function updateCrosshair() { document.body.classList.toggle('aiming', state.aiming); }
 
-// ============================================================
-// DOWNED
-// ============================================================
 function enterDownedState() {
   if (state.downed) return;
   if (state.revivesLeft <= 0) { gameOver(); return; }
@@ -2146,7 +2114,8 @@ function updateDownedState(dt) {
   const progressBar = document.getElementById('downed-progress');
   if (state.downedElapsed >= CONFIG.downed.selfReviveAt && state.revivesLeft > 0) {
     prompt.classList.add('visible');
-    if (state.keys['KeyE']) {
+    // ════════ AQUI: usa a ação Interact do sistema de controles ════════
+    if (controls.isDown(Action.Interact, state.keys)) {
       state.reviveProgress += dt*1000;
       progressWrap.classList.add('visible');
       const pct = Math.min(1, state.reviveProgress / CONFIG.downed.selfReviveHold);
@@ -2157,9 +2126,6 @@ function updateDownedState(dt) {
   if (remaining <= 0) { exitDownedState(0); gameOver(); }
 }
 
-// ============================================================
-// PING
-// ============================================================
 const pings = [];
 const PING_COLORS = { enemy:0xff2020, help:0xffdd00, go:0x22dd22, careful:0xff8800 };
 function updatePingHighlight() {
@@ -2208,9 +2174,6 @@ function updatePings(dt) {
   }
 }
 
-// ============================================================
-// SHOP
-// ============================================================
 const shopEl = document.getElementById('shop');
 const shopItemsEl = document.getElementById('shop-items');
 const shopCoinsEl = document.getElementById('shop-coins');
@@ -2326,29 +2289,38 @@ function updateVendorVan() {
 }
 
 // ============================================================
-// INPUT
+// INPUT — usa o sistema de controles
 // ============================================================
 document.addEventListener('keydown', e => {
   state.keys[e.code] = true;
-  if (e.code === 'Digit1') switchToSlot(1);
-  if (e.code === 'Digit2') switchToSlot(2);
-  if (e.code === 'Digit3') switchToSlot(3);
-  if (e.code === 'Digit4') switchToSlot(4);
-  if (e.code === 'KeyM') Sfx.setMuted(!Sfx.isMuted());
-  if (e.code === 'Escape') {
+
+  if (e.code === controls.getKey(Action.Slot1)) switchToSlot(1);
+  if (e.code === controls.getKey(Action.Slot2)) switchToSlot(2);
+  if (e.code === controls.getKey(Action.Slot3)) switchToSlot(3);
+  if (e.code === controls.getKey(Action.Slot4)) switchToSlot(4);
+
+  if (e.code === controls.getKey(Action.Mute)) Sfx.setMuted(!Sfx.isMuted());
+
+  if (e.code === controls.getKey(Action.Pause)) {
     if (state.shopOpen) { closeShop(); return; }
     if (state.running && !state.levelUpActive) togglePause();
     return;
   }
-  if (e.code === 'KeyR' && state.running && !state.downed && !state.shopOpen && !state.reload.active) {
+
+  if (e.code === controls.getKey(Action.Reload) &&
+      state.running && !state.downed && !state.shopOpen && !state.reload.active) {
     const wid = state.inventory[state.currentSlot];
     if (wid && WEAPONS[wid].type === 'ranged') startReload(wid);
   }
-  if (e.code === 'KeyQ' && state.running && !state.downed && !state.levelUpActive && !state.pingWheelOpen && !state.shopOpen) {
+
+  if (e.code === controls.getKey(Action.Ping) &&
+      state.running && !state.downed && !state.levelUpActive && !state.pingWheelOpen && !state.shopOpen) {
     state.pingWheelOpen = true; state.pingAccumX = 0; state.pingAccumY = 0; state.pingHighlight = null;
     document.getElementById('ping-wheel').classList.remove('hidden');
   }
-  if (e.code === 'KeyE' && state.running && !state.downed && !state.levelUpActive) {
+
+  if (e.code === controls.getKey(Action.Interact) &&
+      state.running && !state.downed && !state.levelUpActive) {
     if (state.shopOpen) { closeShop(); return; }
     const dxB = player.position.x - brazierGroup.position.x;
     const dzB = player.position.z - brazierGroup.position.z;
@@ -2360,13 +2332,14 @@ document.addEventListener('keydown', e => {
     }
     if (nearWeapon && !nearWeapon.bought) tryBuyWeapon(); else openShop();
   }
-  if (e.code === 'Space' && state.running && !state.downed && !state.paused) {
+
+  if (e.code === controls.getKey(Action.Dodge) && state.running && !state.downed && !state.paused) {
     e.preventDefault(); tryDodge();
   }
 });
 document.addEventListener('keyup', e => {
   state.keys[e.code] = false;
-  if (e.code === 'KeyQ' && state.pingWheelOpen) {
+  if (e.code === controls.getKey(Action.Ping) && state.pingWheelOpen) {
     state.pingWheelOpen = false;
     document.getElementById('ping-wheel').classList.add('hidden');
     if (state.pingHighlight) emitPing(state.pingHighlight);
@@ -2381,7 +2354,8 @@ renderer.domElement.addEventListener('click', () => {
 document.addEventListener('mousemove', e => {
   if (document.pointerLockElement !== renderer.domElement) return;
   if (state.pingWheelOpen) { state.pingAccumX += e.movementX; state.pingAccumY += e.movementY; updatePingHighlight(); return; }
-  const sens = state.aiming ? 0.0012 : 0.002;
+  // ════════ AQUI: usa sensibilidade do SaveControls ════════
+  const sens = controls.getEffectiveSens(state.aiming);
   player.yaw -= e.movementX * sens;
   player.pitch -= e.movementY * sens;
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
@@ -2451,7 +2425,9 @@ function setupMobile() {
     const t = e.touches[0];
     const dx = t.clientX - mobile.lastX, dy = t.clientY - mobile.lastY;
     mobile.lastX = t.clientX; mobile.lastY = t.clientY;
-    player.yaw -= dx*0.005; player.pitch -= dy*0.005;
+    const sens = controls.getEffectiveSens(state.aiming) * 3.0;
+    player.yaw -= dx * sens * 1.5;
+    player.pitch -= dy * sens * 1.5;
     player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
     state.mouseDX += dx * 3;
     state.mouseDY += dy * 3;
@@ -2466,8 +2442,8 @@ function setupMobile() {
   }, { passive:false });
   rel.addEventListener('touchstart', e => { e.preventDefault(); const wid = state.inventory[state.currentSlot]; if (wid && WEAPONS[wid].type === 'ranged') startReload(wid); }, { passive:false });
   buy.addEventListener('touchstart', e => { e.preventDefault(); if (state.downed) return; if (nearWeapon && !nearWeapon.bought) tryBuyWeapon(); else if (state.shopOpen) closeShop(); else openShop(); }, { passive:false });
-  rev.addEventListener('touchstart', e => { e.preventDefault(); if (state.downed) state.keys['KeyE'] = true; }, { passive:false });
-  rev.addEventListener('touchend', e => { e.preventDefault(); state.keys['KeyE'] = false; });
+  rev.addEventListener('touchstart', e => { e.preventDefault(); if (state.downed) { const k = controls.getKey(Action.Interact); if (k) state.keys[k] = true; } }, { passive:false });
+  rev.addEventListener('touchend', e => { e.preventDefault(); const k = controls.getKey(Action.Interact); if (k) state.keys[k] = false; });
 }
 setupMobile();
 
@@ -2479,9 +2455,6 @@ function togglePause() {
   else { pauseEl.classList.add('hidden'); if (!isMobile()) renderer.domElement.requestPointerLock(); }
 }
 
-// ============================================================
-// PLAYER UPDATE
-// ============================================================
 const clock = new THREE.Clock();
 let shadowFrame = 0;
 const _fwdV = new THREE.Vector3(), _rightV = new THREE.Vector3(), _moveV = new THREE.Vector3();
@@ -2500,10 +2473,11 @@ function updatePlayer(dt) {
   let mx = 0, mz = 0;
   if (isMobile()) { mx = mobile.moveX; mz = mobile.moveY; }
   else {
-    if (state.keys['KeyW']) mz -= 1;
-    if (state.keys['KeyS']) mz += 1;
-    if (state.keys['KeyA']) mx -= 1;
-    if (state.keys['KeyD']) mx += 1;
+    // ════════ AQUI: usa as ações do SaveControls ════════
+    if (controls.isDown(Action.MoveForward,  state.keys)) mz -= 1;
+    if (controls.isDown(Action.MoveBackward, state.keys)) mz += 1;
+    if (controls.isDown(Action.MoveLeft,     state.keys)) mx -= 1;
+    if (controls.isDown(Action.MoveRight,    state.keys)) mx += 1;
   }
   _moveV.set(0, 0, 0);
   _moveV.addScaledVector(_fwdV, -mz);
@@ -2517,7 +2491,8 @@ function updatePlayer(dt) {
   player.position.x = Math.max(-lim, Math.min(lim, player.position.x));
   player.position.z = Math.max(-lim, Math.min(lim, player.position.z));
 
-  if (state.isMoving && (state.keys['ShiftLeft'] || state.keys['ShiftRight'])) {
+  // ════════ AQUI: usa Action.Sprint ════════
+  if (state.isMoving && controls.isDown(Action.Sprint, state.keys)) {
     state.stamina = Math.max(0, state.stamina - CONFIG.player.staminaDrainRun * dt);
   } else {
     state.stamina = Math.min(state.staminaMax, state.stamina + CONFIG.player.staminaRegen * dt);
@@ -2569,9 +2544,6 @@ function resolvePlayerZombieCollision() {
   }
 }
 
-// ============================================================
-// ZOMBIE UPDATE
-// ============================================================
 const K_THIGH = 55,  C_THIGH = 11;
 const K_KNEE  = 50,  C_KNEE  = 10;
 const K_FOOT  = 75,  C_FOOT  = 10;
@@ -2935,9 +2907,6 @@ function updateZombies(dt) {
       joints.footL.rotation.x = anim.footLX;
       joints.footR.rotation.x = anim.footRX;
 
-      // ══════════════════════════════════════════════════
-      // IK / LOOK-AT — APLICADO DEPOIS DOS SPRINGS
-      // ══════════════════════════════════════════════════
       applyLookAt(z, joints, player, dt, alerted);
       applyFootIK(z, joints, anim, dt);
       applyBodyLean(z, joints, player, dt, alerted);
@@ -3029,9 +2998,6 @@ function updateZombies(dt) {
   }
 }
 
-// ============================================================
-// DOORS / PICKUPS
-// ============================================================
 function updateDoors(dt) {
   for (const door of world.doors) {
     const dx = player.position.x - door.worldX;
@@ -3151,9 +3117,6 @@ function updateFlyingLimbs(dt) {
   }
 }
 
-// ============================================================
-// HUD
-// ============================================================
 function updateHUD() {
   const hp = Math.max(0, state.health);
   document.getElementById('hp-fill').style.width = `${(hp/state.maxHealth)*100}%`;
@@ -3191,9 +3154,6 @@ function updateHUD() {
   }
 }
 
-// ============================================================
-// ANIMATE
-// ============================================================
 let lastTimeText = '';
 function animate() {
   requestAnimationFrame(animate);
@@ -3276,9 +3236,6 @@ function animate() {
 }
 animate();
 
-// ============================================================
-// START / GAME OVER
-// ============================================================
 function getRecord() { try { return parseInt(localStorage.getItem('qb_record_wave') || '0', 10); } catch { return 0; } }
 function saveRecord(wave, level) {
   try { const prev = getRecord(); if (wave > prev) { localStorage.setItem('qb_record_wave', String(wave)); localStorage.setItem('qb_record_level', String(level)); return true; } } catch {}
@@ -3415,9 +3372,6 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ============================================================
-// MP FEEDBACK
-// ============================================================
 const playerStats = new Map();
 playerStats.set(player.id, { id:player.id, name:'VOCÊ', kills:0, headshots:0, damage:0, coins:0, deaths:0, local:true });
 const _projV = new THREE.Vector3();
@@ -3497,9 +3451,14 @@ function renderScoreboard() {
   });
 }
 document.addEventListener('keydown', e => {
-  if (e.code === 'Tab' && state.running && !state.paused) { e.preventDefault(); if (!scoreboardOpen) { scoreboardOpen = true; renderScoreboard(); scoreboardEl.classList.remove('hidden'); } }
+  if (e.code === controls.getKey(Action.Scoreboard) && state.running && !state.paused) {
+    e.preventDefault();
+    if (!scoreboardOpen) { scoreboardOpen = true; renderScoreboard(); scoreboardEl.classList.remove('hidden'); }
+  }
 });
 document.addEventListener('keyup', e => {
-  if (e.code === 'Tab' && scoreboardOpen) { e.preventDefault(); scoreboardOpen = false; scoreboardEl.classList.add('hidden'); }
+  if (e.code === controls.getKey(Action.Scoreboard) && scoreboardOpen) {
+    e.preventDefault(); scoreboardOpen = false; scoreboardEl.classList.add('hidden');
+  }
 });
 window.addEventListener('beforeunload', () => playerStats.clear());
