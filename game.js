@@ -30,6 +30,9 @@ import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pic
 // ====== ÍCONES 3D DA LOJA ======
 import { getWeaponIconURL, getAmmoIconURL } from './src/render/weapon-icon-renderer.js';
 
+// ====== PRELOAD DE GLB (modelos de alta qualidade) ======
+import { precacheAllWeaponGLBs, hasGLB } from './src/render/weapon-models.js';
+
 bus.setAdapter(new LocalAdapter());
 
 // ============================================================
@@ -2068,21 +2071,18 @@ function renderShop() {
     const el = document.createElement('button');
     el.className = 'shop-item' + (canBuy ? '' : ' disabled');
 
-    // Ícone grande: caixa de munição 3D
-    const iconWrap = document.createElement('div');
-    iconWrap.className = 'shop-icon-main';
-    const img = document.createElement('img');
-    img.src = getAmmoIconURL(wid);
-    img.alt = wid;
-    iconWrap.appendChild(img);
-
-    // Ícone pequeno: arma 3D (canto)
     const gunIcon = document.createElement('img');
     gunIcon.src = getWeaponIconURL(wid);
     gunIcon.className = 'shop-icon-gun';
     gunIcon.alt = wid + '-weapon';
     el.appendChild(gunIcon);
 
+    const iconWrap = document.createElement('div');
+    iconWrap.className = 'shop-icon-main';
+    const img = document.createElement('img');
+    img.src = getAmmoIconURL(wid);
+    img.alt = wid;
+    iconWrap.appendChild(img);
     el.appendChild(iconWrap);
 
     const info = document.createElement('div');
@@ -3092,6 +3092,41 @@ function updateRecordDisplay() {
 }
 updateRecordDisplay();
 
+// ============================================================
+// PRELOAD DE MODELOS GLB (roda em background)
+// ============================================================
+let glbPreloadDone = false;
+let glbPreloadResults = null;
+
+function startGLBPreload() {
+  if (glbPreloadDone) return;
+  console.log('[glb] Iniciando preload de modelos 3D...');
+  precacheAllWeaponGLBs((cur, total, id, ok) => {
+    console.log(`[glb] ${cur}/${total} ${id}: ${ok ? '✓ GLB' : '✗ procedural'}`);
+  }).then(results => {
+    glbPreloadResults = results;
+    glbPreloadDone = true;
+    const okCount = Object.values(results).filter(Boolean).length;
+    const total = Object.values(results).length;
+    console.log(`[glb] Preload completo: ${okCount}/${total} modelos GLB carregados`);
+    if (okCount < total) {
+      console.log('[glb] Faltando:', Object.keys(results).filter(k => !results[k]).join(', '));
+      console.log('[glb] Esses usarão o modelo procedural. Baixe os GLBs em assets/models/');
+    }
+    // Reconstrói viewmodel atual pra trocar pra GLB se disponível
+    if (state.running && weaponView) {
+      const curWid = state.inventory[state.currentSlot] || 'knife';
+      setWeaponViewModel(curWid);
+    }
+  }).catch(err => {
+    console.warn('[glb] Preload falhou:', err);
+    glbPreloadDone = true;
+  });
+}
+
+// Inicia o preload imediatamente (não bloqueia o menu)
+startGLBPreload();
+
 function startGame() {
   if (state.waveIntervalId !== null) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; }
   if (state.waveStartTimeoutId !== null) { clearTimeout(state.waveStartTimeoutId); state.waveStartTimeoutId = null; }
@@ -3166,6 +3201,11 @@ function startGame() {
   document.getElementById('hud').classList.remove('hidden');
   updateHUD();
   startWave();
+
+  // Se o GLB ainda não terminou de carregar, espera e atualiza
+  if (!glbPreloadDone) {
+    console.log('[glb] Aguardando preload para atualizar viewmodel...');
+  }
 }
 
 function gameOver() {
