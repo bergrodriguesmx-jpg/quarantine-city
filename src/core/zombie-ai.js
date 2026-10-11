@@ -1,6 +1,7 @@
 // ============================================================
-// zombie-ai.js — v2
+// zombie-ai.js — v2.1
 // Estado, percepção e give-up baseados no ZB2.
+// COM GUARDS: nunca crasha se world não for passado.
 // ============================================================
 
 import * as THREE from 'three';
@@ -10,7 +11,6 @@ import * as THREE from 'three';
 // ============================================================
 const MAX_SIGHT_DIST = 35;           // ZB2: maxSightDistance = 35
 const COMBAT_DIST = 10;              // ZB2: zombieCombatDistance = 10
-const ATTACK_DIST = 1.6;             // sua attackRange
 const FOV_DOT_MIN = -0.5;            // ~120° cone à frente
 const COMBAT_DOT_MIN = 0.3;          // ~72° cone pra entrar em combate
 const ALERT_DURATION = 3;
@@ -42,19 +42,18 @@ export function initZombieAIState(z) {
   z.aiDot = 1;
 
   // Layer tier — define qual give-up usar
-  const tier = (ZOMBIE_TIER(z.typeKey));
+  const tier = zombieTier(z.typeKey);
   z.aiGiveUp = GIVEUP[tier] || GIVEUP.tier1;
 }
 
-function ZOMBIE_TIER(typeKey) {
-  // Aproximação: civil→t1, worker/miner→t2, resto→t3, boss→t3
+function zombieTier(typeKey) {
   if (typeKey === 'pt' || typeKey === 'pt_donkey' || typeKey === 'judge' || typeKey === 'runner') return 'tier1';
   if (typeKey === 'worker' || typeKey === 'miner') return 'tier2';
   return 'tier3';
 }
 
 // ============================================================
-// ALERTA EM GRUPO (inalterado)
+// ALERTA EM GRUPO
 // ============================================================
 export function alertNearbyZombies(zombies, hitPos, radius = 8) {
   const now = performance.now() / 1000;
@@ -75,14 +74,17 @@ export function staggerZombie(z, duration = 0.35) {
 }
 
 // ============================================================
-// RAYCAST DE LINHA DE VISÃO (contra paredes)
+// LINE OF SIGHT (contra paredes) — com guarda defensiva
 // ============================================================
 function losBlocked(fromX, fromZ, toX, toZ, world) {
-  // Marcha em passo 0.4m entre os dois pontos
+  // ✅ GUARD: sem world ou sem colliders → não bloqueia
+  if (!world || !Array.isArray(world.wallColliders)) return false;
+
   const dx = toX - fromX;
   const dz = toZ - fromZ;
   const dist = Math.hypot(dx, dz);
   if (dist < 0.5) return false;
+
   const steps = Math.ceil(dist / 0.4);
   const stepX = dx / steps;
   const stepZ = dz / steps;
@@ -92,7 +94,6 @@ function losBlocked(fromX, fromZ, toX, toZ, world) {
     x += stepX;
     z += stepZ;
 
-    // Testa se está dentro de algum wall collider
     for (let w = 0; w < world.wallColliders.length; w++) {
       const b = world.wallColliders[w];
       if (x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ) return true;
@@ -102,17 +103,25 @@ function losBlocked(fromX, fromZ, toX, toZ, world) {
 }
 
 // ============================================================
-// PERCEPÇÃO — atualiza visibilidade/reachability
+// PERCEPÇÃO — com guarda defensiva
 // ============================================================
-function updatePerception(z, player, world, dt) {
+function updatePerception(z, player, world) {
   const dx = player.position.x - z.mesh.position.x;
   const dz = player.position.z - z.mesh.position.z;
   const dist = Math.hypot(dx, dz);
   z.aiDistance = dist;
 
+  // Longe demais nem testa
   if (dist > MAX_SIGHT_DIST) {
     z.aiVisible = false;
     z.aiReachable = false;
+    return;
+  }
+
+  // ✅ GUARD: sem world → fallback simples (só distância)
+  if (!world || !Array.isArray(world.wallColliders)) {
+    z.aiVisible = true;
+    z.aiReachable = true;
     return;
   }
 
@@ -136,7 +145,7 @@ function updatePerception(z, player, world, dt) {
 }
 
 // ============================================================
-// UPDATE PRINCIPAL
+// UPDATE PRINCIPAL — aceita world opcional
 // ============================================================
 export function updateZombieAIState(z, player, dt, world) {
   if (z.health <= 0) return;
@@ -148,10 +157,10 @@ export function updateZombieAIState(z, player, dt, world) {
     return;
   }
 
-  // ─── Atualiza percepção (a cada ~0.3s pra economizar CPU) ───
+  // ─── Atualiza percepção (a cada ~0.33s) ───
   z.aiReachTimer = (z.aiReachTimer || 0) + dt * FIND_TARGET_FREQ;
   if (z.aiReachTimer >= 1) {
-    updatePerception(z, player, world, dt);
+    updatePerception(z, player, world);
     z.aiReachTimer = Math.random() * -0.2;
   }
 
@@ -185,7 +194,7 @@ export function updateZombieAIState(z, player, dt, world) {
 
   // ─── Give-up (só em aware/combat) ───
   if (z.aiState === 'aware' || z.aiState === 'combat') {
-    const g = z.aiGiveUp;
+    const g = z.aiGiveUp || GIVEUP.tier1;
 
     // Nunca desiste se muito perto
     if (dist > g.neverDist) {
@@ -193,7 +202,7 @@ export function updateZombieAIState(z, player, dt, world) {
       const t = Math.min(1, z.aiTargetTime / g.transition);
       const uncondDist = g.uncondMax + (g.uncondMin - g.uncondMax) * t;
       if (dist > uncondDist) {
-        _giveUp(z);
+        giveUp(z);
         return;
       }
 
@@ -201,7 +210,7 @@ export function updateZombieAIState(z, player, dt, world) {
       if (!visible && !z.aiReachable) {
         z.aiGiveUpTimer += dt;
         if (z.aiGiveUpTimer > g.maxTime) {
-          _giveUp(z);
+          giveUp(z);
           return;
         }
       } else {
@@ -213,17 +222,16 @@ export function updateZombieAIState(z, player, dt, world) {
   }
 }
 
-function _giveUp(z) {
+function giveUp(z) {
   z.aiState = 'unaware';
   z.aiAlertUntil = 0;
   z.aiTargetTime = 0;
   z.aiGiveUpTimer = 0;
-  // Faz o zumbi vagar por um tempo antes de re-aggro
   z.aiGiveUpCooldown = performance.now() / 1000 + 3;
 }
 
 // ============================================================
-// MULTIPLICADOR DE VELOCIDADE (inalterado)
+// MULTIPLICADOR DE VELOCIDADE
 // ============================================================
 export function getAIMultiplier(z) {
   if (z.aiState === 'stagger') return 0;
