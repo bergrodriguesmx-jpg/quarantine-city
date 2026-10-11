@@ -21,7 +21,7 @@ import * as Gore from './src/core/gore.js';
 import * as ZombieAI from './src/core/zombie-ai.js';
 import * as Extraction from './src/core/extraction.js';
 
-// ====== STUCK DETECTION (NOVO) ======
+// ====== STUCK DETECTION ======
 import { initStuckState, updateStuckDetection, applyStuckPhysics } from './src/core/zombie-stuck.js';
 
 // ====== VIEWMODEL 3D ======
@@ -907,7 +907,8 @@ function spawnZombie(forceType) {
     flinch:{ head:null, armL:null, armR:null, legL:null, legR:null, torso:null },
     teleportCd:0, summonCd:0,
     crawling:false,
-    // ====== NOVO: systems de stuck + aggro sound ======
+    // sistemas novos
+    growlCooldown: 3 + Math.random() * 2,
     aggroSoundCooldown: 0,
     _wasAlerted: false,
     _forceGroan: false,
@@ -915,7 +916,6 @@ function spawnZombie(forceType) {
   };
   zombies.push(z);
 
-  // ====== NOVO: init stuck state ======
   initStuckState(z);
 
   ZombieAI.initZombieAIState(z);
@@ -995,6 +995,53 @@ function updateBloodPools(dt) {
     const b = bloodPools[i]; b.life -= dt;
     if (b.life < 3) b.mesh.material.opacity = Math.max(0, (b.life/3)*0.75);
     if (b.life <= 0) { scene.remove(b.mesh); b.mesh.geometry.dispose(); b.mesh.material.dispose(); bloodPools.splice(i, 1); }
+  }
+}
+
+// ============================================================
+// SANGUE CONTÍNUO DOS COTOS (após decapitação/dismember)
+// ============================================================
+const bloodFountains = [];
+
+function spawnBloodFountain(position, duration = 2.5) {
+  bloodFountains.push({
+    x: position.x,
+    y: position.y,
+    z: position.z,
+    life: duration,
+    maxLife: duration,
+    tick: 0,
+  });
+}
+
+function updateBloodFountains(dt) {
+  for (let i = bloodFountains.length - 1; i >= 0; i--) {
+    const f = bloodFountains[i];
+    f.life -= dt;
+    f.tick += dt;
+
+    // Emite 1 partícula a cada ~50ms
+    while (f.tick > 0.05) {
+      f.tick -= 0.05;
+      const p = acquireBloodParticle();
+      const size = 0.08 + Math.random() * 0.06;
+      p.mesh.scale.setScalar(size);
+      p.mesh.position.set(f.x, f.y, f.z);
+      p.mesh.material.color.setHex(0x6B0000);
+      p.mesh.material.opacity = 1;
+      // Cai reto, só um pouquinho de desvio
+      p.vel.set(
+        (Math.random() - 0.5) * 0.4,
+        -0.5 - Math.random() * 0.5,
+        (Math.random() - 0.5) * 0.4
+      );
+      p.life = 0.6;
+      p.maxLife = 0.6;
+      scene.add(p.mesh);
+      bloodActive.push(p);
+    }
+
+    if (f.life <= 0) bloodFountains.splice(i, 1);
   }
 }
 
@@ -1547,8 +1594,27 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     }
     checkLevelUp();
     randomDismemberOnDeath(z);
+
+    // ─── FONTE DE SANGUE NOS COTOS ───
+    // Antes do ragdoll, salva a posição do torso
+    const torsoWorldPos = new THREE.Vector3();
+    z.mesh.userData.torso.getWorldPosition(torsoWorldPos);
+
     const overkill = Math.min(2, Math.max(0.7, -z.health/z.maxHealth + 1));
     startRagdoll(z.mesh, hitDir, isCrit ? overkill*1.4 : overkill, z.dismembered);
+
+    // Aplica fountains baseado no que foi decapitado
+    if (z.dismembered.head) {
+      // Fonte principal no pescoço (3s)
+      torsoWorldPos.y += 0.35;
+      spawnBloodFountain(torsoWorldPos, 3.0);
+    }
+    if (z.dismembered.armL || z.dismembered.armR || z.dismembered.legL || z.dismembered.legR) {
+      // Fonte mais curta no torso (1.5s)
+      torsoWorldPos.y += 0.1;
+      spawnBloodFountain(torsoWorldPos, 1.5);
+    }
+
     const idx = zombies.indexOf(z);
     if (idx >= 0) zombies.splice(idx, 1);
     state.zombiesAlive--;
@@ -1767,6 +1833,8 @@ function attack(isRightClick = false) {
         Sfx.playKnifeHitFlesh();
         showHitMarker(false);
         spawnBlood(detached.mesh.position.clone(), detached.velocity.clone().normalize(), 15, true);
+        // Fonte curta no ragdoll
+        spawnBloodFountain(detached.mesh.position.clone(), 1.2);
         break;
       }
     }
@@ -2459,13 +2527,6 @@ function updateZombieLOD() {
 function updateZombies(dt) {
   const now = performance.now()/1000;
 
-  // ====== Ambiente: groans aleatórios (mais espaçados) ======
-  groanTimer -= dt;
-  if (groanTimer <= 0 && zombies.length > 0) {
-    groanTimer = 4 + Math.random() * 4;
-    Sfx.playGroan();
-  }
-
   for (let i = zombies.length - 1; i >= 0; i--) {
     const z = zombies[i];
     if (z.health <= 0) continue;
@@ -2485,27 +2546,16 @@ function updateZombies(dt) {
     const anim = z.anim;
     const alerted = z.alertedUntil > now;
 
-    // ====== NOVO: HP-based speed (suave entre 50% e 75% de HP) ======
+    // HP-based speed (suave entre 50% e 75% de HP)
     const hpFrac = z.health / z.maxHealth;
     const hpSpeedMul = 0.6 + 0.4 * Math.max(0, Math.min(1, (hpFrac - 0.5) / 0.25));
-    // hpFrac 1.00 → 1.0    (full speed)
-    // hpFrac 0.75 → 1.0
-    // hpFrac 0.50 → 0.6
-    // hpFrac 0.00 → 0.6    (min 60% speed)
 
-    // ====== NOVO: Aggro sound (uma vez por transição) ======
-    if (alerted && !z._wasAlerted && z.aggroSoundCooldown <= 0) {
+    // ─── Growl individual (ZB2-style) ───
+    z.growlCooldown -= dt;
+    if (z.growlCooldown <= 0) {
+      const mult = (z.typeKey === 'worker' || z.typeKey === 'miner') ? 0.25 : 1;
+      z.growlCooldown = (1 + Math.random() * 1) / mult;
       Sfx.playGroan();
-      z.aggroSoundCooldown = 10;
-    }
-    z._wasAlerted = alerted;
-    if (z.aggroSoundCooldown > 0) z.aggroSoundCooldown -= dt;
-    if (z._forceGroan) {
-      z._forceGroan = false;
-      if (z.aggroSoundCooldown <= 0) {
-        Sfx.playGroan();
-        z.aggroSoundCooldown = 8;
-      }
     }
 
     const lostBothLegs = z.dismembered.legL && z.dismembered.legR;
@@ -2565,6 +2615,7 @@ function updateZombies(dt) {
           _prevX:sx, _prevZ:sz,
           flinch:{ head:null, armL:null, armR:null, legL:null, legR:null, torso:null },
           crawling:false,
+          growlCooldown: 3 + Math.random() * 2,
           aggroSoundCooldown: 0,
           _wasAlerted: false,
           _forceGroan: false,
@@ -2588,7 +2639,6 @@ function updateZombies(dt) {
     const alertMul = alerted ? CONFIG.aggro.alertSpeedMult : 1;
     let desiredVx = 0, desiredVz = 0;
     if (!staggering && emerge >= 0.5 && dist > arrival) {
-      // ====== NOVO: usa hpSpeedMul em vez de isWounded ? 0.6 : 1 ======
       const target = z.speed * hpSpeedMul * alertMul * speedFactorCrawl * aiMult;
       desiredVx = (dxP/dist) * target; desiredVz = (dzP/dist) * target;
     } else if (!staggering && emerge >= 0.5 && dist > z.attackRange * attackRangeCrawl) {
@@ -2612,7 +2662,7 @@ function updateZombies(dt) {
     z.mesh.position.z += z.vz * dt;
     resolveWallCollisions(z.mesh.position, z.radius);
 
-    // ====== NOVO: stuck detection + hop physics ======
+    // Stuck detection + hop physics
     updateStuckDetection(z, dt, world);
     applyStuckPhysics(z, dt);
 
@@ -3086,6 +3136,7 @@ function animate() {
     updateZombieLOD();
     updateParticles(dt);
     updateBloodPools(dt);
+    updateBloodFountains(dt);
     updateTracers(dt);
     updateDoors(dt);
     updateWeaponPickups(dt);
@@ -3140,7 +3191,7 @@ function animate() {
     if (revBtn) revBtn.classList.toggle('visible', state.downed);
   } else if (!state.running) {
     stepPhysics(dt);
-    updateParticles(dt); updateBloodPools(dt); updateTracers(dt);
+    updateParticles(dt); updateBloodPools(dt); updateBloodFountains(dt); updateTracers(dt);
     updateRagdolls(dt); updateFlyingLimbs(dt); updateExplosions(dt);
     updatePickups3D(dt, camera);
   }
@@ -3221,6 +3272,7 @@ function startGame() {
   bloodPool.length = 0;
   bloodPools.forEach(b => { scene.remove(b.mesh); b.mesh.geometry.dispose(); b.mesh.material.dispose(); });
   bloodPools.length = 0;
+  bloodFountains.length = 0;
   tracers.forEach(t => { t.mesh.visible = false; tracerPool.push(t); }); tracers.length = 0;
   _noiseRipples.forEach(r => { scene.remove(r.mesh); r.mesh.geometry.dispose(); r.mesh.material.dispose(); });
   _noiseRipples.length = 0;
