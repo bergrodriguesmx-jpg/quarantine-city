@@ -1,11 +1,10 @@
 // ============================================================
 // weapon-icon-renderer.js
-// Renderiza ícones 3D pras armas (loja) em offscreen canvas.
-// Cacheia como data URL. Substitui shop-sprite.js.
+// Renderiza ícones 3D das armas em offscreen canvas.
 // ============================================================
 
 import * as THREE from 'three';
-import { buildWeaponModel, buildAmmoBox } from './weapon-models.js';
+import { buildWeaponModelSmart as buildWeaponModel, buildAmmoBox } from './weapon-models.js';
 
 let renderer = null;
 let scene = null;
@@ -20,10 +19,7 @@ function ensureRenderer() {
   canvas.width = canvas.height = ICON_SIZE;
 
   renderer = new THREE.WebGLRenderer({
-    canvas,
-    antialias: true,
-    alpha: true,
-    preserveDrawingBuffer: true,
+    canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
   });
   renderer.setSize(ICON_SIZE, ICON_SIZE, false);
   renderer.setPixelRatio(1);
@@ -36,7 +32,6 @@ function ensureRenderer() {
   camera.position.set(1.4, 1.0, 1.8);
   camera.lookAt(0, 0, 0);
 
-  // Iluminação 3-point
   scene.add(new THREE.AmbientLight(0xffffff, 0.85));
 
   const key = new THREE.DirectionalLight(0xfff6e0, 1.4);
@@ -52,7 +47,6 @@ function ensureRenderer() {
   scene.add(rim);
 }
 
-// Remove tudo menos as luzes
 function clearModelSlot() {
   for (let i = scene.children.length - 1; i >= 0; i--) {
     const c = scene.children[i];
@@ -61,7 +55,6 @@ function clearModelSlot() {
   }
 }
 
-// Ajusta modelo: centraliza e escala pra caber no frame
 function fitModel(model) {
   model.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(model);
@@ -73,16 +66,11 @@ function fitModel(model) {
   wrap.add(model);
 
   const maxDim = Math.max(size.x, size.y, size.z) || 1;
-  const targetSize = 1.8;  // tamanho alvo no frame
+  const targetSize = 1.8;
   wrap.scale.setScalar(targetSize / maxDim);
   return wrap;
 }
 
-// ============================================================
-// API
-// ============================================================
-
-/** Ícone da arma (3D renderizado). Retorna data URL. */
 export function getWeaponIconURL(weaponId) {
   if (cache.has('w:' + weaponId)) return cache.get('w:' + weaponId);
   ensureRenderer();
@@ -100,7 +88,6 @@ export function getWeaponIconURL(weaponId) {
   return url;
 }
 
-/** Ícone da caixa de munição. */
 export function getAmmoIconURL(ammoType) {
   if (cache.has('a:' + ammoType)) return cache.get('a:' + ammoType);
   ensureRenderer();
@@ -118,7 +105,6 @@ export function getAmmoIconURL(ammoType) {
   return url;
 }
 
-/** Limpa cache (use se mudar cores/tamanhos em runtime). */
 export function clearIconCache() {
   cache.clear();
 }
