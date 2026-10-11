@@ -1,10 +1,14 @@
-// ============================================================
-// viewmodel-3d.js
-// Viewmodel 3D em primeira pessoa. Usa weapon-models.js (GLB ou procedural).
-// ============================================================
-
 import * as THREE from 'three';
 import { buildWeaponModelSmart as buildWeaponModel } from './weapon-models.js';
+
+const STORAGE_KEY = 'qb_weapon_offsets_v1';
+
+function loadOffsets() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
 
 export class Weapon3DView {
   constructor(camera, opts = {}) {
@@ -34,11 +38,23 @@ export class Weapon3DView {
       this.weaponGroup.remove(this.currentViewModel);
       this.currentViewModel = null;
     }
+
     const g = buildWeaponModel(weaponId);
+
+    // Aplica offset salvo
+    const all = loadOffsets();
+    const off = all[weaponId];
+    if (off) {
+      g.position.set(off.px || 0, off.py || 0, off.pz || 0);
+      g.rotation.set(off.rx || 0, off.ry || 0, off.rz || 0);
+      g.scale.setScalar(off.scale || 1);
+    }
+
     this.weaponGroup.add(g);
     this.currentViewModel = g;
     this.weaponId = weaponId;
     this._resetTransforms();
+    console.log('[viewmodel]', weaponId, 'offset:', off || 'none');
   }
 
   _resetTransforms() {
@@ -62,7 +78,6 @@ export class Weapon3DView {
 
   update(dt, ctx = {}) {
     if (!this.currentViewModel) return;
-
     const aiming = !!ctx.aiming;
     const moving = !!ctx.moving;
     const bobTime = ctx.bobTime || 0;
@@ -132,12 +147,6 @@ export class Weapon3DView {
     this.weaponGroup.rotation.z += (tRZ - this.weaponGroup.rotation.z) * s;
   }
 
-  setVisible(v) {
-    this._visible = !!v;
-    this.weaponGroup.visible = this._visible;
-  }
-
-  dispose() {
-    this.camera.remove(this.weaponGroup);
-  }
+  setVisible(v) { this._visible = !!v; this.weaponGroup.visible = this._visible; }
+  dispose() { this.camera.remove(this.weaponGroup); }
 }
