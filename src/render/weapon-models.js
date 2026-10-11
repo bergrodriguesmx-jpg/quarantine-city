@@ -1,8 +1,9 @@
 // ============================================================
-// weapon-models.js — v3
-// Modelos 3D de armas com fallback duplo:
+// weapon-models.js — v4
+// Modelos 3D com fallback duplo:
 //   1. Tenta carregar GLB (assets/models/*.glb)
-//   2. Se não existir, usa procedural (PBR melhorado)
+//   2. Se não existir, usa procedural (PBR)
+// Suporta overrides por arma (escala, rotação, posição).
 // ============================================================
 
 import * as THREE from 'three';
@@ -19,8 +20,19 @@ try {
   gltfLoader.setDRACOLoader(draco);
 } catch (_) { /* DRACO opcional */ }
 
+// ============================================================
+// PATHS DOS GLBs
+// ============================================================
 export const GLB_PATHS = {
+  // ====== GLBs baixados ======
   knife:        'assets/models/knife.glb',
+  pistol:       'assets/models/pistol.glb',
+  revolver:     'assets/models/revolver.glb',
+  smg:          'assets/models/smg.glb',
+  rifle:        'assets/models/rifle.glb',
+  shotgun:      'assets/models/shotgun.glb',
+
+  // ====== Procedural (baixar depois) ======
   woodenClub:   'assets/models/club.glb',
   pipe:         'assets/models/pipe.glb',
   pipeWrench:   'assets/models/pipe_wrench.glb',
@@ -29,17 +41,37 @@ export const GLB_PATHS = {
   kukri:        'assets/models/kukri.glb',
   shovel:       'assets/models/shovel.glb',
   reaperScythe: 'assets/models/scythe.glb',
-  pistol:       'assets/models/pistol.glb',
-  revolver:     'assets/models/revolver.glb',
-  smg:          'assets/models/smg.glb',
-  rifle:        'assets/models/rifle.glb',
-  shotgun:      'assets/models/shotgun.glb',
   launcher:     'assets/models/launcher.glb',
 };
 
-// Cache de promises de carregamento
+// ============================================================
+// OVERRIDES POR ARMA (ajuste fino de GLB)
+// targetSize  = tamanho máximo em unidades-mundo
+// rotY/X/Z    = rotação em radianos pra orientar corretamente
+// posX/Y/Z    = offset de posição
+// ============================================================
+export const GLB_OVERRIDES = {
+  // Ajuste aqui se algum modelo aparecer virado/pequeno/grande
+  // Exemplo: knife: { targetSize: 0.7, rotY: Math.PI/2 }
+  knife:        { targetSize: 0.6,  rotY: 0, rotX: 0, rotZ: 0 },
+  pistol:       { targetSize: 0.55, rotY: 0, rotX: 0, rotZ: 0 },
+  revolver:     { targetSize: 0.6,  rotY: 0, rotX: 0, rotZ: 0 },
+  smg:          { targetSize: 0.9,  rotY: 0, rotX: 0, rotZ: 0 },
+  rifle:        { targetSize: 1.2,  rotY: 0, rotX: 0, rotZ: 0 },
+  shotgun:      { targetSize: 1.1,  rotY: 0, rotX: 0, rotZ: 0 },
+  woodenClub:   { targetSize: 0.95 },
+  pipe:         { targetSize: 0.95 },
+  pipeWrench:   { targetSize: 0.95 },
+  cleaver:      { targetSize: 0.75 },
+  katana:       { targetSize: 1.4 },
+  kukri:        { targetSize: 0.75 },
+  shovel:       { targetSize: 1.5 },
+  reaperScythe: { targetSize: 2.0 },
+  launcher:     { targetSize: 1.3 },
+};
+
+// Cache de promises + modelos prontos
 const glbPromises = new Map();
-// Cache de modelos já normalizados (prontos pra clonar)
 const glbReady = new Map();
 
 function loadGLBRaw(url) {
@@ -61,17 +93,22 @@ function normalizeModel(model, opts = {}) {
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
 
-  // Centraliza o modelo no pivô
+  // Centraliza
   model.position.sub(center);
 
-  // Orientação (ZB2 typically aponta pra -Z)
-  model.rotation.y = opts.rotationY ?? 0;
-  model.rotation.x = opts.rotationX ?? 0;
-  model.rotation.z = opts.rotationZ ?? 0;
+  // Rotação
+  model.rotation.y = opts.rotY ?? opts.rotationY ?? 0;
+  model.rotation.x = opts.rotX ?? opts.rotationX ?? 0;
+  model.rotation.z = opts.rotZ ?? opts.rotationZ ?? 0;
 
-  // Escala pro tamanho alvo
+  // Offset pós-rotação
+  if (opts.posX) model.position.x += opts.posX;
+  if (opts.posY) model.position.y += opts.posY;
+  if (opts.posZ) model.position.z += opts.posZ;
+
+  // Escala
   const maxDim = Math.max(size.x, size.y, size.z) || 1;
-  const targetSize = opts.targetSize ?? 1.6;
+  const targetSize = opts.targetSize ?? 1.2;
   const scale = targetSize / maxDim;
   model.scale.multiplyScalar(scale);
 
@@ -94,30 +131,29 @@ function normalizeModel(model, opts = {}) {
   return model;
 }
 
-/**
- * Carrega e normaliza um GLB (com clonagem segura).
- */
 export async function getWeaponGLB(weaponId, opts = {}) {
   const path = GLB_PATHS[weaponId];
   if (!path) throw new Error('Sem GLB path pra ' + weaponId);
+
+  const overrides = GLB_OVERRIDES[weaponId] || {};
+  const mergedOpts = { ...overrides, ...opts };
+
   const raw = await loadGLBRaw(path);
   const cloned = raw.clone(true);
-  // Clona materiais pra cada instância
+
   cloned.traverse(c => {
     if (c.isMesh && c.material) {
       if (Array.isArray(c.material)) c.material = c.material.map(m => m.clone());
       else c.material = c.material.clone();
     }
   });
-  return normalizeModel(cloned, opts);
+
+  return normalizeModel(cloned, mergedOpts);
 }
 
-/**
- * Precarga um GLB. Depois disso, buildWeaponModelSmart usa ele automaticamente.
- */
 export async function precacheWeaponGLB(weaponId, opts = {}) {
   try {
-    const model = await getWeaponGLB(weaponId, { targetSize: 1.6, ...opts });
+    const model = await getWeaponGLB(weaponId, opts);
     glbReady.set(weaponId, model);
     return true;
   } catch (_) {
@@ -125,9 +161,6 @@ export async function precacheWeaponGLB(weaponId, opts = {}) {
   }
 }
 
-/**
- * Precarga todos. onProgress(cur, total, id, ok).
- */
 export async function precacheAllWeaponGLBs(onProgress) {
   const ids = Object.keys(GLB_PATHS);
   const results = {};
@@ -625,9 +658,6 @@ const BUILDERS = {
 // API PÚBLICA
 // ============================================================
 
-/**
- * Procedural puro (sempre retorna algo).
- */
 export function buildWeaponModel(weaponId) {
   const g = new THREE.Group();
   const b = BUILDERS[weaponId];
@@ -637,10 +667,6 @@ export function buildWeaponModel(weaponId) {
   return g;
 }
 
-/**
- * Smart — prefere GLB se estiver no cache, senão procedural.
- * Síncrono (não pode await). Chame precacheWeaponGLB antes.
- */
 export function buildWeaponModelSmart(weaponId) {
   if (glbReady.has(weaponId)) {
     const model = glbReady.get(weaponId).clone(true);
@@ -657,7 +683,6 @@ export function buildWeaponModelSmart(weaponId) {
   return buildWeaponModel(weaponId);
 }
 
-// Metadata
 export const WEAPON_WORLD_SIZE = {
   knife: 0.6, woodenClub: 0.95, pipe: 0.95, pipeWrench: 0.95,
   cleaver: 0.75, katana: 1.4, kukri: 0.75, shovel: 1.5,
