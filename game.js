@@ -23,6 +23,7 @@ import * as Extraction from './src/core/extraction.js';
 
 // ====== VIEWMODEL 3D ======
 import { Weapon3DView } from './src/render/viewmodel-3d.js';
+import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 
 // ====== PICKUPS 3D ======
 import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pickup-3d.js';
