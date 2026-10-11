@@ -795,3 +795,200 @@ body.downed #crosshair { opacity: 0; }
   position: fixed; inset: 0;
   pointer-events: none; z-index: 14;
 }
+/* ============================================ */
+/* CALIBRAÇÃO DE ARMAS                          */
+/* ============================================ */
+#calibration {
+  background: rgba(0, 0, 0, 0.98);
+  z-index: 200;
+}
+
+.calib-container {
+  width: 96vw;
+  height: 94vh;
+  max-width: 1600px;
+  display: flex;
+  flex-direction: column;
+  background: #0e0e0e;
+  border: 3px solid #ffdd00;
+  box-shadow: 0 0 40px rgba(255, 220, 0, 0.3);
+}
+
+.calib-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #161616;
+  border-bottom: 2px solid #333;
+}
+
+.calib-header h2 {
+  color: #ffdd00;
+  font-size: 18px;
+  letter-spacing: 3px;
+  font-family: 'Courier New', monospace;
+}
+
+.calib-close {
+  width: 36px;
+  height: 36px;
+  background: #1e1e1e;
+  color: #f66;
+  border: 2px solid #444;
+  font-size: 18px;
+  font-weight: bold;
+  cursor: pointer;
+  font-family: inherit;
+}
+.calib-close:hover {
+  background: #cc0000;
+  color: #fff;
+  border-color: #ff3333;
+}
+
+.calib-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.calib-list {
+  width: 180px;
+  background: #131313;
+  border-right: 2px solid #333;
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.calib-weapon-btn {
+  background: #1a1a1a;
+  color: #888;
+  border: 2px solid #2a2a2a;
+  padding: 10px 12px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  cursor: pointer;
+  text-align: left;
+  transition: 0.15s;
+}
+.calib-weapon-btn:hover {
+  color: #fff;
+  border-color: #555;
+}
+.calib-weapon-btn.active {
+  background: #2a2200;
+  color: #ffdd00;
+  border-color: #ffdd00;
+  box-shadow: 0 0 10px rgba(255, 220, 0, 0.3);
+}
+
+.calib-viewport {
+  flex: 1;
+  position: relative;
+  background:
+    repeating-conic-gradient(#222 0% 25%, #1a1a1a 0% 50%) 50% / 20px 20px;
+  overflow: hidden;
+  min-width: 0;
+}
+.calib-viewport canvas { display: block; }
+
+.calib-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.75);
+  color: #888;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+  padding: 6px 14px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.calib-controls {
+  width: 260px;
+  background: #131313;
+  border-left: 2px solid #333;
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.calib-row {
+  margin-bottom: 12px;
+}
+
+.calib-row label {
+  display: flex;
+  justify-content: space-between;
+  color: #aaa;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.calib-row label span {
+  color: #ffdd00;
+  font-weight: bold;
+}
+.calib-row input[type="range"] {
+  width: 100%;
+  accent-color: #cc0000;
+  height: 4px;
+}
+
+.calib-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #161616;
+  border-top: 2px solid #333;
+  gap: 12px;
+}
+
+.calib-status {
+  color: #888;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  flex: 1;
+}
+
+.calib-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.calib-btn {
+  padding: 10px 22px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  cursor: pointer;
+  border: 2px solid;
+  transition: 0.15s;
+}
+.calib-reset {
+  background: #1e1e1e;
+  color: #f66;
+  border-color: #553333;
+}
+.calib-reset:hover {
+  background: #2a1010;
+  border-color: #f66;
+}
+.calib-save {
+  background: #cc0000;
+  color: #fff;
+  border-color: #ff3333;
+}
+.calib-save:hover {
+  background: #ff2020;
+  box-shadow: 0 0 15px #cc0000;
+}
