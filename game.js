@@ -396,9 +396,9 @@ bus.on(Ev.WORLD_BLOOD_MOON, () => {
   addShake(0.5);
   showWaveBanner('LUA DE SANGUE!');
 });
-bus.on('extraction:spawned', () => showWaveBanner('HELICÓPTERO CHEGANDO!'));
-bus.on('extraction:landed',  () => showWaveBanner('ENTRE NO HELICÓPTERO!'));
-bus.on('extraction:success', () => {
+bus.on(Ev.EXTRACTION_SPAWNED, () => showWaveBanner('HELICÓPTERO CHEGANDO!'));
+bus.on(Ev.EXTRACTION_LANDED,  () => showWaveBanner('ENTRE NO HELICÓPTERO!'));
+bus.on(Ev.EXTRACTION_SUCCESS, () => {
   state.running = false;
   document.getElementById('final-wave').textContent = state.wave;
   document.getElementById('final-level').textContent = state.level;
