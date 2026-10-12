@@ -1,7 +1,7 @@
 // ============================================================
-// weapon-models.js — v7 (limpo)
-// Só carrega o GLB, centraliza e aplica targetSize.
-// Posicionamento fica 100% pro calibrador.
+// weapon-models.js — v9
+// Mapeia GLBs extraídos do Zumbi Blocks 2 para as armas do jogo.
+// Fallback procedural se nenhum GLB carregar.
 // ============================================================
 
 import * as THREE from 'three';
@@ -15,50 +15,117 @@ try {
   gltfLoader.setDRACOLoader(draco);
 } catch (_) {}
 
-export const GLB_PATHS = {
-  knife:        'assets/models/knife.glb',
-  pistol:       'assets/models/pistol.glb',
-  revolver:     'assets/models/revolver.glb',
-  smg:          'assets/models/smg.glb',
-  rifle:        'assets/models/rifle.glb',
-  shotgun:      'assets/models/shotgun.glb',
-  woodenClub:   'assets/models/club.glb',
-  pipe:         'assets/models/pipe.glb',
-  pipeWrench:   'assets/models/pipe_wrench.glb',
-  cleaver:      'assets/models/cleaver.glb',
-  katana:       'assets/models/katana.glb',
-  kukri:        'assets/models/kukri.glb',
-  shovel:       'assets/models/shovel.glb',
-  reaperScythe: 'assets/models/scythe.glb',
-  launcher:     'assets/models/launcher.glb',
+// ============================================================
+// CANDIDATOS POR ARMA
+// Ordem de tentativa. O primeiro que existir é usado.
+// ============================================================
+export const GLB_CANDIDATES = {
+  // ═══ MELEE (sem modelos no repo — usam procedural) ═══
+  knife:        [],
+  woodenClub:   [],
+  pipe:         [],
+  pipeWrench:   [],
+  cleaver:      [],
+  katana:       [],
+  kukri:        [],
+  shovel:       [],
+  reaperScythe: [],
+
+  // ═══ PISTOLAS ═══
+  pistol: [
+    '1911_Gun.glb',
+    '1911Body.glb',
+    '1911_3D.glb',
+    '1911LowPoly.glb',
+    'M1911.glb',
+  ],
+  revolver: [
+    'C96_Gun.glb',
+    'C96_3D.glb',
+    'Beretta38_Gun.glb',
+    'Revolver.glb',
+  ],
+
+  // ═══ SUBMETRALHADORAS ═══
+  smg: [
+    'AkSu_Gun.glb',
+    'AkSuBody.glb',
+    'AkSu_3D.glb',
+    'AkSuLowPoly.glb',
+    'Bizon_Gun.glb',
+    'Bizon.glb',
+  ],
+
+  // ═══ RIFLES ═══
+  rifle: [
+    'AmericanPredator_Gun.glb',
+    'AmericanPredator.glb',
+    'AmericanPredator_3D.glb',
+    'AmericanPredatorLowPoly.glb',
+    'Ar16_Gun.glb',
+    'Ar16Body.glb',
+    'Ar16LowPoly.glb',
+    'AsVal_Gun.glb',
+    'AsVal.glb',
+  ],
+
+  // ═══ SHOTGUN / LAUNCHER (sem modelos no repo — procedural) ═══
+  shotgun: [],
+  launcher: [],
 };
 
+// Path base
+const MODELS_BASE = 'assets/models/';
+
+// ============================================================
+// CACHE
+// ============================================================
 const glbPromises = new Map();
 const glbReady = new Map();
+const glbSourceName = new Map();
 
-function loadGLBRaw(url) {
-  if (glbPromises.has(url)) return glbPromises.get(url);
-  const p = gltfLoader.loadAsync(url)
-    .then(gltf => gltf.scene)
-    .catch(err => {
-      console.warn('[glb] falhou:', url, err.message || err);
-      throw err;
-    });
-  glbPromises.set(url, p);
-  return p;
+// ============================================================
+// LOADER
+// ============================================================
+function loadFirstAvailable(weaponId) {
+  const candidates = GLB_CANDIDATES[weaponId];
+  if (!candidates || candidates.length === 0) {
+    return Promise.reject(new Error('Sem candidatos para: ' + weaponId));
+  }
+
+  if (glbPromises.has(weaponId)) return glbPromises.get(weaponId);
+
+  const promise = (async () => {
+    for (const filename of candidates) {
+      const fullPath = MODELS_BASE + filename;
+      try {
+        const gltf = await gltfLoader.loadAsync(fullPath);
+        glbSourceName.set(weaponId, filename);
+        console.log(`[weapon-models] ✅ ${weaponId} ← ${filename}`);
+        return gltf.scene;
+      } catch (_) {
+        // tenta o próximo
+      }
+    }
+    console.warn(`[weapon-models] ⚠️ ${weaponId} — nenhum GLB encontrado, usando procedural`);
+    throw new Error('Nenhum candidato encontrado para ' + weaponId);
+  })();
+
+  glbPromises.set(weaponId, promise);
+  return promise;
 }
 
-// Apenas centraliza + normaliza escala global. Nada mais.
-function prepareModel(model, opts = {}) {
+// ============================================================
+// NORMALIZA
+// ============================================================
+function prepareModel(model) {
   model.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(model);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
 
-  // Centraliza
   model.position.sub(center);
 
-  // Escala uniforme pra 1 unidade (o calibrador ajusta depois)
   const maxDim = Math.max(size.x, size.y, size.z) || 1;
   model.scale.setScalar(1 / maxDim);
 
@@ -80,10 +147,11 @@ function prepareModel(model, opts = {}) {
   return model;
 }
 
+// ============================================================
+// GET
+// ============================================================
 export async function getWeaponGLB(weaponId) {
-  const path = GLB_PATHS[weaponId];
-  if (!path) throw new Error('Sem GLB path: ' + weaponId);
-  const raw = await loadGLBRaw(path);
+  const raw = await loadFirstAvailable(weaponId);
   const cloned = raw.clone(true);
   cloned.traverse(c => {
     if (c.isMesh && c.material) {
@@ -94,6 +162,9 @@ export async function getWeaponGLB(weaponId) {
   return prepareModel(cloned);
 }
 
+// ============================================================
+// PRECACHE
+// ============================================================
 export async function precacheWeaponGLB(weaponId) {
   try {
     const model = await getWeaponGLB(weaponId);
@@ -105,20 +176,40 @@ export async function precacheWeaponGLB(weaponId) {
 }
 
 export async function precacheAllWeaponGLBs(onProgress) {
-  const ids = Object.keys(GLB_PATHS);
+  const ids = Object.keys(GLB_CANDIDATES);
   const results = {};
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
     results[id] = await precacheWeaponGLB(id);
     if (onProgress) onProgress(i + 1, ids.length, id, results[id]);
   }
+  console.log('[weapon-models] 📦 Precache completo:');
+  console.table(
+    Object.keys(results).map(id => ({
+      arma: id,
+      carregado: results[id] ? '✅' : '❌',
+      arquivo: glbSourceName.get(id) || '— (procedural)',
+    }))
+  );
   return results;
 }
 
 export function hasGLB(weaponId) { return glbReady.has(weaponId); }
+export function getSourceName(weaponId) { return glbSourceName.get(weaponId) || null; }
+
+export function getStatus() {
+  const out = {};
+  for (const id of Object.keys(GLB_CANDIDATES)) {
+    out[id] = {
+      loaded: glbReady.has(id),
+      file: glbSourceName.get(id) || null,
+    };
+  }
+  return out;
+}
 
 // ============================================================
-// MATERIAIS
+// MATERIAIS PROCEDURAIS (fallback)
 // ============================================================
 const MAT = {
   gunMetal:      new THREE.MeshStandardMaterial({ color: 0x1a1c20, metalness: 0.9,  roughness: 0.38 }),
@@ -209,7 +300,7 @@ function handGrip(height, width, mat) {
 }
 
 // ============================================================
-// BUILDERS PROCEDURAIS
+// BUILDERS PROCEDURAIS (fallback — mantidos)
 // ============================================================
 function buildKnife(g) {
   const h = new THREE.Group();
