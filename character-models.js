@@ -2,6 +2,7 @@
 // character-models.js
 // Carrega Angel, BusinessMale e BusinessFemale.
 // Usados como NPCs decorativos no mapa (sem animação).
+// Nomes validados contra o repositório real.
 // ============================================================
 
 import * as THREE from 'three';
@@ -10,9 +11,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 const loader = new GLTFLoader();
 
 export const CHARACTER_CANDIDATES = {
-  angel:          ['Angel_Gun.glb', 'Angel.glb', 'Angel_3D.glb', 'AngelLowPoly.glb'],
-  businessMale:   ['BusinessMale_Gun.glb', 'BusinessMale.glb', 'BusinessMale_3D.glb', 'Businessman.glb'],
-  businessFemale: ['BusinessFemale_Gun.glb', 'BusinessFemale.glb', 'BusinessFemale_3D.glb', 'Businesswoman.glb'],
+  angel:          ['Angel.glb', 'Angel_Gun.glb', 'Angel_3D.glb', 'AngelLowPoly.glb'],
+  businessMale:   ['BusinessMale.glb', 'BusinessMale_Gun.glb', 'BusinessMale_3D.glb', 'Businessman.glb'],
+  businessFemale: ['BusinessFemale.glb', 'BusinessFemale_Gun.glb', 'BusinessFemale_3D.glb', 'Businesswoman.glb'],
 };
 
 const MODELS_BASE = 'assets/models/';
