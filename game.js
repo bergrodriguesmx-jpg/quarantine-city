@@ -631,9 +631,18 @@ function createZombieMesh(opts = {}) {
   const g = new THREE.Group();
   const variant = type.variant || 'normal';
 
-  let skinColor = opts.skin !== undefined ? opts.skin : rand(SKIN_COLORS);
-  let shirtColor = typeKey === 'judge' ? SHIRT_BLACK : SHIRT_RED;
-  let pantsColor = rand(PANTS_COLORS);
+   // Paletas por tipo (fallback pras antigas se tipo não tiver paleta)
+  const FALLBACK_SKIN = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
+  const FALLBACK_SHIRT = 0xCC1111;
+  const FALLBACK_PANTS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
+
+  const skinPal = type.skinPalette && type.skinPalette.length > 0 ? type.skinPalette : FALLBACK_SKIN;
+  const shirtPal = type.shirtPalette && type.shirtPalette.length > 0 ? type.shirtPalette : [FALLBACK_SHIRT];
+  const pantsPal = type.pantsPalette && type.pantsPalette.length > 0 ? type.pantsPalette : FALLBACK_PANTS;
+
+  let skinColor = opts.skin !== undefined ? opts.skin : skinPal[Math.floor(Math.random() * skinPal.length)];
+  let shirtColor = typeKey === 'judge' ? SHIRT_BLACK : shirtPal[Math.floor(Math.random() * shirtPal.length)];
+  let pantsColor = pantsPal[Math.floor(Math.random() * pantsPal.length)];
 
   if (variant === 'worker') { skinColor = 0xC8A878; shirtColor = 0x8B5A2B; pantsColor = 0x5D4030; }
   else if (variant === 'miner') { skinColor = 0xB09878; shirtColor = 0x34495E; pantsColor = 0x1B2631; }
