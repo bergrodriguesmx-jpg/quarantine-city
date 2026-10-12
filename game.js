@@ -2801,8 +2801,10 @@ function updateZombies(dt) {
     z.mesh.position.z += z.vz * dt;
     resolveWallCollisions(z.mesh.position, z.radius);
 
-    updateStuckDetection(z, dt, world);
-    applyStuckPhysics(z, dt);
+        if (!z.type.flight) {
+      updateStuckDetection(z, dt, world);
+      applyStuckPhysics(z, dt);
+    }
 
     const realDx = z.mesh.position.x - z._prevX;
     const realDz = z.mesh.position.z - z._prevZ;
