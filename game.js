@@ -34,6 +34,7 @@ import { preloadGibs, createGib, hasGib } from './gib-models.js';
 import { preloadGibGLBs, createLimb, hasLimb, createCorpse, listCorpseTypes } from './gib-glb.js';
 import { preloadCharacters, createCharacter } from './character-models.js';
 import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './src/render/weapon-models.js';
+import { preloadZombieAnims, hasZombieAnims, setupZombieAnimator, updateZombieAnim, handleZombieAnimState } from './zombie-anim.js';
 
 bus.setAdapter(new LocalAdapter());
 
@@ -49,6 +50,7 @@ const controls = getControls();
     await precacheAllWeaponGLBs();
     await preloadGibs();
     await preloadGibGLBs();
+    await preloadZombieAnims();
     await preloadCharacters();
     console.log('[game] ✅ Assets prontos');
   } catch (e) {
@@ -813,6 +815,25 @@ function createZombieMesh(opts = {}) {
     legL: legL.hip, legR: legR.hip,
   });
 
+  // Nomeia os joints pra o AnimationMixer encontrar (Mixamo retarget)
+  pelvis.name = 'pelvis';
+  spineLower.name = 'spineLower';
+  spineUpper.name = 'spineUpper';
+  neck.name = 'neck';
+  head.name = 'head';
+  armL.shoulder.name = 'shoulderL';
+  armL.elbow.name = 'elbowL';
+  armL.hand.name = 'handL';
+  armR.shoulder.name = 'shoulderR';
+  armR.elbow.name = 'elbowR';
+  armR.hand.name = 'handR';
+  legL.thigh.name = 'thighL';
+  legL.knee.name = 'kneeL';
+  legL.foot.name = 'footL';
+  legR.thigh.name = 'thighR';
+  legR.knee.name = 'kneeR';
+  legR.foot.name = 'footR';
+
   g.userData = {
     armL: armL.shoulder, armR: armR.shoulder,
     legL: legL.hip, legR: legR.hip,
@@ -986,6 +1007,10 @@ function spawnZombie(forceType) {
     _forceGroan: false,
     _groundTime: 0,
   };
+
+  // Ativa animações Mixamo se disponíveis
+  setupZombieAnimator(z);
+
   zombies.push(z);
   initStuckState(z);
   ZombieAI.initZombieAIState(z);
@@ -1177,7 +1202,6 @@ function detachLimb(z, key, hitDir, hitPoint) {
   stump.scale.set(1, 0.8, 1);
   parent.add(stump);
 
-  // Tenta GLB real primeiro, cai no procedural se não tiver
   let gibModel = null;
   let gibSource = 'procedural';
   if (hasLimb(key)) {
@@ -2779,6 +2803,7 @@ function updateZombies(dt) {
           aggroSoundCooldown: 0, _wasAlerted: false,
           _forceGroan: false, _groundTime: 0,
         };
+        setupZombieAnimator(minion);
         initStuckState(minion);
         ZombieAI.initZombieAIState(minion);
         zombies.push(minion); state.zombiesAlive++;
@@ -2975,7 +3000,15 @@ function updateZombies(dt) {
       armRXTarget -= hunt * 0.25 * (1 - crawl);
     }
 
-    if (skipVisual) {
+    // ════════════════════════════════════════════════════════════
+    // 🎬 MIXAMO / PROCEDURAL — escolhe qual sistema de animação usar
+    // ════════════════════════════════════════════════════════════
+    if (z.mixer) {
+      // MODO MIXAMO: animação real via FBX
+      updateZombieAnim(z, dt);
+      joints.pelvis.position.y = pelvisYTmp; // posição base (sem bob procedural)
+      handleZombieAnimState(z, realSpeed);
+    } else if (skipVisual) {
       joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
     } else {
       springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
@@ -3137,7 +3170,7 @@ const promptText = document.getElementById('prompt-text');
 
 function spawnWeaponPickup(weaponId, x, z, y = 0.9, isDrop = false) {
   const spriteHandle = spawnPickup3D(scene, {
-    weaponId, x, z, y: y + 0.3, isDrop, spinSpeed: 1.2, bobAmpl: 0.08,
+    weaponId, x, z, y: y + 0.3, isDrop, spinSpeed: 1.2, bobAmp: 0.08,
   });
   world.weaponSpots.push({
     x, y, z,
@@ -3461,7 +3494,6 @@ function startGame() {
   clearPickups3D();
   setupWeaponSpawns();
 
-  // Cadáveres decorativos (GLB)
   if (world._corpses) {
     for (const c of world._corpses) scene.remove(c);
   }
@@ -3490,7 +3522,6 @@ function startGame() {
   player.yaw = 0; player.pitch = 0;
   player.userData._pendingDamage = 0;
 
-  // NPCs
   if (world._npcs) world._npcs.forEach(m => scene.remove(m));
   world._npcs = [];
   const npcList = [
