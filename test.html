@@ -2,46 +2,45 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Teste GLB Zombie</title>
+  <title>Inspeção GLBs Zumbi</title>
   <style>
     body { margin:0; background:#222; font-family:monospace; color:#fff; overflow:hidden; }
     #hud {
       position:fixed; top:10px; left:10px; z-index:10;
-      background:rgba(0,0,0,0.7); padding:12px 16px;
-      border-radius:6px; font-size:13px; line-height:1.6;
-      max-width:400px; max-height:90vh; overflow:auto;
+      background:rgba(0,0,0,0.85); padding:14px 18px;
+      border-radius:6px; font-size:12px; line-height:1.6;
+      max-width:420px; max-height:92vh; overflow:auto;
     }
-    #hud h3 { margin:0 0 8px; color:#0f0; font-size:14px; }
+    #hud h3 { margin:0 0 8px; color:#0f0; font-size:13px; }
+    #hud h4 { margin:12px 0 4px; color:#ffdd00; font-size:12px; }
     #hud button {
-      display:block; width:100%; margin:4px 0;
-      padding:8px; background:#333; color:#fff;
+      display:block; width:100%; margin:3px 0;
+      padding:6px; background:#333; color:#fff;
       border:1px solid #555; cursor:pointer;
-      font-family:inherit; font-size:12px;
-      text-align:left;
+      font-family:inherit; font-size:11px; text-align:left;
     }
     #hud button:hover { background:#444; }
     #hud button.active { background:#0f0; color:#000; font-weight:bold; }
-    #hud .info { color:#888; font-size:11px; margin-top:10px; padding-top:8px; border-top:1px solid #333; }
+    #hud .info { color:#888; font-size:10px; margin-top:8px; padding-top:8px; border-top:1px solid #333; }
     #hud .info b { color:#ff0; }
-    #status { color:#ff0; margin-top:8px; font-size:11px; }
+    #hud .prop { color:#0af; }
+    #hud .warn { color:#f66; }
+    #hud .ok { color:#0f0; }
+    #status { color:#ff0; margin-top:8px; font-size:10px; white-space:pre-wrap; }
   </style>
 </head>
 <body>
   <div id="hud">
-    <h3>🧟 TESTE GLB</h3>
-    <div id="anims"></div>
+    <h3>🔬 INSPEÇÃO DE GLBs</h3>
+    <div id="load-list"></div>
     <div id="status">Carregando...</div>
     <div class="info">
-      <b>Controles:</b><br>
-      Mouse: orbitar<br>
-      Scroll: zoom<br>
-      Botões: trocar animação<br><br>
-      <b>Olhe o zumbi e me diga:</b><br>
-      1. Ele está em pé?<br>
-      2. Ele olha pra onde? (frente/costas)<br>
-      3. Os pés estão no chão?<br>
-      4. Qual animação parece correta?<br>
-      5. Algum membro fica fora do lugar?
+      <b>Perguntas que isso responde:</b><br>
+      1. O GLB tem <span class="prop">skeleton</span>?<br>
+      2. Tem <span class="prop">animações</span>?<br>
+      3. É <span class="prop">peça única</span> ou tem membros separados?<br>
+      4. Qual a <span class="prop">escala real</span>?<br>
+      5. Está em pé na <span class="prop">origem</span>?
     </div>
   </div>
 
@@ -59,11 +58,11 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-    // Cena
+    // ─── Cena básica ───────────────────────────────────────
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x333333);
 
-    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 1000);
     camera.position.set(3, 2, 4);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -76,140 +75,155 @@
     controls.target.set(0, 1, 0);
     controls.enableDamping = true;
 
-    // Luz
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
     const sun = new THREE.DirectionalLight(0xffffff, 1.0);
-    sun.position.set(5, 10, 5);
-    sun.castShadow = true;
+    sun.position.set(5, 10, 5); sun.castShadow = true;
     scene.add(sun);
-    const back = new THREE.DirectionalLight(0xffffff, 0.3);
-    back.position.set(-5, 5, -5);
-    scene.add(back);
 
-    // Chão
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(30, 30),
       new THREE.MeshStandardMaterial({ color: 0x555555 })
     );
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
+    floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
     scene.add(floor);
+    scene.add(new THREE.GridHelper(10, 10, 0x00ff00, 0x444444));
+    scene.add(new THREE.AxesHelper(2));
 
-    // Grid para ver escala e orientação
-    const grid = new THREE.GridHelper(10, 10, 0x00ff00, 0x444444);
-    scene.add(grid);
-
-    // Eixos (X vermelho, Y verde, Z azul)
-    const axes = new THREE.AxesHelper(2);
-    scene.add(axes);
-
-    // Boneco de referência (2m de altura)
-    const refMan = new THREE.Mesh(
+    // Boneco de referência 2m
+    const ref = new THREE.Mesh(
       new THREE.CapsuleGeometry(0.3, 1.4, 4, 8),
-      new THREE.MeshStandardMaterial({ color: 0x00ffff, transparent: true, opacity: 0.3 })
+      new THREE.MeshStandardMaterial({ color: 0x00ffff, transparent: true, opacity: 0.2 })
     );
-    refMan.position.set(-1.5, 1.0, 0);
-    scene.add(refMan);
+    ref.position.set(-1.5, 1.0, 0);
+    scene.add(ref);
 
-    // Estado
-    let mixer = null;
-    let model = null;
-    const clips = {};
-    let currentAction = null;
-    let currentName = '';
+    // ─── Configuração dos GLBs para testar ─────────────────
+    const MODELS_BASE = 'assets/models/';
+
+    const MODELS = [
+      { id: 'worker-full',      file: 'WorkerZombie.glb' },
+      { id: 'miner-full',       file: 'MinerZombie.glb' },
+      { id: 'combatant-mesh',   file: 'CombatantZombieMesh1.glb' },
+      { id: 'zbguy',            file: 'ZbGuyMesh.glb' },
+      { id: 'worker-armL',      file: 'WorkerZombieLeftArm.glb' },
+      { id: 'worker-armR',      file: 'WorkerZombieRightArm.glb' },
+      { id: 'worker-legL',      file: 'WorkerZombieLeftLeg.glb' },
+      { id: 'worker-legR',      file: 'WorkerZombieRightLeg.glb' },
+      { id: 'worker-cap',       file: 'WorkerZombieCap.glb' },
+      { id: 'zombie-doll',      file: 'ZombieDoll.glb' },
+      { id: 'zombie-lowLOD',    file: 'ZombieLowLOD.glb' },
+      { id: 'reaper-full',      file: 'ReaperZombie.glb' },
+      { id: 'queen-full',       file: 'QueenZombie.glb' },
+      { id: 'riot-full',        file: 'RiotZombie.glb' },
+    ];
 
     const statusEl = document.getElementById('status');
-    const animsEl = document.getElementById('anims');
+    const listEl = document.getElementById('load-list');
 
-    // Carrega GLB
-    const loader = new GLTFLoader();
-    loader.load('./low_poly_zombie_game_animation.glb', gltf => {
-      const glbScene = gltf.scene;
+    let loader = new GLTFLoader();
+    let currentModel = null;
+    let mixer = null;
+    let modelClips = {};
 
-      // Info do modelo ANTES de escalar
-      const box0 = new THREE.Box3().setFromObject(glbScene);
-      const size0 = box0.getSize(new THREE.Vector3());
-      statusEl.innerHTML = `Tamanho bruto: ${size0.x.toFixed(2)} × ${size0.y.toFixed(2)} × ${size0.z.toFixed(2)}m<br>`;
-      statusEl.innerHTML += `Animações: ${gltf.animations.length}<br>`;
+    async function loadModel(config) {
+      // Limpar anterior
+      if (currentModel) { scene.remove(currentModel); currentModel = null; }
+      if (mixer) { mixer.stopAllAction(); mixer = null; }
 
-      // Escala para 1.75m
-      const scale = 1.75 / size0.y;
-      glbScene.scale.setScalar(scale);
-      statusEl.innerHTML += `Scale aplicado: ${scale.toFixed(4)}<br>`;
+      statusEl.textContent = `Carregando ${config.file}...`;
 
-      // Bounding box depois de escalar
-      glbScene.updateMatrixWorld(true);
-      const box1 = new THREE.Box3().setFromObject(glbScene);
-      const minY = box1.min.y;
-      const centerX = (box1.min.x + box1.max.x) / 2;
-      const centerZ = (box1.min.z + box1.max.z) / 2;
-      statusEl.innerHTML += `MinY: ${minY.toFixed(3)}m (deve ser ~0)<br>`;
+      try {
+        const gltf = await loader.loadAsync(MODELS_BASE + config.file);
+        const scene0 = gltf.scene;
 
-      // Ajusta para pés no chão
-      glbScene.position.set(-centerX, -minY, -centerZ);
+        // ─── ANÁLISE ────────────────────────────────────────
+        let meshCount = 0, boneCount = 0, skinnedCount = 0;
+        const meshNames = [];
+        const boneNames = [];
+        const materials = new Set();
 
-      // Sombras
-      glbScene.traverse(c => {
-        if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
-      });
+        scene0.traverse(c => {
+          if (c.isMesh) {
+            meshCount++;
+            if (c.isSkinnedMesh) skinnedCount++;
+            meshNames.push(c.name || '(sem nome)');
+            if (c.material) {
+              const mats = Array.isArray(c.material) ? c.material : [c.material];
+              mats.forEach(m => materials.add(m.name || '(sem nome)'));
+            }
+          }
+          if (c.isBone) { boneCount++; if (boneNames.length < 30) boneNames.push(c.name); }
+        });
 
-      scene.add(glbScene);
-      model = glbScene;
+        const box = new THREE.Box3().setFromObject(scene0);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const minY = box.min.y;
 
-      // Mixer
-      mixer = new THREE.AnimationMixer(glbScene);
+        // ─── RELATÓRIO ──────────────────────────────────────
+        const anims = gltf.animations || [];
+        let report = '';
+        report += `📁 ${config.file}\n`;
+        report += `  Tamanho: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m\n`;
+        report += `  Centro: (${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)})\n`;
+        report += `  Min Y: ${minY.toFixed(3)} (${minY > -0.1 && minY < 0.1 ? '✅ na origem' : '⚠️ deslocado'})\n`;
+        report += `  Meshes: ${meshCount}  (skinned: ${skinnedCount})\n`;
+        report += `  Bones: ${boneCount}\n`;
+        report += `  Animações: ${anims.length}`;
+        if (anims.length > 0) report += ` [${anims.map(a => a.name).join(', ')}]`;
+        report += `\n`;
+        report += `  Materiais (${materials.size}): ${[...materials].slice(0, 6).join(', ')}\n`;
+        if (boneCount > 0) report += `  Bones (primeiros): ${boneNames.slice(0, 8).join(', ')}\n`;
+        if (meshCount > 1) report += `  Meshes (nomes): ${meshNames.slice(0, 8).join(', ')}\n`;
 
-      // Guarda clipes
-      gltf.animations.forEach(clip => {
-        clips[clip.name] = clip;
-      });
+        statusEl.textContent = report;
 
-      // Cria botões
-      Object.keys(clips).forEach(name => {
-        const btn = document.createElement('button');
-        btn.textContent = `${name} (${clips[name].duration.toFixed(2)}s)`;
-        btn.dataset.anim = name;
-        btn.addEventListener('click', () => playAnim(name));
-        animsEl.appendChild(btn);
-      });
+        // ─── ADICIONA NA CENA ───────────────────────────────
+        // Escala pra 1.75m
+        const scale = 1.75 / (size.y || 1);
+        scene0.scale.setScalar(scale);
 
-      // Play inicial
-      if (clips.Idle) playAnim('Idle');
-      else if (gltf.animations[0]) playAnim(gltf.animations[0].name);
+        scene0.updateMatrixWorld(true);
+        const box2 = new THREE.Box3().setFromObject(scene0);
+        scene0.position.set(-box2.min.x - (box2.max.x - box2.min.x)/2, -box2.min.y, -box2.min.z - (box2.max.z - box2.min.z)/2);
 
-    }, undefined, err => {
-      statusEl.textContent = '❌ Erro: ' + err.message;
-      console.error(err);
-    });
+        scene0.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
 
-    function playAnim(name) {
-      if (!clips[name] || !mixer) return;
-      if (currentName === name) return;
+        scene.add(scene0);
+        currentModel = scene0;
 
-      const next = mixer.clipAction(clips[name]);
-      next.reset();
-      if (name === 'Death') {
-        next.setLoop(THREE.LoopOnce, 1);
-        next.clampWhenFinished = true;
-      } else {
-        next.setLoop(THREE.LoopRepeat, Infinity);
+        // Animações
+        if (anims.length > 0) {
+          mixer = new THREE.AnimationMixer(scene0);
+          modelClips = {};
+          anims.forEach(clip => { modelClips[clip.name] = clip; });
+          const first = mixer.clipAction(anims[0]);
+          first.play();
+        }
+
+      } catch (e) {
+        statusEl.innerHTML = `<span class="warn">❌ Erro: ${e.message}</span>`;
       }
-      next.play();
-
-      if (currentAction && currentAction !== next) {
-        try { next.crossFadeFrom(currentAction, 0.3, true); }
-        catch { currentAction.stop(); }
-      }
-      currentAction = next;
-      currentName = name;
-
-      // Marca botão ativo
-      document.querySelectorAll('#anims button').forEach(b => {
-        b.classList.toggle('active', b.dataset.anim === name);
-      });
     }
 
-    // Loop
+    // ─── BOTÕES ────────────────────────────────────────────
+    MODELS.forEach(m => {
+      const btn = document.createElement('button');
+      btn.textContent = m.file;
+      btn.dataset.id = m.id;
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#load-list button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        loadModel(m);
+      });
+      listEl.appendChild(btn);
+    });
+
+    // Carrega o primeiro automaticamente
+    loadModel(MODELS[0]);
+    document.querySelector('#load-list button').classList.add('active');
+
+    // ─── LOOP ──────────────────────────────────────────────
     const clock = new THREE.Clock();
     function animate() {
       requestAnimationFrame(animate);
@@ -220,7 +234,6 @@
     }
     animate();
 
-    // Resize
     addEventListener('resize', () => {
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
