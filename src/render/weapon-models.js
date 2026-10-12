@@ -1,6 +1,7 @@
 // ============================================================
-// weapon-models.js — v9
+// weapon-models.js — v10
 // Mapeia GLBs do Zumbi Blocks 2 para as armas do jogo.
+// Nomes validados contra o repositório real.
 // ============================================================
 
 import * as THREE from 'three';
@@ -15,35 +16,24 @@ try {
 } catch (_) {}
 
 export const GLB_CANDIDATES = {
-  knife:        [],
-  woodenClub:   [],
-  pipe:         [],
-  pipeWrench:   [],
-  cleaver:      [],
-  katana:       [],
-  kukri:        [],
-  shovel:       [],
-  reaperScythe: [],
+  // ════════ MELEE ════════
+  knife:        ['knife.glb', 'Knife_3D.glb', 'CombatKnife.glb'],
+  woodenClub:   ['WoodenClub.glb', 'Club_3D.glb', 'Club_ML.glb'],
+  pipe:         ['Pipe_3D.glb', 'Pipe_ML.glb'],
+  pipeWrench:   ['PipeWrench_3D.glb', 'PipeWrench_ML.glb'],
+  cleaver:      ['Cleaver_ML.glb'],
+  katana:       ['Katana_3D.glb', 'Katana_ML.glb'],
+  kukri:        ['Kukri.glb', 'Kukri_3D.glb', 'Kukri_ML.glb'],
+  shovel:       ['Shovel_3D.glb', 'Shovel_ML.glb'],
+  reaperScythe: ['ReaperScythe.glb', 'ReaperScythe_3D.glb', 'ReaperScythe_ML.glb'],
 
-  pistol: [
-    '1911_Gun.glb', '1911Body.glb', '1911_3D.glb',
-    '1911LowPoly.glb', 'M1911.glb', 'Beretta38_Gun.glb',
-  ],
-  revolver: [
-    'C96_Gun.glb', 'C96_3D.glb', 'C96.glb',
-    'Beretta38_Gun.glb', 'Revolver.glb',
-  ],
-  smg: [
-    'AkSu_Gun.glb', 'AkSuBody.glb', 'AkSu_3D.glb', 'AkSuLowPoly.glb',
-    'Bizon_Gun.glb', 'Bizon.glb', 'Bizon_3D.glb',
-  ],
-  rifle: [
-    'AmericanPredator_Gun.glb', 'AmericanPredator.glb', 'AmericanPredator_3D.glb',
-    'Ar16_Gun.glb', 'Ar16Body.glb', 'Ar16LowPoly.glb',
-    'AsVal_Gun.glb', 'AsVal.glb', 'AsVal_3D.glb',
-  ],
-  shotgun: [],
-  launcher: [],
+  // ════════ RANGED ════════
+  pistol:   ['pistol.glb', '1911_Gun.glb', '1911_3D.glb', 'HiPoint_Gun.glb', 'Welrod_Gun.glb'],
+  revolver: ['revolver.glb', 'C96_Gun.glb', 'Type26_Gun.glb'],
+  smg:      ['smg.glb', 'AkSu_Gun.glb', 'Bizon_Gun.glb', 'Mp5_Gun.glb', 'Skorpion_Gun.glb'],
+  rifle:    ['rifle.glb', 'AmericanPredator_Gun.glb', 'Ar16_Gun.glb', 'AsVal_Gun.glb', 'M14_Gun.glb'],
+  shotgun:  ['shotgun.glb', 'Shotgun_Gun.glb', 'Coach_Gun.glb', 'Spas_Gun.glb', 'TrenchShotgun_Gun.glb'],
+  launcher: ['He40mm_3D.glb', 'RiotShotgun_Gun.glb'], // fallback razoável
 };
 
 const MODELS_BASE = 'assets/models/';
@@ -148,7 +138,7 @@ export function getStatus() {
 }
 
 // ============================================================
-// FALLBACK PROCEDURAL (idêntico ao anterior)
+// FALLBACK PROCEDURAL (mantido igual)
 // ============================================================
 const MAT = {
   gunMetal: new THREE.MeshStandardMaterial({ color: 0x1a1c20, metalness: 0.9, roughness: 0.38 }),
@@ -179,30 +169,6 @@ function screw(r, h, mat) {
   g.add(new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 8), mat));
   g.add(new THREE.Mesh(new THREE.BoxGeometry(r*1.8, h*1.05, r*0.2), MAT.black));
   return g;
-}
-function frontSight(mat) {
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.015, 0.03), mat));
-  const p = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.025, 0.006), mat);
-  p.position.y = 0.015; g.add(p); return g;
-}
-function rearSight(mat) {
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.012, 0.02), mat));
-  const l = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.012, 0.02), mat);
-  l.position.set(-0.014, 0.012, 0); g.add(l);
-  const r = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.012, 0.02), mat);
-  r.position.set(0.014, 0.012, 0); g.add(r); return g;
-}
-function trigger(mat) {
-  const g = new THREE.Group();
-  const t = new THREE.Mesh(new THREE.CapsuleGeometry(0.005, 0.02, 3, 6), mat);
-  t.rotation.x = 0.25; g.add(t); return g;
-}
-function triggerGuard(mat) {
-  const g = new THREE.Group();
-  const t = new THREE.Mesh(new THREE.TorusGeometry(0.022, 0.004, 6, 12, Math.PI * 1.2), mat);
-  t.rotation.z = -Math.PI * 0.1; t.rotation.x = Math.PI / 2; g.add(t); return g;
 }
 function curvedMag(w, h, curve, mat) {
   const g = new THREE.Group(); const segs = 8, sh = h / segs;
