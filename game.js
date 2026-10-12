@@ -637,49 +637,296 @@ function pickFromPalette(palette, fallback) {
   return palette[Math.floor(Math.random() * palette.length)];
 }
 
+// ============================================================
+// FALLBACK PROCEDURAL — cria zumbi do zero se XBot não carregar
+// ============================================================
+function proceduralFallback(opts = {}) {
+  const typeKey = opts.type || 'pt';
+  const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey]
+    || { scale: 1, variant: 'normal' };
+  const variant = type.variant || 'normal';
+  const scale   = type.scale   || 1;
+
+  const root = new THREE.Group();
+
+  // ── Cores ──────────────────────────────────────────────
+  const skinColor  = opts.skin !== undefined
+    ? opts.skin
+    : pickFromPalette(type.skinPalette, 0x7BC950);
+  const shirtColor = pickFromPalette(type.shirtPalette, 0xCC1111);
+  const pantsColor = pickFromPalette(type.pantsPalette, 0x8B5A2B);
+  const hairColor  = HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)];
+
+  const skinMat  = matL(skinColor);
+  const shirtMat = matL(shirtColor);
+  const pantsMat = matL(pantsColor);
+  const hairMat  = matL(hairColor);
+  const shoeMat  = matL(0x1A1A1A);
+  const wound    = MAT_WOUND;
+
+  // ── Hierarquia óssea (grupos vazios = "bones") ─────────
+  const pelvis = new THREE.Group();
+  pelvis.position.y = P_PELVIS_Y;
+  root.add(pelvis);
+
+  const spineLower = new THREE.Group();
+  spineLower.position.y = P_SPINE_LOW_OFF;
+  pelvis.add(spineLower);
+
+  const torsoMesh = new THREE.Mesh(geoRoundBox(0.42, 0.42, 0.24, 0.05), shirtMat);
+  torsoMesh.position.y = 0.10;
+  torsoMesh.castShadow = true;
+  spineLower.add(torsoMesh);
+
+  const spineUpper = new THREE.Group();
+  spineUpper.position.y = P_SPINE_UP_OFF;
+  spineLower.add(spineUpper);
+
+  const chestMesh = new THREE.Mesh(geoRoundBox(0.44, 0.32, 0.26, 0.05), shirtMat);
+  chestMesh.position.y = 0.08;
+  chestMesh.castShadow = true;
+  spineUpper.add(chestMesh);
+
+  const neck = new THREE.Group();
+  neck.position.y = 0.22;
+  spineUpper.add(neck);
+
+  const head = new THREE.Group();
+  neck.add(head);
+
+  const HR = 0.13;
+  if (variant === 'donkey') {
+    buildDonkeyHead(head, skinMat, wound, HR);
+  } else if (variant === 'judge') {
+    buildJudgeHead(head, skinMat, wound, HR);
+    buildJudgeOutfit(spineUpper);
+  } else {
+    buildHumanHead(head, skinMat, hairMat, wound, HR, {
+      headgear: type.headgear || null,
+    });
+  }
+
+  // ── Braço esquerdo ─────────────────────────────────────
+  const shoulderL = new THREE.Group();
+  shoulderL.position.set(-0.24, P_SHOULDER_Y, 0);
+  spineUpper.add(shoulderL);
+
+  const upperArmL = new THREE.Mesh(geoRoundBox(0.10, 0.24, 0.10, 0.03), shirtMat);
+  upperArmL.position.y = -0.12;
+  upperArmL.castShadow = true;
+  shoulderL.add(upperArmL);
+
+  const elbowL = new THREE.Group();
+  elbowL.position.y = -0.22;
+  shoulderL.add(elbowL);
+
+  const foreArmL = new THREE.Mesh(geoRoundBox(0.09, 0.22, 0.09, 0.03), skinMat);
+  foreArmL.position.y = -0.11;
+  foreArmL.castShadow = true;
+  elbowL.add(foreArmL);
+
+  // ── Braço direito ──────────────────────────────────────
+  const shoulderR = new THREE.Group();
+  shoulderR.position.set(0.24, P_SHOULDER_Y, 0);
+  spineUpper.add(shoulderR);
+
+  const upperArmR = new THREE.Mesh(geoRoundBox(0.10, 0.24, 0.10, 0.03), shirtMat);
+  upperArmR.position.y = -0.12;
+  upperArmR.castShadow = true;
+  shoulderR.add(upperArmR);
+
+  const elbowR = new THREE.Group();
+  elbowR.position.y = -0.22;
+  shoulderR.add(elbowR);
+
+  const foreArmR = new THREE.Mesh(geoRoundBox(0.09, 0.22, 0.09, 0.03), skinMat);
+  foreArmR.position.y = -0.11;
+  foreArmR.castShadow = true;
+  elbowR.add(foreArmR);
+
+  // ── Perna esquerda ─────────────────────────────────────
+  const thighL = new THREE.Group();
+  thighL.position.set(-0.11, 0, 0);
+  pelvis.add(thighL);
+
+  const thighMeshL = new THREE.Mesh(geoRoundBox(0.13, 0.34, 0.13, 0.04), pantsMat);
+  thighMeshL.position.y = -0.17;
+  thighMeshL.castShadow = true;
+  thighL.add(thighMeshL);
+
+  const kneeL = new THREE.Group();
+  kneeL.position.y = -0.34;
+  thighL.add(kneeL);
+
+  const shinL = new THREE.Mesh(geoRoundBox(0.12, 0.32, 0.12, 0.04), pantsMat);
+  shinL.position.y = -0.16;
+  shinL.castShadow = true;
+  kneeL.add(shinL);
+
+  const footL = new THREE.Group();
+  footL.position.y = -0.32;
+  kneeL.add(footL);
+
+  const footMeshL = new THREE.Mesh(geoRoundBox(0.13, 0.09, 0.20, 0.03), shoeMat);
+  footMeshL.position.set(0, -0.045, 0.05);
+  footMeshL.castShadow = true;
+  footL.add(footMeshL);
+
+  // ── Perna direita ──────────────────────────────────────
+  const thighR = new THREE.Group();
+  thighR.position.set(0.11, 0, 0);
+  pelvis.add(thighR);
+
+  const thighMeshR = new THREE.Mesh(geoRoundBox(0.13, 0.34, 0.13, 0.04), pantsMat);
+  thighMeshR.position.y = -0.17;
+  thighMeshR.castShadow = true;
+  thighR.add(thighMeshR);
+
+  const kneeR = new THREE.Group();
+  kneeR.position.y = -0.34;
+  thighR.add(kneeR);
+
+  const shinR = new THREE.Mesh(geoRoundBox(0.12, 0.32, 0.12, 0.04), pantsMat);
+  shinR.position.y = -0.16;
+  shinR.castShadow = true;
+  kneeR.add(shinR);
+
+  const footR = new THREE.Group();
+  footR.position.y = -0.32;
+  kneeR.add(footR);
+
+  const footMeshR = new THREE.Mesh(geoRoundBox(0.13, 0.09, 0.20, 0.03), shoeMat);
+  footMeshR.position.set(0, -0.045, 0.05);
+  footMeshR.castShadow = true;
+  footR.add(footMeshR);
+
+  // ── Joints expostos pro sistema de animação ────────────
+  const joints = {
+    pelvis, spineLower, spineUpper, neck, head,
+    shoulderL, elbowL, shoulderR, elbowR,
+    thighL, kneeL, footL, thighR, kneeR, footR,
+  };
+
+  root.scale.setScalar(scale);
+
+  // ── Bounding boxes locais (pro raycast OBB) ────────────
+  const localBoxes = {
+    head:  new THREE.Box3(
+      new THREE.Vector3(-0.16, -0.20, -0.16),
+      new THREE.Vector3( 0.16,  0.22,  0.18)
+    ),
+    torso: new THREE.Box3(
+      new THREE.Vector3(-0.24, -0.15, -0.15),
+      new THREE.Vector3( 0.24,  0.36,  0.15)
+    ),
+    armL:  new THREE.Box3(
+      new THREE.Vector3(-0.07, -0.46, -0.08),
+      new THREE.Vector3( 0.07,  0.03,  0.08)
+    ),
+    armR:  new THREE.Box3(
+      new THREE.Vector3(-0.07, -0.46, -0.08),
+      new THREE.Vector3( 0.07,  0.03,  0.08)
+    ),
+    legL:  new THREE.Box3(
+      new THREE.Vector3(-0.09, -0.74, -0.12),
+      new THREE.Vector3( 0.09,  0.05,  0.14)
+    ),
+    legR:  new THREE.Box3(
+      new THREE.Vector3(-0.09, -0.74, -0.12),
+      new THREE.Vector3( 0.09,  0.05,  0.14)
+    ),
+  };
+
+  // ── Personalidade aleatória ────────────────────────────
+  const headLoll      = (Math.random() - 0.5) * 0.4;
+  const headPitchBase = (Math.random() - 0.5) * 0.3;
+  const armDroopL     = -0.10 - Math.random() * 0.30;
+  const armDroopR     = -0.10 - Math.random() * 0.30;
+  const limpAmount    = Math.random();
+  const limpSide      = Math.random() < 0.5 ? -1 : 1;
+  const walkStyle     = Math.random();
+
+  root.userData = {
+    isXBot: false,
+    head,
+    torso:  spineLower,
+    armL:   shoulderL,
+    armR:   shoulderR,
+    legL:   thighL,
+    legR:   thighR,
+    joints,
+    localBoxes,
+    skinColor,
+    variant,
+    heightScale: scale,
+    zombieType: typeKey,
+    typeKey,
+    type,
+    headLoll,
+    headPitchBase,
+    armDroopL,
+    armDroopR,
+    limpAmount,
+    limpSide,
+    walkStyle,
+  };
+
+  return root;
+}
+
+// ============================================================
+// CREATE ZOMBIE MESH (XBot com fallback seguro)
+// ============================================================
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
-  const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey] || { scale: 1, variant: 'normal' };
+  const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey]
+    || { scale: 1, variant: 'normal' };
 
-  // Tenta XBot primeiro
+  // ── Tenta XBot primeiro ────────────────────────────────
   if (isModelReady()) {
     const inst = createZombieInstance();
     if (inst) {
-      // Aplica tint verde zumbi
-      const skinPal = type.skinPalette && type.skinPalette.length > 0
+      const skinPal = (type.skinPalette && type.skinPalette.length > 0)
         ? type.skinPalette
         : [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
-      const skinColor = opts.skin !== undefined ? opts.skin
+      const skinColor = opts.skin !== undefined
+        ? opts.skin
         : skinPal[Math.floor(Math.random() * skinPal.length)];
+
       tintZombie(inst, skinColor, 0x1A1A1A);
 
       inst.scene.userData = {
         isXBot: true,
         instance: inst,
         joints: inst.joints,
-        // Aliases pros sistemas existentes
-        head: inst.joints.head,
-        armL: inst.joints.shoulderL,
-        armR: inst.joints.shoulderR,
-        legL: inst.joints.thighL,
-        legR: inst.joints.thighR,
+        head:  inst.joints.head,
+        armL:  inst.joints.shoulderL,
+        armR:  inst.joints.shoulderR,
+        legL:  inst.joints.thighL,
+        legR:  inst.joints.thighR,
         torso: inst.joints.spineLower,
         skinColor,
         variant: type.variant || 'normal',
         heightScale: inst.scale,
         zombieType: typeKey,
         typeKey, type,
-        // Sem localBoxes — raycast vai usar modo simplificado
         localBoxes: null,
+
+        // defaults seguros — antes ficavam undefined quando XBot carregava
+        headLoll:      (Math.random() - 0.5) * 0.4,
+        headPitchBase: (Math.random() - 0.5) * 0.3,
+        armDroopL:     -0.10 - Math.random() * 0.30,
+        armDroopR:     -0.10 - Math.random() * 0.30,
+        limpAmount:    Math.random(),
+        limpSide:      Math.random() < 0.5 ? -1 : 1,
+        walkStyle:     Math.random(),
       };
 
       return inst.scene;
     }
   }
 
-  // Fallback: versão procedural (mantém tudo que você tinha antes)
-  // [código procedural original continua aqui]
-  // ...
+  // ── Fallback procedural ────────────────────────────────
   return proceduralFallback(opts);
 }
 
@@ -1039,7 +1286,6 @@ function detachLimb(z, key, hitDir, hitPoint) {
   }
 
   if (gibModel) {
-    // Se for XBot, esconde o bone (skin collapse) em vez de destacar
     if (z.mesh.userData.isXBot) {
       z.dismembered[key] = true;
       const joint = key === 'head' ? ud.joints.head
@@ -1050,7 +1296,6 @@ function detachLimb(z, key, hitDir, hitPoint) {
                   : null;
       if (joint) joint.scale.setScalar(0.01);
 
-      // Gib model continua funcionando
       let gibModelX = hasLimb(key) ? createLimb(key) : createGib(key);
       if (gibModelX) {
         const wrapper = new THREE.Group();
@@ -1289,7 +1534,6 @@ function raycastZombie(origin, dir, maxDist, candidates) {
     const z = list[i];
     if (z.health <= 0) continue;
 
-    // Se for XBot, usa raycast por esferas nos bones
     if (z.mesh.userData.isXBot) {
       const joints = z.mesh.userData.joints;
       const parts = [
@@ -1313,7 +1557,6 @@ function raycastZombie(origin, dir, maxDist, candidates) {
         const bonePos = new THREE.Vector3();
         p.bone.getWorldPosition(bonePos);
 
-        // Ray-esfera: distância do centro à linha
         const toBone = bonePos.clone().sub(origin);
         const t = toBone.dot(dir);
         if (t < 0 || t > maxDist) continue;
@@ -1327,7 +1570,6 @@ function raycastZombie(origin, dir, maxDist, candidates) {
         }
       }
     } else {
-      // Procedural (OBB, código antigo)
       const entries = getZombiePartEntries(z, _partEntriesCache);
       for (let b = 0; b < entries.length; b++) {
         const e = entries[b];
@@ -2900,13 +3142,9 @@ function updateZombies(dt) {
       armRXTarget -= hunt * 0.25 * (1 - crawl);
     }
 
-    // ════════════════════════════════════════════════════════════
-    // 🎬 MIXAMO / PROCEDURAL — escolhe qual sistema de animação usar
-    // ════════════════════════════════════════════════════════════
     if (z.mixer) {
-      // MODO MIXAMO: animação real via FBX
       updateZombieAnim(z, dt);
-      joints.pelvis.position.y = pelvisYTmp; // posição base (sem bob procedural)
+      joints.pelvis.position.y = pelvisYTmp;
       handleZombieAnimState(z, realSpeed);
     } else if (skipVisual) {
       joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
@@ -3094,7 +3332,6 @@ function setupWeaponSpawns() {
   houses.slice(5).forEach((h, i) => spawnWeaponPickup(shuffled[i % shuffled.length], h.x - 2, h.z + 0.5, 0.95));
 }
 
-// ════════ CADÁVERES DECORATIVOS (GLB) ════════
 function spawnCorpsesAroundMap() {
   const types = listCorpseTypes();
   if (types.length === 0) {
