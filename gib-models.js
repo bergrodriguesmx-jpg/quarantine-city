@@ -1,7 +1,7 @@
 // ============================================================
 // gib-models.js
-// Pedaços de zumbi (cabeça, torso, braços, pernas) extraídos.
-// Usado quando um zumbi é desmembrado no jogo.
+// Pedaços de zumbi (cabeça, braços, pernas).
+// Nomes validados contra o repositório real.
 // ============================================================
 
 import * as THREE from 'three';
@@ -9,14 +9,15 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const loader = new GLTFLoader();
 
-// Tenta na ordem. O primeiro que existir é usado.
+// Usa os arquivos "Severed" que são maiores e mais completos
+// que os "Gib". O "BlownHead" é a cabeça explodida.
 export const GIB_CANDIDATES = {
-  head:  ['BasicZombieHead.glb', 'ZombieHead.glb', 'Head.glb', 'BasicZombieHead_3D.glb'],
-  torso: ['BasicZombieTorso.glb', 'ZombieTorso.glb', 'Torso.glb', 'BasicZombieBody.glb'],
-  armL:  ['BasicZombieArmL.glb', 'BasicZombieArm.glb', 'BasicZombieArms.glb', 'ZombieArm.glb'],
-  armR:  ['BasicZombieArmR.glb', 'BasicZombieArm.glb', 'BasicZombieArms.glb', 'ZombieArm.glb'],
-  legL:  ['BasicZombieLegL.glb', 'BasicZombieLeg.glb', 'BasicZombieLegs.glb', 'ZombieLeg.glb'],
-  legR:  ['BasicZombieLegR.glb', 'BasicZombieLeg.glb', 'BasicZombieLegs.glb', 'ZombieLeg.glb'],
+  head:  ['BasicZombieBlownHead.glb', 'CombatantZombieHead.glb', 'BasicZombieSplitHeadGib.glb'],
+  torso: ['ZombieDoll.glb'], // não há torso dedicado; Doll é um boneco pequeno
+  armL:  ['BasicZombieSeveredArmLeft.glb', 'BasicZombieArmGibLeft.glb', 'MinerZombieLeftForearmGib.glb'],
+  armR:  ['BasicZombieSeveredArmRight.glb', 'BasicZombieArmGibRight.glb', 'MinerZombieRightForearmGib.glb'],
+  legL:  ['BasicZombieSeveredLegLeft.glb', 'BasicZombieLeftLegGib.glb'],
+  legR:  ['BasicZombieSeveredLegRight.glb', 'BasicZombieRightLegGib.glb'],
 };
 
 const MODELS_BASE = 'assets/models/';
