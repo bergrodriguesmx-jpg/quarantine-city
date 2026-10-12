@@ -1,7 +1,5 @@
 // ============================================================
-// zombie-anim.js — v3
-// Carrega as animações do Mixamo e aplica no zumbi procedural.
-// v3: flip 180° em X nos bones dos membros pra corrigir orientação.
+// zombie-anim.js — v4 (retarget configurável)
 // ============================================================
 
 import * as THREE from 'three';
@@ -49,25 +47,54 @@ const BONE_MAP = {
   'mixamorigRightToeBase':  null,
 };
 
-// Correção: flip 180° em X pros membros (arm/leg chains)
-// Nosso rig tem esses bones apontando -Y; Mixamo +Y no bind
-const FLIP_X = new THREE.Quaternion(1, 0, 0, 0);
+// ════════════════════════════════════════════════════════════
+// 🎛️ CONFIG EXPORTADA — pode mexer no console do navegador!
+// ════════════════════════════════════════════════════════════
+export const config = {
+  // Ordem da correção de bind:
+  //   'mul_right'  → Q_ours = Q_mix * bindInv
+  //   'mul_left'   → Q_ours = bindInv * Q_mix
+  //   'none'       → Q_ours = Q_mix
+  bindOrder: 'mul_right',
 
-const NEEDS_FLIP = new Set([
-  'shoulderL', 'shoulderR',
-  'elbowL', 'elbowR',
-  'handL', 'handR',
-  'thighL', 'thighR',
-  'kneeL', 'kneeR',
-  'footL', 'footR',
-]);
+  // Offset adicional pra bones dos braços (corrige T-pose)
+  useArmOffset: true,
+  armOffsetAxis: 'z',        // 'x', 'y', 'z'
+  armOffsetAngleDeg: 90,     // graus
+  armOffsetLeftSign: 1,      // 1 ou -1 (pra mirrorar direita)
+  armOffsetRightSign: -1,
+
+  // Quais bones recebem o offset
+  offsetShoulder: true,
+  offsetElbow: true,
+  offsetHand: true,
+
+  // Aplica o offset nas pernas também?
+  useLegOffset: false,
+  legOffsetAxis: 'x',
+  legOffsetAngleDeg: 0,
+};
+// Expõe no window pra fácil debug
+if (typeof window !== 'undefined') window.__zombieAnimCfg = config;
+
+const ARM_L_BONES = new Set(['shoulderL', 'elbowL', 'handL']);
+const ARM_R_BONES = new Set(['shoulderR', 'elbowR', 'handR']);
+
+function makeAxisQuat(axis, angleDeg) {
+  const a = angleDeg * Math.PI / 180;
+  const v = axis === 'x' ? new THREE.Vector3(1,0,0)
+          : axis === 'y' ? new THREE.Vector3(0,1,0)
+          : new THREE.Vector3(0,0,1);
+  return new THREE.Quaternion().setFromAxisAngle(v, a);
+}
 
 const loader = new FBXLoader();
-const loadedClips = {};
+const originalClips = {};   // clips como vieram do FBX
+const loadedClips = {};     // clips após retarget
 const loadPromises = {};
+const bindQuats = {};
 let preloaded = false;
 
-// Tira prefixos tipo "Armature|" ou "Armature." do nome do bone
 function normalizeBoneName(name) {
   let n = name;
   const pipeIdx = n.indexOf('|');
@@ -77,9 +104,30 @@ function normalizeBoneName(name) {
   return n;
 }
 
-// Retargeta o clip com flip nos membros
+function extractBindPoses(fbx) {
+  fbx.traverse(node => {
+    if (!node.name || !node.quaternion) return;
+    const norm = normalizeBoneName(node.name);
+    if (norm.startsWith('mixamorig') && !bindQuats[norm]) {
+      bindQuats[norm] = node.quaternion.clone();
+    }
+  });
+}
+
 function retargetClip(clip) {
   const newTracks = [];
+
+  // Pré-calcula os quaternions de offset de braço
+  const qArmL = config.useArmOffset
+    ? makeAxisQuat(config.armOffsetAxis, config.armOffsetAngleDeg * config.armOffsetLeftSign)
+    : null;
+  const qArmR = config.useArmOffset
+    ? makeAxisQuat(config.armOffsetAxis, config.armOffsetAngleDeg * config.armOffsetRightSign)
+    : null;
+  const qLeg = config.useLegOffset
+    ? makeAxisQuat(config.legOffsetAxis, config.legOffsetAngleDeg)
+    : null;
+
   for (const track of clip.tracks) {
     const parts = track.name.split('.');
     const prop = parts.pop();
@@ -90,42 +138,90 @@ function retargetClip(clip) {
     const ourJointName = BONE_MAP[norm];
     if (!ourJointName) continue;
 
+    const bindQ = bindQuats[norm];
+    const bindInv = bindQ ? bindQ.clone().invert() : null;
+
     const times = Array.from(track.times);
     const srcValues = track.values;
-    const correctedValues = new Float32Array(srcValues.length);
-    const tmpQ = new THREE.Quaternion();
-    const needsFlip = NEEDS_FLIP.has(ourJointName);
+    const outValues = new Float32Array(srcValues.length);
+    const q = new THREE.Quaternion();
+
+    // Escolhe o offset pro bone atual
+    let offsetQ = null;
+    if (ARM_L_BONES.has(ourJointName)) {
+      if (ourJointName === 'shoulderL' && !config.offsetShoulder) offsetQ = null;
+      else if (ourJointName === 'elbowL' && !config.offsetElbow) offsetQ = null;
+      else if (ourJointName === 'handL' && !config.offsetHand) offsetQ = null;
+      else offsetQ = qArmL;
+    } else if (ARM_R_BONES.has(ourJointName)) {
+      if (ourJointName === 'shoulderR' && !config.offsetShoulder) offsetQ = null;
+      else if (ourJointName === 'elbowR' && !config.offsetElbow) offsetQ = null;
+      else if (ourJointName === 'handR' && !config.offsetHand) offsetQ = null;
+      else offsetQ = qArmR;
+    } else if (qLeg && (ourJointName === 'thighL' || ourJointName === 'thighR'
+                     || ourJointName === 'kneeL' || ourJointName === 'kneeR'
+                     || ourJointName === 'footL' || ourJointName === 'footR')) {
+      offsetQ = qLeg;
+    }
 
     for (let i = 0; i < srcValues.length; i += 4) {
-      tmpQ.set(srcValues[i], srcValues[i+1], srcValues[i+2], srcValues[i+3]);
-      if (needsFlip) tmpQ.multiply(FLIP_X);
-      correctedValues[i]   = tmpQ.x;
-      correctedValues[i+1] = tmpQ.y;
-      correctedValues[i+2] = tmpQ.z;
-      correctedValues[i+3] = tmpQ.w;
+      q.set(srcValues[i], srcValues[i+1], srcValues[i+2], srcValues[i+3]);
+
+      // Aplica correção de bind na ordem configurada
+      if (bindInv && config.bindOrder === 'mul_right') {
+        q.multiply(bindInv);       // q = q * bindInv
+      } else if (bindInv && config.bindOrder === 'mul_left') {
+        q.premultiply(bindInv);    // q = bindInv * q
+      }
+      // config.bindOrder === 'none' → não faz nada
+
+      // Aplica offset adicional (T-pose correction)
+      if (offsetQ) q.premultiply(offsetQ);
+
+      outValues[i]   = q.x;
+      outValues[i+1] = q.y;
+      outValues[i+2] = q.z;
+      outValues[i+3] = q.w;
     }
 
     newTracks.push(new THREE.QuaternionKeyframeTrack(
       ourJointName + '.quaternion',
       times,
-      correctedValues
+      outValues
     ));
   }
   return new THREE.AnimationClip(clip.name, clip.duration, newTracks);
 }
 
+function rebuildAllClips() {
+  for (const name in originalClips) {
+    loadedClips[name] = retargetClip(originalClips[name]);
+  }
+}
+
+// Permite refazer o retarget sem recarregar os FBXs
+export function refreshRetarget() {
+  if (!preloaded) return false;
+  rebuildAllClips();
+  console.log('[zombie-anim] 🔄 Retarget refeito com config:', JSON.stringify(config, null, 2));
+  return true;
+}
+if (typeof window !== 'undefined') window.__zombieAnimRefresh = refreshRetarget;
+
 async function loadAnim(name, file) {
   if (loadPromises[name]) return loadPromises[name];
   loadPromises[name] = (async () => {
     try {
-      // encodeURIComponent cuida dos parênteses em "zombie-biting(2).fbx"
       const url = BASE + encodeURIComponent(file).replace(/%2F/g, '/');
       const fbx = await loader.loadAsync(url);
+      extractBindPoses(fbx);
+
       const clip = fbx.animations && fbx.animations[0];
       if (!clip) {
         console.warn(`[zombie-anim] ⚠️ ${file} sem animação`);
         return null;
       }
+      originalClips[name] = clip;
       const retargeted = retargetClip(clip);
       loadedClips[name] = retargeted;
       console.log(`[zombie-anim] ✅ ${name} ← ${file} (${retargeted.tracks.length} tracks)`);
@@ -148,10 +244,11 @@ export async function preloadZombieAnims() {
   console.log(`[zombie-anim] 📦 ${loaded}/${entries.length} animações prontas`);
   if (loaded > 0) {
     console.table(Object.keys(loadedClips).map(n => ({
-      anim: n,
-      file: ANIM_FILES[n],
-      tracks: loadedClips[n].tracks.length,
+      anim: n, file: ANIM_FILES[n], tracks: loadedClips[n].tracks.length,
     })));
+    console.log('[zombie-anim] 🎛️ Config atual:', config);
+    console.log('[zombie-anim] 💡 Pra testar config diferente no console:');
+    console.log('     window.__zombieAnimCfg.armOffsetAngleDeg = -90; window.__zombieAnimRefresh()');
   }
 }
 
@@ -185,7 +282,6 @@ export function playZombieAnim(z, name, opts = {}) {
   const action = z.mixerActions[name];
   if (!action) return false;
   if (z.currentAnim === action && !opts.force) return false;
-
   const prev = z.currentAnim;
   const fade = opts.fade ?? 0.2;
   action.reset();
@@ -197,32 +293,22 @@ export function playZombieAnim(z, name, opts = {}) {
   return true;
 }
 
-export function updateZombieAnim(z, dt) {
-  if (z.mixer) z.mixer.update(dt);
-}
+export function updateZombieAnim(z, dt) { if (z.mixer) z.mixer.update(dt); }
 
 export function handleZombieAnimState(z, realSpeed) {
   if (!z.mixer) return;
-
   if (z.attackWindupActive) {
-    if (z.currentAnimName !== 'attack') {
+    if (z.currentAnimName !== 'attack')
       playZombieAnim(z, 'attack', { fade: 0.08, force: true, timeScale: 1.4 });
-    }
     return;
   }
-
   if (z.crawling) {
     playZombieAnim(z, realSpeed > 0.5 ? 'runcrawl' : 'crawl', { fade: 0.2 });
     return;
   }
-
-  if (realSpeed > 1.5) {
-    playZombieAnim(z, 'run', { fade: 0.15 });
-  } else if (realSpeed > 0.15) {
-    playZombieAnim(z, 'walk', { fade: 0.15 });
-  } else {
-    playZombieAnim(z, 'idle', { fade: 0.25 });
-  }
+  if (realSpeed > 1.5)      playZombieAnim(z, 'run',  { fade: 0.15 });
+  else if (realSpeed > 0.15) playZombieAnim(z, 'walk', { fade: 0.15 });
+  else                       playZombieAnim(z, 'idle', { fade: 0.25 });
 }
 
 export function forceZombieAnim(z, name, opts = {}) {
@@ -235,5 +321,6 @@ export function getZombieAnimStatus() {
     loaded: Object.keys(loadedClips).length,
     total: Object.keys(ANIM_FILES).length,
     clips: Object.keys(loadedClips),
+    config: { ...config },
   };
 }
