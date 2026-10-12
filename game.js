@@ -31,7 +31,7 @@ import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 // ════════ NOVOS IMPORTS — ASSETS EXTRAÍDOS ════════
 import { preloadGibs, createGib, hasGib } from './gib-models.js';
 import { preloadCharacters, createCharacter } from './character-models.js';
-import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './weapon-models.js';
+import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './src/render/weapon-models.js';
 
 bus.setAdapter(new LocalAdapter());
 
