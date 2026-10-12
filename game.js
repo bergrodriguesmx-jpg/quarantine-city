@@ -833,7 +833,10 @@ function spawnZombie(forceType) {
   };
 
   // Ativa animações Mixamo se disponíveis
-  setupZombieAnimator(z);
+    if (mesh.userData.isXBot) {
+    z.instance = mesh.userData.instance;
+    setupZombieAnimator(z);
+  }
 
   zombies.push(z);
   initStuckState(z);
