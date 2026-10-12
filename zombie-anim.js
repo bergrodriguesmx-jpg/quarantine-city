@@ -1,6 +1,6 @@
 // ============================================================
-// zombie-anim.js
-// Carrega as animações do Mixamo e aplica no zumbi procedural.
+// zombie-anim.js — v2 (com correção de rest pose)
+// Extrai a bind rotation dos bones Mixamo e retargeta corretamente.
 // ============================================================
 
 import * as THREE from 'three';
@@ -48,11 +48,37 @@ const BONE_MAP = {
   'mixamorigRightToeBase':  null,
 };
 
+// Cache de bind quaternions por bone (extraído do FBX scene)
+const bindQuats = {};
+
 const loader = new FBXLoader();
 const loadedClips = {};
 const loadPromises = {};
 let preloaded = false;
 
+// Tira prefixos tipo "Armature|" ou "Armature." do nome do bone
+function normalizeBoneName(name) {
+  let n = name;
+  const pipeIdx = n.indexOf('|');
+  if (pipeIdx >= 0) n = n.substring(pipeIdx + 1);
+  const dotIdx = n.lastIndexOf('.');
+  if (dotIdx >= 0) n = n.substring(dotIdx + 1);
+  return n;
+}
+
+// Extrai os bind quaternions de cada bone do FBX scene
+function extractBindPoses(fbx) {
+  fbx.traverse(node => {
+    if (!node.name || !node.quaternion) return;
+    const norm = normalizeBoneName(node.name);
+    // Só interessa bones mixamorig
+    if (norm.startsWith('mixamorig') && !bindQuats[norm]) {
+      bindQuats[norm] = node.quaternion.clone();
+    }
+  });
+}
+
+// Retargeta o clip aplicando a correção de bind pose
 function retargetClip(clip) {
   const newTracks = [];
   for (const track of clip.tracks) {
@@ -61,21 +87,35 @@ function retargetClip(clip) {
     const nodeName = parts.join('.');
     if (prop !== 'quaternion') continue;
 
-    let normalized = nodeName;
-    const pipeIdx = normalized.indexOf('|');
-    if (pipeIdx >= 0) normalized = normalized.substring(pipeIdx + 1);
-    const dotIdx = normalized.lastIndexOf('.');
-    if (dotIdx >= 0) normalized = normalized.substring(dotIdx + 1);
-
-    const ourJointName = BONE_MAP[normalized];
+    const norm = normalizeBoneName(nodeName);
+    const ourJointName = BONE_MAP[norm];
     if (!ourJointName) continue;
 
-    const newTrack = new THREE.QuaternionKeyframeTrack(
+    const bindQ = bindQuats[norm];
+    if (!bindQ) continue;
+
+    // bindQ^-1 (inverte)
+    const bindInv = bindQ.clone().invert();
+
+    // Aplica bindQ^-1 * animQ em cada keyframe
+    const times = Array.from(track.times);
+    const srcValues = track.values;
+    const correctedValues = new Float32Array(srcValues.length);
+    const tmpQ = new THREE.Quaternion();
+    for (let i = 0; i < srcValues.length; i += 4) {
+      tmpQ.set(srcValues[i], srcValues[i+1], srcValues[i+2], srcValues[i+3]);
+      const result = bindInv.clone().multiply(tmpQ);
+      correctedValues[i]   = result.x;
+      correctedValues[i+1] = result.y;
+      correctedValues[i+2] = result.z;
+      correctedValues[i+3] = result.w;
+    }
+
+    newTracks.push(new THREE.QuaternionKeyframeTrack(
       ourJointName + '.quaternion',
-      Array.from(track.times),
-      Array.from(track.values)
-    );
-    newTracks.push(newTrack);
+      times,
+      correctedValues
+    ));
   }
   return new THREE.AnimationClip(clip.name, clip.duration, newTracks);
 }
@@ -84,9 +124,12 @@ async function loadAnim(name, file) {
   if (loadPromises[name]) return loadPromises[name];
   loadPromises[name] = (async () => {
     try {
-      // encodeURIComponent cuida dos parênteses em "zombie-biting(2).fbx"
       const url = BASE + encodeURIComponent(file).replace(/%2F/g, '/');
       const fbx = await loader.loadAsync(url);
+
+      // Primeira vez: extrai bind poses (só precisa uma vez, mas chamar sempre é idempotente)
+      extractBindPoses(fbx);
+
       const clip = fbx.animations && fbx.animations[0];
       if (!clip) {
         console.warn(`[zombie-anim] ⚠️ ${file} sem animação`);
@@ -118,6 +161,7 @@ export async function preloadZombieAnims() {
       file: ANIM_FILES[n],
       tracks: loadedClips[n].tracks.length,
     })));
+    console.log('[zombie-anim] 📋 Bind quats extraídos:', Object.keys(bindQuats).length, 'bones');
   }
 }
 
@@ -201,5 +245,6 @@ export function getZombieAnimStatus() {
     loaded: Object.keys(loadedClips).length,
     total: Object.keys(ANIM_FILES).length,
     clips: Object.keys(loadedClips),
+    bindQuats: Object.keys(bindQuats),
   };
 }
