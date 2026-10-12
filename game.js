@@ -3588,7 +3588,3 @@ document.addEventListener('keyup', e => {
   }
 });
 window.addEventListener('beforeunload', () => playerStats.clear());
-
-// ════════ Expor ZOMBIE_TYPES pro escopo global (usado em createZombieMesh) ════════
-import { ZOMBIE_TYPES } from './src/core/zombie-types.js';
-window.ZOMBIE_TYPES_FROM_MODULE = ZOMBIE_TYPES;
