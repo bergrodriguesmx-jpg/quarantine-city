@@ -28,9 +28,30 @@ import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pic
 import { getWeaponIconURL, getAmmoIconURL } from './src/render/weapon-icon-renderer.js';
 import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 
+// ════════ NOVOS IMPORTS — ASSETS EXTRAÍDOS ════════
+import { preloadGibs, createGib, hasGib } from './gib-models.js';
+import { preloadCharacters, createCharacter } from './character-models.js';
+import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './weapon-models.js';
+
 bus.setAdapter(new LocalAdapter());
 
 const controls = getControls();
+
+// ════════════════════════════════════════════════════════════
+// PRECACHE DOS ASSETS EXTRAÍDOS (armas + gibs + personagens)
+// ════════════════════════════════════════════════════════════
+(async () => {
+  console.log('[game] 📦 Carregando assets extraídos...');
+  try {
+    await precacheAllWeaponGLBs();
+    await preloadGibs();
+    await preloadCharacters();
+    console.log('[game] ✅ Assets prontos');
+    console.log('  Armas:', getWeaponStatus());
+  } catch (e) {
+    console.warn('[game] ⚠️ Erro no precache:', e);
+  }
+})();
 
 // ============================================================
 // HELPERS
@@ -176,7 +197,6 @@ const state = {
   playerSkin: (() => { try { return localStorage.getItem('qb_skin') || 'default'; } catch { return 'default'; } })(),
   stamina: CONFIG.player.staminaMax, staminaMax: CONFIG.player.staminaMax,
   hitstopUntil:0,
-  // ═══ FÍSICA VERTICAL / PULO ═══
   isGrounded:true, velocityY:0, jumpOffset:0,
   jumpVelX:0, jumpVelZ:0,
   isSprinting:false,
@@ -1114,6 +1134,7 @@ class Debris {
     this.settled = false; this.settleTimer = 0;
     this.life = life; this.maxLife = life;
     this.key = 'piece';
+    this.isGLB = false;
     this.lastHitZombie = new Map(); this.lastGlobalHit = 0;
   }
   applyImpulse(imp) { this.velocity.addScaledVector(imp, 1/this.mass); }
@@ -1170,6 +1191,9 @@ function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
   ragdolls.push(r);
 }
 
+// ════════════════════════════════════════════════════════════
+// DETACH LIMB — usa GLB gib se disponível, senão modelo original
+// ════════════════════════════════════════════════════════════
 function detachLimb(z, key, hitDir, hitPoint) {
   const ud = z.mesh.userData;
   let limbObj = null;
@@ -1181,39 +1205,90 @@ function detachLimb(z, key, hitDir, hitPoint) {
   if (!limbObj || z.dismembered[key]) return;
 
   z.mesh.updateMatrixWorld(true);
-  limbObj.getWorldPosition(_wpTmp); limbObj.getWorldQuaternion(_wqTmp);
+  limbObj.getWorldPosition(_wpTmp);
+  limbObj.getWorldQuaternion(_wqTmp);
   z.dismembered[key] = true;
 
+  // Ferida no lugar do membro
   const parent = limbObj.parent;
   const stumpR = key === 'head' ? 0.065 : (key === 'armL' || key === 'armR') ? 0.055 : 0.075;
   const stumpMat = zMat(0x5A0000);
   const stump = new THREE.Mesh(geoSphere(stumpR, 8), stumpMat);
-  stump.position.copy(limbObj.position); stump.scale.set(1,0.8,1);
+  stump.position.copy(limbObj.position);
+  stump.scale.set(1, 0.8, 1);
   parent.add(stump);
 
-  limbObj.rotation.set(0,0,0);
+  // ─── Tenta usar GLB gib extraído ───
+  const gibModel = createGib(key);
+  if (gibModel) {
+    // Esconde o membro original no rig (mantém a hierarquia intacta)
+    limbObj.visible = false;
+
+    const wrapper = new THREE.Group();
+    wrapper.position.copy(_wpTmp);
+    wrapper.quaternion.copy(_wqTmp);
+    scene.add(wrapper);
+    wrapper.add(gibModel);
+
+    const size = gibModel.userData.size || new THREE.Vector3(0.3, 0.3, 0.3);
+    const piece = new Debris(wrapper, size, 1.2, CONFIG.dismember.limbLife);
+    piece.key = key;
+    piece.isGLB = true;
+    const dir = hitDir.clone().normalize();
+    const speed = CONFIG.dismember.limbSpeed;
+    piece.velocity.set(
+      dir.x * speed + (Math.random() - 0.5) * 6,
+      speed * 0.8 + Math.random() * 5,
+      dir.z * speed + (Math.random() - 0.5) * 6,
+    );
+    piece.angularVelocity.set(
+      (Math.random() - 0.5) * 35,
+      (Math.random() - 0.5) * 35,
+      (Math.random() - 0.5) * 35,
+    );
+    flyingLimbs.push(piece);
+    if (hitPoint) spawnBlood(hitPoint, dir, 20, true);
+    else spawnBlood(_wpTmp, dir, 20, true);
+    bus.emit(Ev.DISMEMBER, { zombieId: z.id, part: key, pos: { x: _wpTmp.x, y: _wpTmp.y, z: _wpTmp.z } });
+    return;
+  }
+
+  // ─── Fallback: comportamento original (usa o próprio membro do rig) ───
+  limbObj.rotation.set(0, 0, 0);
   if (limbObj.parent) limbObj.parent.remove(limbObj);
   scene.add(limbObj);
-  limbObj.position.copy(_wpTmp); limbObj.quaternion.copy(_wqTmp);
+  limbObj.position.copy(_wpTmp);
+  limbObj.quaternion.copy(_wqTmp);
   limbObj.updateMatrixWorld(true);
 
   const box = new THREE.Box3().setFromObject(limbObj);
   if (box.isEmpty()) { limbObj.visible = false; return; }
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
-  const wrapper = new THREE.Group(); wrapper.position.copy(center); scene.add(wrapper);
-  limbObj.position.sub(center); wrapper.add(limbObj);
+  const wrapper = new THREE.Group();
+  wrapper.position.copy(center);
+  scene.add(wrapper);
+  limbObj.position.sub(center);
+  wrapper.add(limbObj);
 
   const piece = new Debris(wrapper, size, 1.2, CONFIG.dismember.limbLife);
   piece.key = key;
   const dir = hitDir.clone().normalize();
   const speed = CONFIG.dismember.limbSpeed;
-  piece.velocity.set(dir.x*speed + (Math.random()-0.5)*6, speed*0.8 + Math.random()*5, dir.z*speed + (Math.random()-0.5)*6);
-  piece.angularVelocity.set((Math.random()-0.5)*35,(Math.random()-0.5)*35,(Math.random()-0.5)*35);
+  piece.velocity.set(
+    dir.x * speed + (Math.random() - 0.5) * 6,
+    speed * 0.8 + Math.random() * 5,
+    dir.z * speed + (Math.random() - 0.5) * 6,
+  );
+  piece.angularVelocity.set(
+    (Math.random() - 0.5) * 35,
+    (Math.random() - 0.5) * 35,
+    (Math.random() - 0.5) * 35,
+  );
   flyingLimbs.push(piece);
   if (hitPoint) spawnBlood(hitPoint, dir, 20, true);
   else spawnBlood(_wpTmp, dir, 20, true);
-  bus.emit(Ev.DISMEMBER, { zombieId:z.id, part:key, pos:{ x:_wpTmp.x, y:_wpTmp.y, z:_wpTmp.z } });
+  bus.emit(Ev.DISMEMBER, { zombieId: z.id, part: key, pos: { x: _wpTmp.x, y: _wpTmp.y, z: _wpTmp.z } });
 }
 
 function randomDismemberOnDeath(_z) { /* no-op */ }
@@ -2072,7 +2147,6 @@ function enterDownedState() {
   state.downed = true; state.downedElapsed = 0; state.health = 0;
   state.downedHP = CONFIG.downed.maxHP; state.downedMaxHP = CONFIG.downed.maxHP;
   state.reviveProgress = 0; state.aiming = false; state.mouseDown = false;
-  // Cancela física de pulo ao cair
   state.isGrounded = true; state.velocityY = 0; state.jumpOffset = 0;
   state.jumpVelX = 0; state.jumpVelZ = 0;
   player.position.y = CONFIG.player.height;
@@ -2283,14 +2357,13 @@ function updateVendorVan() {
 }
 
 // ============================================================
-// PULO — normal (sem direção) ou direcional (com WASD)
+// PULO
 // ============================================================
 function tryJump() {
   if (state.downed) return false;
   if (!state.isGrounded) return false;
   if (performance.now() < state.hitstopUntil) return false;
 
-  // Detecta direção do input (relativo à câmera)
   let mx = 0, mz = 0;
   if (controls.isDown(Action.MoveForward,  state.keys)) mz -= 1;
   if (controls.isDown(Action.MoveBackward, state.keys)) mz += 1;
@@ -2325,7 +2398,7 @@ function tryJump() {
 document.addEventListener('keydown', e => {
   const wasDown = !!state.keys[e.code];
   state.keys[e.code] = true;
-  if (wasDown) return; // ignora auto-repeat
+  if (wasDown) return;
 
   if (e.code === controls.getKey(Action.Slot1)) switchToSlot(1);
   if (e.code === controls.getKey(Action.Slot2)) switchToSlot(2);
@@ -2366,13 +2439,7 @@ document.addEventListener('keydown', e => {
     if (nearWeapon && !nearWeapon.bought) tryBuyWeapon(); else openShop();
   }
 
-  // ═══════════════════════════════════════════════════════
-  // PULO (Space):
-  //  - Space sozinho     → pulo vertical
-  //  - Space + WASD      → pulo direcional
-  // ═══════════════════════════════════════════════════════
   const jumpKey = controls.getKey(Action.Jump);
-
   if (jumpKey && e.code === jumpKey) {
     e.preventDefault();
     if (state.running && !state.downed && !state.paused && !state.levelUpActive && !state.shopOpen) {
@@ -2499,7 +2566,6 @@ let shadowFrame = 0;
 const _fwdV = new THREE.Vector3(), _rightV = new THREE.Vector3(), _moveV = new THREE.Vector3();
 
 function updatePlayer(dt) {
-  // ───── Física vertical (pulo) ─────
   if (!state.isGrounded) {
     state.velocityY -= CONFIG.player.gravity * dt;
     state.jumpOffset += state.velocityY * dt;
@@ -2507,14 +2573,12 @@ function updatePlayer(dt) {
       state.jumpOffset = 0;
       state.velocityY = 0;
       state.isGrounded = true;
-      // Ao aterrissar, zera o impulso horizontal do pulo
       state.jumpVelX = 0;
       state.jumpVelZ = 0;
     }
   }
   player.position.y = CONFIG.player.height + state.jumpOffset;
 
-  // ───── Impulso horizontal do pulo direcional (só no ar) ─────
   if (!state.isGrounded && (state.jumpVelX !== 0 || state.jumpVelZ !== 0)) {
     player.position.x += state.jumpVelX * dt;
     player.position.z += state.jumpVelZ * dt;
@@ -2525,7 +2589,6 @@ function updatePlayer(dt) {
     if (Math.abs(state.jumpVelZ) < 0.05) state.jumpVelZ = 0;
   }
 
-  // ───── Input de movimento ─────
   _fwdV.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   _rightV.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
 
@@ -2545,7 +2608,6 @@ function updatePlayer(dt) {
   state.isMoving = _moveV.lengthSq() > 0.0025;
   if (state.isMoving) _moveV.normalize();
 
-  // ───── Sprint (Shift) ─────
   let speedMult = state.aiming ? 0.5 : 1;
   if (state.downed) speedMult = 0.25;
 
@@ -2556,23 +2618,19 @@ function updatePlayer(dt) {
 
   const speed = CONFIG.player.speed * state.speedMult * speedMult * sprintMult;
 
-  // ───── Movimento horizontal (chão ou ar) ─────
   player.position.addScaledVector(_moveV, speed * dt);
 
-  // ───── Colisão com paredes ─────
   resolveWallCollisions(player.position, CONFIG.player.radius);
   const lim = CONFIG.arena.size/2 - 1;
   player.position.x = Math.max(-lim, Math.min(lim, player.position.x));
   player.position.z = Math.max(-lim, Math.min(lim, player.position.z));
 
-  // ───── Stamina ─────
   if (state.isSprinting) {
     state.stamina = Math.max(0, state.stamina - CONFIG.player.staminaDrainRun * dt);
   } else {
     state.stamina = Math.min(state.staminaMax, state.stamina + CONFIG.player.staminaRegen * dt);
   }
 
-  // ───── Câmera (bob + altura + pulo) ─────
   if (state.isMoving) state.bobTime += dt*9; else state.bobTime *= 0.9;
   const bobY = Math.sin(state.bobTime) * (state.aiming ? 0.02 : 0.055);
   const camBaseY = state.downed ? 0.55 : player.position.y;
@@ -3361,7 +3419,6 @@ function startGame() {
   state.bossSpawned = false;
   state.stamina = CONFIG.player.staminaMax;
   state.hitstopUntil = 0;
-  // ═══ RESET FÍSICA VERTICAL ═══
   state.isGrounded = true; state.velocityY = 0; state.jumpOffset = 0;
   state.jumpVelX = 0; state.jumpVelZ = 0;
   state.isSprinting = false;
@@ -3408,6 +3465,27 @@ function startGame() {
   player.position.set(0, CONFIG.player.height, 0);
   player.yaw = 0; player.pitch = 0;
   player.userData._pendingDamage = 0;
+
+  // ════════ NPCs DE CORAÇÃO (Angel, Business...) ════════
+  if (world._npcs) {
+    world._npcs.forEach(m => scene.remove(m));
+  }
+  world._npcs = [];
+  const npcList = [
+    { id: 'angel',          x: 6,   z: -6,  rotY: -Math.PI * 0.75 },
+    { id: 'businessMale',   x: -6,  z: -6,  rotY: -Math.PI * 0.25 },
+    { id: 'businessFemale', x: 0,   z: -10, rotY: 0 },
+  ];
+  npcList.forEach(n => {
+    const model = createCharacter(n.id);
+    if (!model) return;
+    model.position.set(n.x, 0, n.z);
+    model.rotation.y = n.rotY;
+    model.userData._isNPC = true;
+    scene.add(model);
+    world._npcs.push(model);
+  });
+
   initWeaponView();
   setWeaponViewModel('knife');
   updateWeaponSlotsHUD();
