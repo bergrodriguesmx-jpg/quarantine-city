@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Teste</title></head>
+<body style="background:#111;color:#0f0;font-family:monospace;font-size:32px;padding:40px;">
+  <div id="msg">Iniciando...</div>
+  <script>
+    document.getElementById('msg').innerHTML = 
+      '✅ O SCRIPT RODOU!<br><br>' +
+      'Hora: ' + new Date().toLocaleTimeString() + '<br>' +
+      'URL: ' + window.location.href + '<br>' +
+      'Protocolo: ' + window.location.protocol;
+  </script>
+</body>
+</html>
