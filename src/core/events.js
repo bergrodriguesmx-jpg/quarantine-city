@@ -39,4 +39,17 @@ export const Ev = Object.freeze({
   NET_PLAYER_LEAVE:'net:player_leave',
   NET_LAG:         'net:lag',
   PING:            'net:ping',
+
+  // ---- Mundo / Clima ----
+  WORLD_BLOOD_MOON: 'world:blood_moon',
+
+  // ---- Extração ----
+  EXTRACTION_SPAWNED: 'extraction:spawned',
+  EXTRACTION_LANDED:  'extraction:landed',
+  EXTRACTION_SUCCESS: 'extraction:success',
+
+  // ---- Survival ----
+  SURVIVAL_INFECTED:       'survival:infected',
+  SURVIVAL_INFECTED_CURED: 'survival:infected_cured',
+  SURVIVAL_BLEED_TICK:     'survival:bleed_tick',
 });
