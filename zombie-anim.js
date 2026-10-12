@@ -1,6 +1,7 @@
 // ============================================================
-// zombie-anim.js — v2 (com correção de rest pose)
-// Extrai a bind rotation dos bones Mixamo e retargeta corretamente.
+// zombie-anim.js — v3
+// Carrega as animações do Mixamo e aplica no zumbi procedural.
+// v3: flip 180° em X nos bones dos membros pra corrigir orientação.
 // ============================================================
 
 import * as THREE from 'three';
@@ -48,8 +49,18 @@ const BONE_MAP = {
   'mixamorigRightToeBase':  null,
 };
 
-// Cache de bind quaternions por bone (extraído do FBX scene)
-const bindQuats = {};
+// Correção: flip 180° em X pros membros (arm/leg chains)
+// Nosso rig tem esses bones apontando -Y; Mixamo +Y no bind
+const FLIP_X = new THREE.Quaternion(1, 0, 0, 0);
+
+const NEEDS_FLIP = new Set([
+  'shoulderL', 'shoulderR',
+  'elbowL', 'elbowR',
+  'handL', 'handR',
+  'thighL', 'thighR',
+  'kneeL', 'kneeR',
+  'footL', 'footR',
+]);
 
 const loader = new FBXLoader();
 const loadedClips = {};
@@ -66,19 +77,7 @@ function normalizeBoneName(name) {
   return n;
 }
 
-// Extrai os bind quaternions de cada bone do FBX scene
-function extractBindPoses(fbx) {
-  fbx.traverse(node => {
-    if (!node.name || !node.quaternion) return;
-    const norm = normalizeBoneName(node.name);
-    // Só interessa bones mixamorig
-    if (norm.startsWith('mixamorig') && !bindQuats[norm]) {
-      bindQuats[norm] = node.quaternion.clone();
-    }
-  });
-}
-
-// Retargeta o clip aplicando a correção de bind pose
+// Retargeta o clip com flip nos membros
 function retargetClip(clip) {
   const newTracks = [];
   for (const track of clip.tracks) {
@@ -91,24 +90,19 @@ function retargetClip(clip) {
     const ourJointName = BONE_MAP[norm];
     if (!ourJointName) continue;
 
-    const bindQ = bindQuats[norm];
-    if (!bindQ) continue;
-
-    // bindQ^-1 (inverte)
-    const bindInv = bindQ.clone().invert();
-
-    // Aplica bindQ^-1 * animQ em cada keyframe
     const times = Array.from(track.times);
     const srcValues = track.values;
     const correctedValues = new Float32Array(srcValues.length);
     const tmpQ = new THREE.Quaternion();
+    const needsFlip = NEEDS_FLIP.has(ourJointName);
+
     for (let i = 0; i < srcValues.length; i += 4) {
       tmpQ.set(srcValues[i], srcValues[i+1], srcValues[i+2], srcValues[i+3]);
-      const result = bindInv.clone().multiply(tmpQ);
-      correctedValues[i]   = result.x;
-      correctedValues[i+1] = result.y;
-      correctedValues[i+2] = result.z;
-      correctedValues[i+3] = result.w;
+      if (needsFlip) tmpQ.multiply(FLIP_X);
+      correctedValues[i]   = tmpQ.x;
+      correctedValues[i+1] = tmpQ.y;
+      correctedValues[i+2] = tmpQ.z;
+      correctedValues[i+3] = tmpQ.w;
     }
 
     newTracks.push(new THREE.QuaternionKeyframeTrack(
@@ -124,12 +118,9 @@ async function loadAnim(name, file) {
   if (loadPromises[name]) return loadPromises[name];
   loadPromises[name] = (async () => {
     try {
+      // encodeURIComponent cuida dos parênteses em "zombie-biting(2).fbx"
       const url = BASE + encodeURIComponent(file).replace(/%2F/g, '/');
       const fbx = await loader.loadAsync(url);
-
-      // Primeira vez: extrai bind poses (só precisa uma vez, mas chamar sempre é idempotente)
-      extractBindPoses(fbx);
-
       const clip = fbx.animations && fbx.animations[0];
       if (!clip) {
         console.warn(`[zombie-anim] ⚠️ ${file} sem animação`);
@@ -161,7 +152,6 @@ export async function preloadZombieAnims() {
       file: ANIM_FILES[n],
       tracks: loadedClips[n].tracks.length,
     })));
-    console.log('[zombie-anim] 📋 Bind quats extraídos:', Object.keys(bindQuats).length, 'bones');
   }
 }
 
@@ -245,6 +235,5 @@ export function getZombieAnimStatus() {
     loaded: Object.keys(loadedClips).length,
     total: Object.keys(ANIM_FILES).length,
     clips: Object.keys(loadedClips),
-    bindQuats: Object.keys(bindQuats),
   };
 }
