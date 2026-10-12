@@ -391,7 +391,7 @@ Gore.initGore(scene);
 Extraction.initExtraction(scene, player);
 BossAI.initBossSystem(scene, camera, player, spawnBossProjectile);
 
-bus.on('world:blood_moon', () => {
+bus.on(Ev.WORLD_BLOOD_MOON, () => {
   try { Sfx.playZombieDeath(); } catch(_) {}
   addShake(0.5);
   showWaveBanner('LUA DE SANGUE!');
