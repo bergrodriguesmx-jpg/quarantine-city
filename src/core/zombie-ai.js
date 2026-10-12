@@ -1,83 +1,141 @@
 // ============================================================
-// zombie-ai.js — v2.1
-// Estado, percepção e give-up baseados no ZB2.
-// COM GUARDS: nunca crasha se world não for passado.
+// zombie-ai.js — v3.0
+// Máquina de estados finitos baseada no Zumbi Blocks 2.
+// Estados: IDLE, PATROL, ALERT, CHASE, ATTACK, STAGGER, DEAD
+// Percepção: visão (cone + LOS) e audição (eventos de ruído)
 // ============================================================
 
 import * as THREE from 'three';
 
-// ============================================================
-// PARÂMETROS (extraídos do ZombieAISettings.cs)
-// ============================================================
-const MAX_SIGHT_DIST = 35;           // ZB2: maxSightDistance = 35
-const COMBAT_DIST = 10;              // ZB2: zombieCombatDistance = 10
-const FOV_DOT_MIN = -0.5;            // ~120° cone à frente
-const COMBAT_DOT_MIN = 0.3;          // ~72° cone pra entrar em combate
-const ALERT_DURATION = 3;
-const FIND_TARGET_FREQ = 3;          // ZB2: zombieFindTargetFreq = 3
+export const ZombieState = Object.freeze({
+  IDLE:    'IDLE',
+  PATROL:  'PATROL',
+  ALERT:   'ALERT',
+  CHASE:   'CHASE',
+  ATTACK:  'ATTACK',
+  STAGGER: 'STAGGER',
+  DEAD:    'DEAD',
+});
 
-// Give-up (extraído de ZombieGiveupSettings.cs)
-const GIVEUP = {
-  tier1: { maxTime: 8,  neverDist: 5,  uncondMin: 15, uncondMax: 25, transition: 4 },
-  tier2: { maxTime: 10, neverDist: 6,  uncondMin: 18, uncondMax: 30, transition: 5 },
-  tier3: { maxTime: 12, neverDist: 8,  uncondMin: 22, uncondMax: 35, transition: 6 },
+// ════════ PARÂMETROS (extraídos do ZB2) ════════
+const CFG = {
+  sight: {
+    maxDistance: 35,
+    fovDot: -0.5,
+    combatDot: 0.3,
+    checkFreq: 3,
+  },
+  hearing: {
+    defaultRadius: 18,
+    silencedRadius: 6,
+    alertMemorySec: 8,
+  },
+  giveUp: {
+    tier1: { maxTime: 8,  neverDist: 5,  uncondMin: 15, uncondMax: 25, transition: 4 },
+    tier2: { maxTime: 10, neverDist: 6,  uncondMin: 18, uncondMax: 30, transition: 5 },
+    tier3: { maxTime: 12, neverDist: 8,  uncondMin: 22, uncondMax: 35, transition: 6 },
+  },
+  patrol: {
+    idleToPatrolChance: 0.008,
+    patrolDurationMin: 4,
+    patrolDurationMax: 9,
+    patrolRadius: 12,
+  },
+  attack: {
+    windupTime: 0.30,
+    cooldownBase: 1.2,
+    lungeRange: 2.2,
+    lungeSpeed: 8,
+  },
+  combat: {
+    strafe: true,
+    strafeSpeed: 2.5,
+    strafeChangeMin: 1.5,
+    strafeChangeMax: 3.0,
+    backOffHpFrac: 0.25,
+    backOffDist: 4.5,
+  },
 };
 
-// ============================================================
-// INIT
-// ============================================================
+// ════════ TIER POR TIPO ════════
+function zombieTier(typeKey) {
+  if (typeKey === 'pt' || typeKey === 'pt_donkey' || typeKey === 'judge' ||
+      typeKey === 'runner' || typeKey === 'crawler') return 'tier1';
+  if (typeKey === 'worker' || typeKey === 'miner' || typeKey === 'spitter') return 'tier2';
+  return 'tier3';
+}
+
+// ════════ INIT ════════
 export function initZombieAIState(z) {
-  z.aiState = 'unaware';
+  z.aiState = ZombieState.IDLE;
   z.aiAlertUntil = 0;
   z.aiStaggerUntil = 0;
-  z.aiAttackCd = Math.random() * 1.2;
+  z.aiAttackCd = Math.random() * 1.5;
 
   // Percepção
-  z.aiTargetTime = 0;          // Tempo perseguindo o alvo atual
-  z.aiGiveUpTimer = 0;         // Tempo sem ver o alvo
+  z.aiTargetTime = 0;
+  z.aiGiveUpTimer = 0;
   z.aiReachTimer = Math.random();
   z.aiVisible = false;
   z.aiReachable = false;
   z.aiDistance = 999;
   z.aiDot = 1;
+  z.aiLastKnownPos = null;
 
-  // Layer tier — define qual give-up usar
-  const tier = zombieTier(z.typeKey);
-  z.aiGiveUp = GIVEUP[tier] || GIVEUP.tier1;
+  // Patrol
+  z.aiPatrolTarget = null;
+  z.aiPatrolUntil = 0;
+  z.aiIdleTimer = Math.random() * 3;
+
+  // Combat
+  z.aiStrafeDir = Math.random() < 0.5 ? 1 : -1;
+  z.aiStrafeTimer = 1 + Math.random() * 2;
+  z.aiBackedOff = false;
+
+  z.aiGiveUp = CFG.giveUp[zombieTier(z.typeKey)] || CFG.giveUp.tier1;
 }
 
-function zombieTier(typeKey) {
-  if (typeKey === 'pt' || typeKey === 'pt_donkey' || typeKey === 'judge' || typeKey === 'runner') return 'tier1';
-  if (typeKey === 'worker' || typeKey === 'miner') return 'tier2';
-  return 'tier3';
-}
-
-// ============================================================
-// ALERTA EM GRUPO
-// ============================================================
+// ════════ ALERTA EM GRUPO ════════
 export function alertNearbyZombies(zombies, hitPos, radius = 8) {
   const now = performance.now() / 1000;
   const r2 = radius * radius;
   for (const z of zombies) {
-    if (z.health <= 0) continue;
+    if (z.health <= 0 || z.aiState === ZombieState.DEAD) continue;
     const dx = z.mesh.position.x - hitPos.x;
     const dz = z.mesh.position.z - hitPos.z;
-    if (dx*dx + dz*dz < r2) {
-      z.aiState = 'aware';
-      z.aiAlertUntil = now + ALERT_DURATION;
+    if (dx * dx + dz * dz < r2) {
+      if (z.aiState === ZombieState.IDLE || z.aiState === ZombieState.PATROL) {
+        z.aiState = ZombieState.ALERT;
+        z.aiAlertUntil = now + 3;
+        z.aiLastKnownPos = hitPos.clone();
+      }
     }
   }
 }
 
 export function staggerZombie(z, duration = 0.35) {
+  z.aiState = ZombieState.STAGGER;
   z.aiStaggerUntil = performance.now() / 1000 + duration;
 }
 
-// ============================================================
-// LINE OF SIGHT (contra paredes) — com guarda defensiva
-// ============================================================
+// ════════ AUDIÇÃO ════════
+export function hearNoise(z, noisePos, radius) {
+  if (z.health <= 0 || z.aiState === ZombieState.DEAD) return;
+  const dx = z.mesh.position.x - noisePos.x;
+  const dz = z.mesh.position.z - noisePos.z;
+  const d2 = dx * dx + dz * dz;
+  if (d2 > radius * radius) return;
+
+  const now = performance.now() / 1000;
+  if (z.aiState === ZombieState.IDLE || z.aiState === ZombieState.PATROL) {
+    z.aiState = ZombieState.ALERT;
+    z.aiAlertUntil = now + 5;
+    z.aiLastKnownPos = noisePos.clone();
+  }
+}
+
+// ════════ LINE OF SIGHT ════════
 function losBlocked(fromX, fromZ, toX, toZ, world) {
-  // ✅ GUARD: sem world ou sem colliders → não bloqueia
   if (!world || !Array.isArray(world.wallColliders)) return false;
 
   const dx = toX - fromX;
@@ -91,9 +149,7 @@ function losBlocked(fromX, fromZ, toX, toZ, world) {
   let x = fromX, z = fromZ;
 
   for (let i = 0; i < steps; i++) {
-    x += stepX;
-    z += stepZ;
-
+    x += stepX; z += stepZ;
     for (let w = 0; w < world.wallColliders.length; w++) {
       const b = world.wallColliders[w];
       if (x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ) return true;
@@ -102,30 +158,25 @@ function losBlocked(fromX, fromZ, toX, toZ, world) {
   return false;
 }
 
-// ============================================================
-// PERCEPÇÃO — com guarda defensiva
-// ============================================================
+// ════════ PERCEPÇÃO ════════
 function updatePerception(z, player, world) {
   const dx = player.position.x - z.mesh.position.x;
   const dz = player.position.z - z.mesh.position.z;
   const dist = Math.hypot(dx, dz);
   z.aiDistance = dist;
 
-  // Longe demais nem testa
-  if (dist > MAX_SIGHT_DIST) {
+  if (dist > CFG.sight.maxDistance) {
     z.aiVisible = false;
     z.aiReachable = false;
     return;
   }
 
-  // ✅ GUARD: sem world → fallback simples (só distância)
   if (!world || !Array.isArray(world.wallColliders)) {
     z.aiVisible = true;
     z.aiReachable = true;
     return;
   }
 
-  // Direção que o zumbi está olhando
   const fx = -Math.sin(z.mesh.rotation.y);
   const fz = -Math.cos(z.mesh.rotation.y);
   const nx = dx / Math.max(dist, 0.001);
@@ -133,32 +184,31 @@ function updatePerception(z, player, world) {
   const dot = fx * nx + fz * nz;
   z.aiDot = dot;
 
-  // Boss vê em 360°
   const isBoss = !!z.isBoss;
-  const dotOK = isBoss || dot > FOV_DOT_MIN;
+  const dotOK = isBoss || dot > CFG.sight.fovDot;
 
-  // Linha de visão
   const los = !losBlocked(z.mesh.position.x, z.mesh.position.z, player.position.x, player.position.z, world);
 
   z.aiVisible = dotOK && los;
-  z.aiReachable = los && dist < MAX_SIGHT_DIST;
+  z.aiReachable = los && dist < CFG.sight.maxDistance;
 }
 
-// ============================================================
-// UPDATE PRINCIPAL — aceita world opcional
-// ============================================================
+// ════════ UPDATE PRINCIPAL ════════
 export function updateZombieAIState(z, player, dt, world) {
   if (z.health <= 0) return;
   const now = performance.now() / 1000;
 
   // Stagger trava tudo
-  if (z.aiStaggerUntil > now) {
-    z.aiState = 'stagger';
+  if (z.aiState === ZombieState.STAGGER) {
+    if (now >= z.aiStaggerUntil) {
+      z.aiState = ZombieState.CHASE;
+      z.aiAlertUntil = now + 3;
+    }
     return;
   }
 
-  // ─── Atualiza percepção (a cada ~0.33s) ───
-  z.aiReachTimer = (z.aiReachTimer || 0) + dt * FIND_TARGET_FREQ;
+  // Atualiza percepção a cada ~0.33s
+  z.aiReachTimer = (z.aiReachTimer || 0) + dt * CFG.sight.checkFreq;
   if (z.aiReachTimer >= 1) {
     updatePerception(z, player, world);
     z.aiReachTimer = Math.random() * -0.2;
@@ -168,74 +218,190 @@ export function updateZombieAIState(z, player, dt, world) {
   const visible = z.aiVisible;
   const dot = z.aiDot;
 
-  // ─── Máquina de estados ───
-  if (z.aiState === 'unaware') {
-    if (visible && dist < MAX_SIGHT_DIST) {
-      z.aiState = 'aware';
-      z.aiAlertUntil = now + ALERT_DURATION;
-      z.aiTargetTime = 0;
-      z.aiGiveUpTimer = 0;
+  // ════════ FSM ════════
+  switch (z.aiState) {
+    case ZombieState.IDLE: {
+      z.aiIdleTimer -= dt;
+      if (visible && dist < CFG.sight.maxDistance) {
+        z.aiState = ZombieState.CHASE;
+        z.aiAlertUntil = now + 5;
+        z.aiTargetTime = 0;
+        z.aiGiveUpTimer = 0;
+      } else if (z.aiIdleTimer <= 0) {
+        z.aiState = ZombieState.PATROL;
+        z.aiPatrolUntil = now + CFG.patrol.patrolDurationMin +
+          Math.random() * (CFG.patrol.patrolDurationMax - CFG.patrol.patrolDurationMin);
+        pickPatrolTarget(z);
+      }
+      break;
     }
-  } else if (z.aiState === 'aware') {
-    z.aiTargetTime += dt;
-    if (visible && dist < COMBAT_DIST && dot > COMBAT_DOT_MIN) {
-      z.aiState = 'combat';
-    } else if (!visible && now > z.aiAlertUntil) {
-      z.aiState = 'unaware';
-      z.aiTargetTime = 0;
-      z.aiGiveUpTimer = 0;
-    }
-  } else if (z.aiState === 'combat') {
-    z.aiTargetTime += dt;
-    if (dist > COMBAT_DIST + 1.5 || !visible) {
-      z.aiState = 'aware';
-    }
-  }
 
-  // ─── Give-up (só em aware/combat) ───
-  if (z.aiState === 'aware' || z.aiState === 'combat') {
-    const g = z.aiGiveUp || GIVEUP.tier1;
+    case ZombieState.PATROL: {
+      // Verifica visão enquanto patrulha
+      if (visible && dist < CFG.sight.maxDistance) {
+        z.aiState = ZombieState.CHASE;
+        z.aiAlertUntil = now + 5;
+        z.aiTargetTime = 0;
+        z.aiGiveUpTimer = 0;
+        break;
+      }
+      // Chegou no destino ou tempo acabou?
+      if (z.aiPatrolTarget) {
+        const pdx = z.aiPatrolTarget.x - z.mesh.position.x;
+        const pdz = z.aiPatrolTarget.z - z.mesh.position.z;
+        if (pdx * pdx + pdz * pdz < 1.5 * 1.5) {
+          z.aiState = ZombieState.IDLE;
+          z.aiIdleTimer = 2 + Math.random() * 4;
+          z.aiPatrolTarget = null;
+        }
+      }
+      if (now > z.aiPatrolUntil) {
+        z.aiState = ZombieState.IDLE;
+        z.aiIdleTimer = 1 + Math.random() * 3;
+        z.aiPatrolTarget = null;
+      }
+      break;
+    }
 
-    // Nunca desiste se muito perto
-    if (dist > g.neverDist) {
-      // Fora do alcance incondicional?
-      const t = Math.min(1, z.aiTargetTime / g.transition);
-      const uncondDist = g.uncondMax + (g.uncondMin - g.uncondMax) * t;
-      if (dist > uncondDist) {
-        giveUp(z);
-        return;
+    case ZombieState.ALERT: {
+      if (visible) {
+        z.aiState = ZombieState.CHASE;
+        z.aiAlertUntil = now + 5;
+        z.aiTargetTime = 0;
+        z.aiGiveUpTimer = 0;
+        break;
+      }
+      if (now > z.aiAlertUntil) {
+        z.aiState = ZombieState.IDLE;
+        z.aiIdleTimer = 1 + Math.random() * 2;
+      }
+      break;
+    }
+
+    case ZombieState.CHASE: {
+      z.aiTargetTime += dt;
+
+      if (visible && dist < 10 && dot > CFG.sight.combatDot) {
+        z.aiAlertUntil = now + 3;
+        z.aiGiveUpTimer = 0;
+        if (dist < (z.attackRange || 1.6) + 0.4) {
+          z.aiState = ZombieState.ATTACK;
+        }
       }
 
-      // Sem visão nem alcançabilidade acumula timer
-      if (!visible && !z.aiReachable) {
-        z.aiGiveUpTimer += dt;
-        if (z.aiGiveUpTimer > g.maxTime) {
-          giveUp(z);
-          return;
+      // Give-up
+      const g = z.aiGiveUp;
+      if (dist > g.neverDist) {
+        const t = Math.min(1, z.aiTargetTime / g.transition);
+        const uncondDist = g.uncondMax + (g.uncondMin - g.uncondMax) * t;
+        if (dist > uncondDist) { giveUp(z); break; }
+
+        if (!visible && !z.aiReachable) {
+          z.aiGiveUpTimer += dt;
+          if (z.aiGiveUpTimer > g.maxTime) { giveUp(z); break; }
+        } else {
+          z.aiGiveUpTimer = Math.max(0, z.aiGiveUpTimer - dt * 2);
         }
       } else {
-        z.aiGiveUpTimer = Math.max(0, z.aiGiveUpTimer - dt * 2);
+        z.aiGiveUpTimer = 0;
       }
-    } else {
-      z.aiGiveUpTimer = 0;
+      break;
+    }
+
+    case ZombieState.ATTACK: {
+      if (dist > (z.attackRange || 1.6) + 1.5) {
+        z.aiState = ZombieState.CHASE;
+      }
+      break;
     }
   }
+
+  // ════════ Comportamento de combate (strafe + back off) ════════
+  if (z.aiState === ZombieState.CHASE || z.aiState === ZombieState.ATTACK) {
+    z.aiStrafeTimer -= dt;
+    if (z.aiStrafeTimer <= 0) {
+      z.aiStrafeDir *= -1;
+      z.aiStrafeTimer = CFG.combat.strafeChangeMin +
+        Math.random() * (CFG.combat.strafeChangeMax - CFG.combat.strafeChangeMin);
+    }
+
+    const hpFrac = z.health / z.maxHealth;
+    if (hpFrac < CFG.combat.backOffHpFrac && dist < CFG.combat.backOffDist) {
+      z.aiBackedOff = true;
+    } else if (dist > CFG.combat.backOffDist + 2) {
+      z.aiBackedOff = false;
+    }
+  }
+}
+
+function pickPatrolTarget(z) {
+  const angle = Math.random() * Math.PI * 2;
+  const r = 4 + Math.random() * CFG.patrol.patrolRadius;
+  z.aiPatrolTarget = new THREE.Vector3(
+    z.mesh.position.x + Math.cos(angle) * r,
+    0,
+    z.mesh.position.z + Math.sin(angle) * r,
+  );
 }
 
 function giveUp(z) {
-  z.aiState = 'unaware';
+  z.aiState = ZombieState.IDLE;
+  z.aiIdleTimer = 1 + Math.random() * 2;
   z.aiAlertUntil = 0;
   z.aiTargetTime = 0;
   z.aiGiveUpTimer = 0;
-  z.aiGiveUpCooldown = performance.now() / 1000 + 3;
+  z.aiLastKnownPos = null;
+  z.aiPatrolTarget = null;
 }
 
-// ============================================================
-// MULTIPLICADOR DE VELOCIDADE
-// ============================================================
+// ════════ MULTIPLICADOR DE VELOCIDADE (usado pelo game.js) ════════
 export function getAIMultiplier(z) {
-  if (z.aiState === 'stagger') return 0;
-  if (z.aiState === 'aware')   return 1.15;
-  if (z.aiState === 'combat')  return 1.0;
-  return 0.7;
+  if (z.aiState === ZombieState.STAGGER) return 0;
+  if (z.aiState === ZombieState.CHASE)   return 1.15;
+  if (z.aiState === ZombieState.ATTACK)  return 0.9;
+  if (z.aiState === ZombieState.ALERT)   return 1.05;
+  if (z.aiState === ZombieState.PATROL)  return 0.55;
+  return 0.4; // IDLE
+}
+
+// ════════ DIREÇÃO DESEJADA (o game.js chama isso pra saber pra onde ir) ════════
+export function getDesiredDirection(z, player) {
+  const now = performance.now() / 1000;
+
+  if (z.aiState === ZombieState.CHASE || z.aiState === ZombieState.ATTACK) {
+    const dx = player.position.x - z.mesh.position.x;
+    const dz = player.position.z - z.mesh.position.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    let nx = dx / dist;
+    let nz = dz / dist;
+
+    // Back off se HP baixo
+    if (z.aiBackedOff) { nx = -nx; nz = -nz; }
+
+    // Strafe em combate
+    if (CFG.combat.strafe && dist < 6 && dist > 1.8) {
+      const px = -nz * z.aiStrafeDir * 0.4;
+      const pz = nx * z.aiStrafeDir * 0.4;
+      nx += px; nz += pz;
+      const len = Math.hypot(nx, nz) || 1;
+      nx /= len; nz /= len;
+    }
+    return { x: nx, z: nz };
+  }
+
+  if (z.aiState === ZombieState.ALERT && z.aiLastKnownPos) {
+    const dx = z.aiLastKnownPos.x - z.mesh.position.x;
+    const dz = z.aiLastKnownPos.z - z.mesh.position.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    return { x: dx / dist, z: dz / dist };
+  }
+
+  if (z.aiState === ZombieState.PATROL && z.aiPatrolTarget) {
+    const dx = z.aiPatrolTarget.x - z.mesh.position.x;
+    const dz = z.aiPatrolTarget.z - z.mesh.position.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    return { x: dx / dist, z: dz / dist };
+  }
+
+  return { x: 0, z: 0 };
 }
