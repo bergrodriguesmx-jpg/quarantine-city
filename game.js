@@ -36,6 +36,9 @@ import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './src/rende
 
 bus.setAdapter(new LocalAdapter());
 
+// Expõe tipos de zumbi pro escopo global (usado em createZombieMesh)
+window.ZOMBIE_TYPES_FROM_MODULE = ZOMBIE_TYPES;
+
 const controls = getControls();
 
 // ════════ PRECACHE DOS ASSETS EXTRAÍDOS ════════
