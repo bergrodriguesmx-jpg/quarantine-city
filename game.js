@@ -1254,20 +1254,63 @@ function raycastZombie(origin, dir, maxDist, candidates) {
   const list = candidates || zombies;
   let bestZ = null, bestDist = Infinity, bestPart = null;
   const bestPoint = new THREE.Vector3();
+
   for (let i = 0; i < list.length; i++) {
     const z = list[i];
     if (z.health <= 0) continue;
-    const entries = getZombiePartEntries(z, _partEntriesCache);
-    for (let b = 0; b < entries.length; b++) {
-      const e = entries[b];
-      const dist = rayOBBPart(origin, dir, e.box, e.group, maxDist, _hitPointScratch);
-      if (dist !== null && dist < bestDist) {
-        bestDist = dist; bestZ = z; bestPart = e.key;
-        bestPoint.copy(_hitPointScratch);
+
+    // Se for XBot, usa raycast por esferas nos bones
+    if (z.mesh.userData.isXBot) {
+      const joints = z.mesh.userData.joints;
+      const parts = [
+        { key: 'head', bone: joints.head, radius: 0.16 },
+        { key: 'torso', bone: joints.spineUpper, radius: 0.28 },
+        { key: 'torso', bone: joints.spineLower, radius: 0.28 },
+        { key: 'armL', bone: joints.shoulderL, radius: 0.14 },
+        { key: 'armL', bone: joints.elbowL, radius: 0.11 },
+        { key: 'armR', bone: joints.shoulderR, radius: 0.14 },
+        { key: 'armR', bone: joints.elbowR, radius: 0.11 },
+        { key: 'legL', bone: joints.thighL, radius: 0.14 },
+        { key: 'legL', bone: joints.kneeL, radius: 0.11 },
+        { key: 'legR', bone: joints.thighR, radius: 0.14 },
+        { key: 'legR', bone: joints.kneeR, radius: 0.11 },
+      ];
+
+      for (const p of parts) {
+        if (!p.bone) continue;
+        if (z.dismembered[p.key]) continue;
+
+        const bonePos = new THREE.Vector3();
+        p.bone.getWorldPosition(bonePos);
+
+        // Ray-esfera: distância do centro à linha
+        const toBone = bonePos.clone().sub(origin);
+        const t = toBone.dot(dir);
+        if (t < 0 || t > maxDist) continue;
+        const closest = origin.clone().addScaledVector(dir, t);
+        const distToLine = closest.distanceTo(bonePos);
+        if (distToLine <= p.radius && t < bestDist) {
+          bestDist = t;
+          bestZ = z;
+          bestPart = p.key;
+          bestPoint.copy(closest);
+        }
+      }
+    } else {
+      // Procedural (OBB, código antigo)
+      const entries = getZombiePartEntries(z, _partEntriesCache);
+      for (let b = 0; b < entries.length; b++) {
+        const e = entries[b];
+        const dist = rayOBBPart(origin, dir, e.box, e.group, maxDist, _hitPointScratch);
+        if (dist !== null && dist < bestDist) {
+          bestDist = dist; bestZ = z; bestPart = e.key;
+          bestPoint.copy(_hitPointScratch);
+        }
       }
     }
   }
   return { zombie:bestZ, part:bestPart, distance:bestDist, point:bestPoint };
+}
 }
 
 function applyHitReaction(z, part, hitDirWorld, force = 1) {
