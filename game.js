@@ -51,7 +51,8 @@ const controls = getControls();
     await precacheAllWeaponGLBs();
     await preloadGibs();
     await preloadGibGLBs();
-    await preloadZombieAnims();
+        await preloadZombieAnims();
+    await preloadZombieModel();
     await preloadCharacters();
     console.log('[game] ✅ Assets prontos');
   } catch (e) {
