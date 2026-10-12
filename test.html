@@ -4,45 +4,24 @@
   <meta charset="UTF-8">
   <title>Inspeção GLBs Zumbi</title>
   <style>
-    body { margin:0; background:#222; font-family:monospace; color:#fff; overflow:hidden; }
-    #hud {
-      position:fixed; top:10px; left:10px; z-index:10;
-      background:rgba(0,0,0,0.85); padding:14px 18px;
-      border-radius:6px; font-size:12px; line-height:1.6;
-      max-width:420px; max-height:92vh; overflow:auto;
-    }
-    #hud h3 { margin:0 0 8px; color:#0f0; font-size:13px; }
-    #hud h4 { margin:12px 0 4px; color:#ffdd00; font-size:12px; }
-    #hud button {
-      display:block; width:100%; margin:3px 0;
-      padding:6px; background:#333; color:#fff;
-      border:1px solid #555; cursor:pointer;
-      font-family:inherit; font-size:11px; text-align:left;
-    }
-    #hud button:hover { background:#444; }
-    #hud button.active { background:#0f0; color:#000; font-weight:bold; }
-    #hud .info { color:#888; font-size:10px; margin-top:8px; padding-top:8px; border-top:1px solid #333; }
-    #hud .info b { color:#ff0; }
-    #hud .prop { color:#0af; }
-    #hud .warn { color:#f66; }
-    #hud .ok { color:#0f0; }
-    #status { color:#ff0; margin-top:8px; font-size:10px; white-space:pre-wrap; }
+    body { margin:0; background:#111; color:#eee; font-family:monospace; padding:20px; font-size:13px; line-height:1.5; }
+    h2 { color:#0f0; margin-bottom:10px; }
+    .glb { margin:16px 0; padding:12px; background:#1a1a1a; border-left:4px solid #0af; }
+    .glb.ok { border-left-color:#0f0; }
+    .glb.err { border-left-color:#f00; }
+    .glb h3 { margin:0 0 8px; color:#ffdd00; font-size:14px; }
+    .glb .line { color:#aaa; }
+    .glb .line b { color:#fff; }
+    .glb .tag { display:inline-block; padding:1px 6px; margin-right:4px; border-radius:3px; font-size:11px; }
+    .glb .tag-yes { background:#0a4a0a; color:#4f4; }
+    .glb .tag-no { background:#4a0a0a; color:#f44; }
+    .glb .tag-warn { background:#4a3a0a; color:#fd0; }
+    #done { color:#0f0; font-size:16px; margin-top:20px; font-weight:bold; }
   </style>
 </head>
 <body>
-  <div id="hud">
-    <h3>🔬 INSPEÇÃO DE GLBs</h3>
-    <div id="load-list"></div>
-    <div id="status">Carregando...</div>
-    <div class="info">
-      <b>Perguntas que isso responde:</b><br>
-      1. O GLB tem <span class="prop">skeleton</span>?<br>
-      2. Tem <span class="prop">animações</span>?<br>
-      3. É <span class="prop">peça única</span> ou tem membros separados?<br>
-      4. Qual a <span class="prop">escala real</span>?<br>
-      5. Está em pé na <span class="prop">origem</span>?
-    </div>
-  </div>
+  <h2>🔬 Análise dos GLBs de Zumbi</h2>
+  <div id="out">Iniciando análise...</div>
 
   <script type="importmap">
   {
@@ -56,189 +35,115 @@
   <script type="module">
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-    // ─── Cena básica ───────────────────────────────────────
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x333333);
+    const out = document.getElementById('out');
+    out.innerHTML = '';
 
-    const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 1000);
-    camera.position.set(3, 2, 4);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(innerWidth, innerHeight);
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    document.body.appendChild(renderer.domElement);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, 1, 0);
-    controls.enableDamping = true;
-
-    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
-    sun.position.set(5, 10, 5); sun.castShadow = true;
-    scene.add(sun);
-
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(30, 30),
-      new THREE.MeshStandardMaterial({ color: 0x555555 })
-    );
-    floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
-    scene.add(floor);
-    scene.add(new THREE.GridHelper(10, 10, 0x00ff00, 0x444444));
-    scene.add(new THREE.AxesHelper(2));
-
-    // Boneco de referência 2m
-    const ref = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.3, 1.4, 4, 8),
-      new THREE.MeshStandardMaterial({ color: 0x00ffff, transparent: true, opacity: 0.2 })
-    );
-    ref.position.set(-1.5, 1.0, 0);
-    scene.add(ref);
-
-    // ─── Configuração dos GLBs para testar ─────────────────
-    const MODELS_BASE = 'assets/models/';
-
-    const MODELS = [
-      { id: 'worker-full',      file: 'WorkerZombie.glb' },
-      { id: 'miner-full',       file: 'MinerZombie.glb' },
-      { id: 'combatant-mesh',   file: 'CombatantZombieMesh1.glb' },
-      { id: 'zbguy',            file: 'ZbGuyMesh.glb' },
-      { id: 'worker-armL',      file: 'WorkerZombieLeftArm.glb' },
-      { id: 'worker-armR',      file: 'WorkerZombieRightArm.glb' },
-      { id: 'worker-legL',      file: 'WorkerZombieLeftLeg.glb' },
-      { id: 'worker-legR',      file: 'WorkerZombieRightLeg.glb' },
-      { id: 'worker-cap',       file: 'WorkerZombieCap.glb' },
-      { id: 'zombie-doll',      file: 'ZombieDoll.glb' },
-      { id: 'zombie-lowLOD',    file: 'ZombieLowLOD.glb' },
-      { id: 'reaper-full',      file: 'ReaperZombie.glb' },
-      { id: 'queen-full',       file: 'QueenZombie.glb' },
-      { id: 'riot-full',        file: 'RiotZombie.glb' },
+    const BASE = 'assets/models/';
+    const LIST = [
+      'WorkerZombie.glb',
+      'MinerZombie.glb',
+      'CombatantZombieMesh1.glb',
+      'ZbGuyMesh.glb',
+      'ZombieLowLOD.glb',
+      'WorkerZombieLeftArm.glb',
+      'WorkerZombieRightArm.glb',
+      'WorkerZombieLeftLeg.glb',
+      'WorkerZombieRightLeg.glb',
+      'WorkerZombieCap.glb',
+      'ZombieDoll.glb',
+      'RiotZombie.glb',
+      'ReaperZombie.glb',
+      'QueenZombie.glb',
     ];
 
-    const statusEl = document.getElementById('status');
-    const listEl = document.getElementById('load-list');
+    const loader = new GLTFLoader();
 
-    let loader = new GLTFLoader();
-    let currentModel = null;
-    let mixer = null;
-    let modelClips = {};
-
-    async function loadModel(config) {
-      // Limpar anterior
-      if (currentModel) { scene.remove(currentModel); currentModel = null; }
-      if (mixer) { mixer.stopAllAction(); mixer = null; }
-
-      statusEl.textContent = `Carregando ${config.file}...`;
+    async function analyze(file) {
+      const el = document.createElement('div');
+      el.className = 'glb';
+      el.innerHTML = `<h3>📁 ${file}</h3><div class="line">⏳ Carregando...</div>`;
+      out.appendChild(el);
 
       try {
-        const gltf = await loader.loadAsync(MODELS_BASE + config.file);
-        const scene0 = gltf.scene;
+        const gltf = await loader.loadAsync(BASE + file);
+        const scene = gltf.scene;
 
-        // ─── ANÁLISE ────────────────────────────────────────
-        let meshCount = 0, boneCount = 0, skinnedCount = 0;
+        let meshes = 0, skinned = 0, bones = 0;
         const meshNames = [];
         const boneNames = [];
-        const materials = new Set();
 
-        scene0.traverse(c => {
+        scene.traverse(c => {
           if (c.isMesh) {
-            meshCount++;
-            if (c.isSkinnedMesh) skinnedCount++;
-            meshNames.push(c.name || '(sem nome)');
-            if (c.material) {
-              const mats = Array.isArray(c.material) ? c.material : [c.material];
-              mats.forEach(m => materials.add(m.name || '(sem nome)'));
-            }
+            meshes++;
+            if (c.isSkinnedMesh) skinned++;
+            if (meshNames.length < 12) meshNames.push(c.name || '(sem nome)');
           }
-          if (c.isBone) { boneCount++; if (boneNames.length < 30) boneNames.push(c.name); }
+          if (c.isBone) {
+            bones++;
+            if (boneNames.length < 8) boneNames.push(c.name);
+          }
         });
 
-        const box = new THREE.Box3().setFromObject(scene0);
+        const box = new THREE.Box3().setFromObject(scene);
         const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
         const minY = box.min.y;
-
-        // ─── RELATÓRIO ──────────────────────────────────────
         const anims = gltf.animations || [];
-        let report = '';
-        report += `📁 ${config.file}\n`;
-        report += `  Tamanho: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m\n`;
-        report += `  Centro: (${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)})\n`;
-        report += `  Min Y: ${minY.toFixed(3)} (${minY > -0.1 && minY < 0.1 ? '✅ na origem' : '⚠️ deslocado'})\n`;
-        report += `  Meshes: ${meshCount}  (skinned: ${skinnedCount})\n`;
-        report += `  Bones: ${boneCount}\n`;
-        report += `  Animações: ${anims.length}`;
-        if (anims.length > 0) report += ` [${anims.map(a => a.name).join(', ')}]`;
-        report += `\n`;
-        report += `  Materiais (${materials.size}): ${[...materials].slice(0, 6).join(', ')}\n`;
-        if (boneCount > 0) report += `  Bones (primeiros): ${boneNames.slice(0, 8).join(', ')}\n`;
-        if (meshCount > 1) report += `  Meshes (nomes): ${meshNames.slice(0, 8).join(', ')}\n`;
 
-        statusEl.textContent = report;
+        const tags = [];
+        if (meshes === 0) tags.push(`<span class="tag tag-no">SEM MESH</span>`);
+        if (meshes > 1) tags.push(`<span class="tag tag-yes">PEÇAS SEPARADAS</span>`);
+        if (meshes === 1 && skinned === 0) tags.push(`<span class="tag tag-warn">MESH ÚNICA</span>`);
+        if (skinned > 0) tags.push(`<span class="tag tag-yes">SKINNED</span>`);
+        if (bones > 0) tags.push(`<span class="tag tag-yes">${bones} BONES</span>`);
+        if (anims.length > 0) tags.push(`<span class="tag tag-yes">${anims.length} ANIMS</span>`);
+        if (anims.length === 0) tags.push(`<span class="tag tag-warn">SEM ANIM</span>`);
+        if (minY > -0.1 && minY < 0.1) tags.push(`<span class="tag tag-yes">NA ORIGEM</span>`);
+        else tags.push(`<span class="tag tag-warn">DESLOCADO Y=${minY.toFixed(2)}</span>`);
 
-        // ─── ADICIONA NA CENA ───────────────────────────────
-        // Escala pra 1.75m
-        const scale = 1.75 / (size.y || 1);
-        scene0.scale.setScalar(scale);
+        let html = `<h3>📁 ${file} ${tags.join(' ')}</h3>`;
+        html += `<div class="line"><b>Meshes:</b> ${meshes} · <b>Skinned:</b> ${skinned} · <b>Bones:</b> ${bones} · <b>Animações:</b> ${anims.length}</div>`;
+        html += `<div class="line"><b>Tamanho:</b> ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m</div>`;
+        html += `<div class="line"><b>Min Y:</b> ${minY.toFixed(3)}</div>`;
+        if (meshNames.length) html += `<div class="line"><b>Meshes:</b> ${meshNames.join(', ')}</div>`;
+        if (boneNames.length) html += `<div class="line"><b>Bones:</b> ${boneNames.join(', ')}</div>`;
+        if (anims.length) html += `<div class="line"><b>Clipes:</b> ${anims.map(a => a.name).join(', ')}</div>`;
 
-        scene0.updateMatrixWorld(true);
-        const box2 = new THREE.Box3().setFromObject(scene0);
-        scene0.position.set(-box2.min.x - (box2.max.x - box2.min.x)/2, -box2.min.y, -box2.min.z - (box2.max.z - box2.min.z)/2);
+        el.className = 'glb ok';
+        el.innerHTML = html;
 
-        scene0.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
-
-        scene.add(scene0);
-        currentModel = scene0;
-
-        // Animações
-        if (anims.length > 0) {
-          mixer = new THREE.AnimationMixer(scene0);
-          modelClips = {};
-          anims.forEach(clip => { modelClips[clip.name] = clip; });
-          const first = mixer.clipAction(anims[0]);
-          first.play();
-        }
-
+        return { file, meshes, skinned, bones, anims: anims.length, size: size.y };
       } catch (e) {
-        statusEl.innerHTML = `<span class="warn">❌ Erro: ${e.message}</span>`;
+        el.className = 'glb err';
+        el.innerHTML = `<h3>📁 ${file} ❌</h3><div class="line">Erro: ${e.message || e}</div>`;
+        return { file, error: e.message || String(e) };
       }
     }
 
-    // ─── BOTÕES ────────────────────────────────────────────
-    MODELS.forEach(m => {
-      const btn = document.createElement('button');
-      btn.textContent = m.file;
-      btn.dataset.id = m.id;
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('#load-list button').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        loadModel(m);
-      });
-      listEl.appendChild(btn);
-    });
+    (async () => {
+      const results = [];
+      for (const file of LIST) {
+        results.push(await analyze(file));
+      }
 
-    // Carrega o primeiro automaticamente
-    loadModel(MODELS[0]);
-    document.querySelector('#load-list button').classList.add('active');
+      // Resumo no final
+      const done = document.createElement('div');
+      done.id = 'done';
+      const ok = results.filter(r => !r.error).length;
+      done.textContent = `✅ Análise completa — ${ok}/${LIST.length} carregaram`;
+      out.appendChild(done);
 
-    // ─── LOOP ──────────────────────────────────────────────
-    const clock = new THREE.Clock();
-    function animate() {
-      requestAnimationFrame(animate);
-      const dt = clock.getDelta();
-      if (mixer) mixer.update(dt);
-      controls.update();
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    addEventListener('resize', () => {
-      camera.aspect = innerWidth / innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(innerWidth, innerHeight);
-    });
+      // Tabela resumo no console
+      console.log('═══════════════ RESUMO ═══════════════');
+      console.table(results.map(r => ({
+        arquivo: r.file,
+        meshes: r.meshes ?? '❌',
+        skinned: r.skinned ?? '-',
+        bones: r.bones ?? '-',
+        anims: r.anims ?? '-',
+        altura: r.size ? r.size.toFixed(2) + 'm' : '-',
+      })));
+    })();
   </script>
 </body>
 </html>
