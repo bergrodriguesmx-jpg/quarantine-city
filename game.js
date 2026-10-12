@@ -51,7 +51,7 @@ const controls = getControls();
     await precacheAllWeaponGLBs();
     await preloadGibs();
     await preloadGibGLBs();
-        await preloadZombieAnims();
+    await preloadZombieAnims();
     await preloadZombieModel();
     await preloadCharacters();
     console.log('[game] ✅ Assets prontos');
@@ -682,7 +682,6 @@ function createZombieMesh(opts = {}) {
   // ...
   return proceduralFallback(opts);
 }
-}
 
 // ============================================================
 // SMOOTHING
@@ -833,7 +832,7 @@ function spawnZombie(forceType) {
   };
 
   // Ativa animações Mixamo se disponíveis
-    if (mesh.userData.isXBot) {
+  if (mesh.userData.isXBot) {
     z.instance = mesh.userData.instance;
     setupZombieAnimator(z);
   }
@@ -1040,37 +1039,37 @@ function detachLimb(z, key, hitDir, hitPoint) {
   }
 
   if (gibModel) {
-      // Se for XBot, esconde o bone (skin collapse) em vez de destacar
-  if (z.mesh.userData.isXBot) {
-    z.dismembered[key] = true;
-    const joint = key === 'head' ? ud.joints.head
-                : key === 'armL' ? ud.joints.shoulderL
-                : key === 'armR' ? ud.joints.shoulderR
-                : key === 'legL' ? ud.joints.thighL
-                : key === 'legR' ? ud.joints.thighR
-                : null;
-    if (joint) joint.scale.setScalar(0.01);
+    // Se for XBot, esconde o bone (skin collapse) em vez de destacar
+    if (z.mesh.userData.isXBot) {
+      z.dismembered[key] = true;
+      const joint = key === 'head' ? ud.joints.head
+                  : key === 'armL' ? ud.joints.shoulderL
+                  : key === 'armR' ? ud.joints.shoulderR
+                  : key === 'legL' ? ud.joints.thighL
+                  : key === 'legR' ? ud.joints.thighR
+                  : null;
+      if (joint) joint.scale.setScalar(0.01);
 
-    // Gib model continua funcionando
-    let gibModel = hasLimb(key) ? createLimb(key) : createGib(key);
-    if (gibModel) {
-      const wrapper = new THREE.Group();
-      wrapper.position.copy(_wpTmp);
-      wrapper.quaternion.copy(_wqTmp);
-      scene.add(wrapper);
-      wrapper.add(gibModel);
-      const size = gibModel.userData.size || new THREE.Vector3(0.3, 0.3, 0.3);
-      const piece = new Debris(wrapper, size, 1.2, CONFIG.dismember.limbLife);
-      piece.key = key;
-      piece.velocity.set(hitDir.x*16, 8+Math.random()*4, hitDir.z*16);
-      piece.angularVelocity.set((Math.random()-0.5)*35, (Math.random()-0.5)*35, (Math.random()-0.5)*35);
-      flyingLimbs.push(piece);
+      // Gib model continua funcionando
+      let gibModelX = hasLimb(key) ? createLimb(key) : createGib(key);
+      if (gibModelX) {
+        const wrapper = new THREE.Group();
+        wrapper.position.copy(_wpTmp);
+        wrapper.quaternion.copy(_wqTmp);
+        scene.add(wrapper);
+        wrapper.add(gibModelX);
+        const size = gibModelX.userData.size || new THREE.Vector3(0.3, 0.3, 0.3);
+        const piece = new Debris(wrapper, size, 1.2, CONFIG.dismember.limbLife);
+        piece.key = key;
+        piece.velocity.set(hitDir.x*16, 8+Math.random()*4, hitDir.z*16);
+        piece.angularVelocity.set((Math.random()-0.5)*35, (Math.random()-0.5)*35, (Math.random()-0.5)*35);
+        flyingLimbs.push(piece);
+      }
+
+      spawnBlood(_wpTmp, hitDir, 30, true);
+      bus.emit(Ev.DISMEMBER, { zombieId:z.id, part:key, pos:{ x:_wpTmp.x, y:_wpTmp.y, z:_wpTmp.z } });
+      return;
     }
-
-    spawnBlood(_wpTmp, hitDir, 30, true);
-    bus.emit(Ev.DISMEMBER, { zombieId:z.id, part:key, pos:{ x:_wpTmp.x, y:_wpTmp.y, z:_wpTmp.z } });
-    return;
-  }
     limbObj.visible = false;
     const wrapper = new THREE.Group();
     wrapper.position.copy(_wpTmp);
@@ -1341,7 +1340,6 @@ function raycastZombie(origin, dir, maxDist, candidates) {
     }
   }
   return { zombie:bestZ, part:bestPart, distance:bestDist, point:bestPoint };
-}
 }
 
 function applyHitReaction(z, part, hitDirWorld, force = 1) {
@@ -1900,6 +1898,7 @@ function attack(isRightClick = false) {
   }
   return true;
 }
+
 // ============================================================
 // LEVEL / WAVES
 // ============================================================
