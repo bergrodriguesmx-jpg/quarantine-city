@@ -4,8 +4,8 @@
 // Baseado na mecânica do Zumbi Blocks 2.
 // ============================================================
 
-import * as bus from './src/core/bus.js';
-import { Ev } from './src/core/events.js';
+import * as bus from './bus.js';
+import { Ev } from './events.js';
 
 export const SurvivalConfig = {
   maxHunger: 100,
