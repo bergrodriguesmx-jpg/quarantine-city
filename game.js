@@ -119,10 +119,11 @@ const BOSS_ROTATION = ['riot','queen','reaper'];
 const CONFIG = {
   player: {
     speed:5.5, height:1.7, maxHealth:100, radius:0.4,
-    dodgeSpeed:14, dodgeDuration:0.22, dodgeCooldown:0.75,
     staminaMax:100, staminaRegen:25, staminaDrainRun:14,
     sprintMult:1.55,
     jumpForce:7.0,
+    jumpForwardForce:6.5,
+    jumpAirDecay:2.2,
     gravity:22,
   },
   zombie: { speed:1.9, maxHealth:40, damage:8, attackRange:1.6, attackCooldown:1.2, xpReward:10, coinReward:2, knockbackStagger:0.25, radius:0.4 },
@@ -174,10 +175,10 @@ const state = {
   kills:0, headshots:0, damageTotal:0,
   playerSkin: (() => { try { return localStorage.getItem('qb_skin') || 'default'; } catch { return 'default'; } })(),
   stamina: CONFIG.player.staminaMax, staminaMax: CONFIG.player.staminaMax,
-  dodging:false, dodgeEnd:0, dodgeCd:0, dodgeDir:new THREE.Vector3(),
   hitstopUntil:0,
   // ═══ FÍSICA VERTICAL / PULO ═══
   isGrounded:true, velocityY:0, jumpOffset:0,
+  jumpVelX:0, jumpVelZ:0,
   isSprinting:false,
   brazierFuel:1, brazierBurning:false, brazierBurnStart:0,
   vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
@@ -2073,6 +2074,7 @@ function enterDownedState() {
   state.reviveProgress = 0; state.aiming = false; state.mouseDown = false;
   // Cancela física de pulo ao cair
   state.isGrounded = true; state.velocityY = 0; state.jumpOffset = 0;
+  state.jumpVelX = 0; state.jumpVelZ = 0;
   player.position.y = CONFIG.player.height;
   updateCrosshair(); cancelReload();
   document.body.classList.add('downed');
@@ -2281,58 +2283,39 @@ function updateVendorVan() {
 }
 
 // ============================================================
-// PULO E ESQUIVA — funções auxiliares
+// PULO — normal (sem direção) ou direcional (com WASD)
 // ============================================================
-function isAnyMoveDirHeld() {
-  return controls.isDown(Action.MoveForward,  state.keys) ||
-         controls.isDown(Action.MoveBackward, state.keys) ||
-         controls.isDown(Action.MoveLeft,     state.keys) ||
-         controls.isDown(Action.MoveRight,    state.keys);
-}
-
 function tryJump() {
   if (state.downed) return false;
   if (!state.isGrounded) return false;
-  if (performance.now()/1000 < state.hitstopUntil/1000) return false;
-  state.velocityY = CONFIG.player.jumpForce;
-  state.isGrounded = false;
-  Sfx.playJump();
-  return true;
-}
+  if (performance.now() < state.hitstopUntil) return false;
 
-function tryDodge() {
-  if (state.downed) return false;
-  const now = performance.now()/1000;
-  if (state.dodging) return false;
-  if (now < state.dodgeCd) return false;
-  if (state.stamina < 25) return false;
-
-  // Direção a partir do input local (relativo à câmera)
+  // Detecta direção do input (relativo à câmera)
   let mx = 0, mz = 0;
   if (controls.isDown(Action.MoveForward,  state.keys)) mz -= 1;
   if (controls.isDown(Action.MoveBackward, state.keys)) mz += 1;
   if (controls.isDown(Action.MoveLeft,     state.keys)) mx -= 1;
   if (controls.isDown(Action.MoveRight,    state.keys)) mx += 1;
 
-  // Sem direção? Não faz nada (o chamador decide se cai no jump)
-  if (mx === 0 && mz === 0) return false;
-
-  // Converte local → mundo usando yaw
   const fwd   = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   const right = new THREE.Vector3( Math.cos(player.yaw), 0, -Math.sin(player.yaw));
 
   const dir = new THREE.Vector3();
   dir.addScaledVector(fwd,   -mz);
   dir.addScaledVector(right,  mx);
-  if (dir.lengthSq() < 0.0001) return false;
-  dir.normalize();
 
-  state.dodging = true;
-  state.dodgeEnd = now + CONFIG.player.dodgeDuration;
-  state.dodgeCd = now + CONFIG.player.dodgeCooldown;
-  state.stamina = Math.max(0, state.stamina - 25);
-  state.dodgeDir.copy(dir);
-  Sfx.playRoll();
+  if (dir.lengthSq() > 0.0001) {
+    dir.normalize();
+    state.jumpVelX = dir.x * CONFIG.player.jumpForwardForce;
+    state.jumpVelZ = dir.z * CONFIG.player.jumpForwardForce;
+  } else {
+    state.jumpVelX = 0;
+    state.jumpVelZ = 0;
+  }
+
+  state.velocityY = CONFIG.player.jumpForce;
+  state.isGrounded = false;
+  Sfx.playJump();
   return true;
 }
 
@@ -2384,30 +2367,16 @@ document.addEventListener('keydown', e => {
   }
 
   // ═══════════════════════════════════════════════════════
-  // JUMP + DODGE (Space):
-  //  - Space + WASD → esquiva direcional
-  //  - Space sozinho → pulo
+  // PULO (Space):
+  //  - Space sozinho     → pulo vertical
+  //  - Space + WASD      → pulo direcional
   // ═══════════════════════════════════════════════════════
-  const jumpKey  = controls.getKey(Action.Jump);
-  const dodgeKey = controls.getKey(Action.Dodge);
+  const jumpKey = controls.getKey(Action.Jump);
 
   if (jumpKey && e.code === jumpKey) {
     e.preventDefault();
     if (state.running && !state.downed && !state.paused && !state.levelUpActive && !state.shopOpen) {
-      if (isAnyMoveDirHeld()) {
-        tryDodge();
-      } else {
-        tryJump();
-      }
-    }
-    return;
-  }
-
-  // Se o usuário rebindar Dodge para outra tecla, ela sempre faz esquiva.
-  if (dodgeKey && e.code === dodgeKey && dodgeKey !== jumpKey) {
-    e.preventDefault();
-    if (state.running && !state.downed && !state.paused && !state.levelUpActive && !state.shopOpen) {
-      tryDodge();
+      tryJump();
     }
     return;
   }
@@ -2530,8 +2499,6 @@ let shadowFrame = 0;
 const _fwdV = new THREE.Vector3(), _rightV = new THREE.Vector3(), _moveV = new THREE.Vector3();
 
 function updatePlayer(dt) {
-  const now = performance.now()/1000;
-
   // ───── Física vertical (pulo) ─────
   if (!state.isGrounded) {
     state.velocityY -= CONFIG.player.gravity * dt;
@@ -2540,17 +2507,22 @@ function updatePlayer(dt) {
       state.jumpOffset = 0;
       state.velocityY = 0;
       state.isGrounded = true;
+      // Ao aterrissar, zera o impulso horizontal do pulo
+      state.jumpVelX = 0;
+      state.jumpVelZ = 0;
     }
   }
   player.position.y = CONFIG.player.height + state.jumpOffset;
 
-  // ───── Esquiva ─────
-  if (state.dodging) {
-    if (now >= state.dodgeEnd) {
-      state.dodging = false;
-    } else {
-      player.position.addScaledVector(state.dodgeDir, CONFIG.player.dodgeSpeed * dt);
-    }
+  // ───── Impulso horizontal do pulo direcional (só no ar) ─────
+  if (!state.isGrounded && (state.jumpVelX !== 0 || state.jumpVelZ !== 0)) {
+    player.position.x += state.jumpVelX * dt;
+    player.position.z += state.jumpVelZ * dt;
+    const decay = Math.exp(-CONFIG.player.jumpAirDecay * dt);
+    state.jumpVelX *= decay;
+    state.jumpVelZ *= decay;
+    if (Math.abs(state.jumpVelX) < 0.05) state.jumpVelX = 0;
+    if (Math.abs(state.jumpVelZ) < 0.05) state.jumpVelZ = 0;
   }
 
   // ───── Input de movimento ─────
@@ -2578,16 +2550,14 @@ function updatePlayer(dt) {
   if (state.downed) speedMult = 0.25;
 
   const sprintKeyHeld = controls.isDown(Action.Sprint, state.keys);
-  const canSprint = state.isMoving && !state.downed && !state.aiming && !state.dodging && state.stamina > 0;
+  const canSprint = state.isMoving && !state.downed && !state.aiming && state.stamina > 0;
   state.isSprinting = canSprint && sprintKeyHeld;
   const sprintMult = state.isSprinting ? CONFIG.player.sprintMult : 1;
 
   const speed = CONFIG.player.speed * state.speedMult * speedMult * sprintMult;
 
-  // ───── Aplica movimento horizontal (não se estiver esquivando) ─────
-  if (!state.dodging) {
-    player.position.addScaledVector(_moveV, speed * dt);
-  }
+  // ───── Movimento horizontal (chão ou ar) ─────
+  player.position.addScaledVector(_moveV, speed * dt);
 
   // ───── Colisão com paredes ─────
   resolveWallCollisions(player.position, CONFIG.player.radius);
@@ -3390,10 +3360,10 @@ function startGame() {
   state.kills = 0; state.headshots = 0; state.damageTotal = 0;
   state.bossSpawned = false;
   state.stamina = CONFIG.player.staminaMax;
-  state.dodging = false; state.dodgeCd = 0;
   state.hitstopUntil = 0;
   // ═══ RESET FÍSICA VERTICAL ═══
   state.isGrounded = true; state.velocityY = 0; state.jumpOffset = 0;
+  state.jumpVelX = 0; state.jumpVelZ = 0;
   state.isSprinting = false;
   state.brazierFuel = 1; state.brazierBurning = false;
   state.vendorVanActive = false;
