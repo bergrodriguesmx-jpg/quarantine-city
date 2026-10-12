@@ -31,6 +31,7 @@ import { getWeaponIconURL, getAmmoIconURL } from './src/render/weapon-icon-rende
 import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 
 import { preloadGibs, createGib, hasGib } from './gib-models.js';
+import { preloadGibGLBs, createLimb, hasLimb, createCorpse, listCorpseTypes } from './gib-glb.js';
 import { preloadCharacters, createCharacter } from './character-models.js';
 import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './src/render/weapon-models.js';
 
@@ -47,6 +48,7 @@ const controls = getControls();
   try {
     await precacheAllWeaponGLBs();
     await preloadGibs();
+    await preloadGibGLBs();
     await preloadCharacters();
     console.log('[game] ✅ Assets prontos');
   } catch (e) {
@@ -174,10 +176,11 @@ const state = {
   jumpVelX:0, jumpVelZ:0,
   isSprinting:false,
   brazierFuel:1, brazierBurning:false, brazierBurnStart:0,
-   vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
+  vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
   bossSpawned: false,
   mouseDX: 0, mouseDY: 0,
 };
+
 // ============================================================
 // SCENE
 // ============================================================
@@ -625,13 +628,17 @@ function buildJudgeOutfit(spineUpper) {
   const tie = new THREE.Mesh(geoBox(0.025, 0.16, 0.008, 1), matL(0xCC1111)); tie.position.set(0, 0.04, 0.112); spineUpper.add(tie);
 }
 
+function pickFromPalette(palette, fallback) {
+  if (!palette || palette.length === 0) return fallback;
+  return palette[Math.floor(Math.random() * palette.length)];
+}
+
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
   const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey] || { scale: 1, variant: 'normal' };
   const g = new THREE.Group();
   const variant = type.variant || 'normal';
 
-   // Paletas por tipo (fallback pras antigas se tipo não tiver paleta)
   const FALLBACK_SKIN = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
   const FALLBACK_SHIRT = 0xCC1111;
   const FALLBACK_PANTS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
@@ -640,17 +647,9 @@ function createZombieMesh(opts = {}) {
   const shirtPal = type.shirtPalette && type.shirtPalette.length > 0 ? type.shirtPalette : [FALLBACK_SHIRT];
   const pantsPal = type.pantsPalette && type.pantsPalette.length > 0 ? type.pantsPalette : FALLBACK_PANTS;
 
-  let skinColor = opts.skin !== undefined ? opts.skin : skinPal[Math.floor(Math.random() * skinPal.length)];
-  let shirtColor = typeKey === 'judge' ? SHIRT_BLACK : shirtPal[Math.floor(Math.random() * shirtPal.length)];
-  let pantsColor = pantsPal[Math.floor(Math.random() * pantsPal.length)];
-
-  if (variant === 'worker') { skinColor = 0xC8A878; shirtColor = 0x8B5A2B; pantsColor = 0x5D4030; }
-  else if (variant === 'miner') { skinColor = 0xB09878; shirtColor = 0x34495E; pantsColor = 0x1B2631; }
-  else if (variant === 'security') { skinColor = 0xA88A68; shirtColor = 0x1A1A1A; pantsColor = 0x1A1A1A; }
-  else if (variant === 'combat') { skinColor = 0xA8A878; shirtColor = 0x1A1A1A; pantsColor = 0x2C3E50; }
-  else if (variant === 'riot') { skinColor = 0xA88A68; shirtColor = 0x1A1A2A; pantsColor = 0x0A0A1A; }
-  else if (variant === 'queen') { skinColor = 0xC8A8A8; shirtColor = 0x4A0A0A; pantsColor = 0x2A0505; }
-  else if (variant === 'reaper') { skinColor = 0x3A3A4A; shirtColor = 0x0A0A0A; pantsColor = 0x0A0A0A; }
+  let skinColor = opts.skin !== undefined ? opts.skin : pickFromPalette(skinPal, rand(SKIN_COLORS));
+  let shirtColor = typeKey === 'judge' ? SHIRT_BLACK : pickFromPalette(shirtPal, SHIRT_RED);
+  let pantsColor = pickFromPalette(pantsPal, rand(PANTS_COLORS));
 
   const skinMat = zMat(skinColor);
   const shirtMat = zMat(shirtColor);
@@ -839,6 +838,7 @@ function createZombieMesh(opts = {}) {
   };
   return g;
 }
+
 // ============================================================
 // SMOOTHING
 // ============================================================
@@ -1177,7 +1177,17 @@ function detachLimb(z, key, hitDir, hitPoint) {
   stump.scale.set(1, 0.8, 1);
   parent.add(stump);
 
-  const gibModel = createGib(key);
+  // Tenta GLB real primeiro, cai no procedural se não tiver
+  let gibModel = null;
+  let gibSource = 'procedural';
+  if (hasLimb(key)) {
+    gibModel = createLimb(key);
+    gibSource = 'glb';
+  }
+  if (!gibModel) {
+    gibModel = createGib(key);
+  }
+
   if (gibModel) {
     limbObj.visible = false;
     const wrapper = new THREE.Group();
@@ -1194,8 +1204,8 @@ function detachLimb(z, key, hitDir, hitPoint) {
     piece.velocity.set(dir.x*speed + (Math.random()-0.5)*6, speed*0.8 + Math.random()*5, dir.z*speed + (Math.random()-0.5)*6);
     piece.angularVelocity.set((Math.random()-0.5)*35, (Math.random()-0.5)*35, (Math.random()-0.5)*35);
     flyingLimbs.push(piece);
-    if (hitPoint) spawnBlood(hitPoint, dir, 20, true);
-    else spawnBlood(_wpTmp, dir, 20, true);
+    if (hitPoint) spawnBlood(hitPoint, dir, gibSource === 'glb' ? 30 : 20, true);
+    else spawnBlood(_wpTmp, dir, gibSource === 'glb' ? 30 : 20, true);
     bus.emit(Ev.DISMEMBER, { zombieId:z.id, part:key, pos:{ x:_wpTmp.x, y:_wpTmp.y, z:_wpTmp.z } });
     return;
   }
@@ -1297,6 +1307,7 @@ function checkDebrisZombieCollision() {
     }
   }
 }
+
 // ============================================================
 // RAYCAST PRECISO (OBB)
 // ============================================================
@@ -1635,7 +1646,6 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     z.dying = true;
     Gore.onZombieDeath(z.mesh.position, hitDir, z.isBoss);
 
-    // ════════ BOOMER EXPLODE ════════
     if (z.type.explodesOnDeath) {
       const radius = z.type.explosionRadius || 4;
       const dmg = z.type.explosionDamage || 60;
@@ -2646,6 +2656,7 @@ function resolvePlayerZombieCollision() {
     }
   }
 }
+
 // ============================================================
 // ZOMBIE UPDATE
 // ============================================================
@@ -2810,7 +2821,7 @@ function updateZombies(dt) {
     z.mesh.position.z += z.vz * dt;
     resolveWallCollisions(z.mesh.position, z.radius);
 
-        if (!z.type.flight) {
+    if (!z.type.flight) {
       updateStuckDetection(z, dt, world);
       applyStuckPhysics(z, dt);
     }
@@ -3072,7 +3083,6 @@ function updateZombies(dt) {
     }
   }
 
-  // Colisão entre zumbis
   zCollGrid.clear();
   for (let i = 0; i < zombies.length; i++) {
     const z = zombies[i];
@@ -3127,7 +3137,7 @@ const promptText = document.getElementById('prompt-text');
 
 function spawnWeaponPickup(weaponId, x, z, y = 0.9, isDrop = false) {
   const spriteHandle = spawnPickup3D(scene, {
-    weaponId, x, z, y: y + 0.3, isDrop, spinSpeed: 1.2, bobAmp: 0.08,
+    weaponId, x, z, y: y + 0.3, isDrop, spinSpeed: 1.2, bobAmpl: 0.08,
   });
   world.weaponSpots.push({
     x, y, z,
@@ -3150,6 +3160,49 @@ function setupWeaponSpawns() {
   const shuffled = [...pool].sort(() => Math.random() - 0.5);
   houses.slice(5).forEach((h, i) => spawnWeaponPickup(shuffled[i % shuffled.length], h.x - 2, h.z + 0.5, 0.95));
 }
+
+// ════════ CADÁVERES DECORATIVOS (GLB) ════════
+function spawnCorpsesAroundMap() {
+  const types = listCorpseTypes();
+  if (types.length === 0) {
+    console.log('[corpse] nenhum GLB disponível, pulando cadáveres');
+    return;
+  }
+
+  const spots = [
+    { x: -18, z: -12, rot: 0.4 },
+    { x:  14, z: -16, rot: -1.1 },
+    { x: -22, z:  10, rot: 1.7 },
+    { x:   8, z:  20, rot: 2.3 },
+    { x: -25, z: -22, rot: -0.6 },
+    { x:  22, z:  22, rot: 0.9 },
+    { x:   0, z: -28, rot: 3.0 },
+    { x: -30, z:   5, rot: -2.0 },
+    { x:  16, z:   5, rot: 1.2 },
+    { x:  -6, z: -20, rot: 2.7 },
+  ];
+
+  if (!world._corpses) world._corpses = [];
+
+  for (const spot of spots) {
+    const typeId = types[Math.floor(Math.random() * types.length)];
+    const corpse = createCorpse(typeId);
+    if (!corpse) continue;
+
+    const wrapper = new THREE.Group();
+    wrapper.position.set(spot.x, 0.06, spot.z);
+    wrapper.rotation.y = spot.rot;
+
+    corpse.rotation.x = -Math.PI / 2;
+    corpse.position.y = 0.05;
+
+    wrapper.add(corpse);
+    scene.add(wrapper);
+    world._corpses.push(wrapper);
+  }
+  console.log(`[corpse] ${world._corpses.length} cadáveres espalhados`);
+}
+
 function updateWeaponPickups(dt) {
   updatePickups3D(dt, camera);
 
@@ -3390,7 +3443,6 @@ function startGame() {
   state.isSprinting = false;
   state.brazierFuel = 1; state.brazierBurning = false;
   state.vendorVanActive = false;
-  state.currentBoss = null;
   state.mouseDX = 0; state.mouseDY = 0;
   survival.reset();
   cancelReload();
@@ -3408,6 +3460,13 @@ function startGame() {
   world.weaponSpots = [];
   clearPickups3D();
   setupWeaponSpawns();
+
+  // Cadáveres decorativos (GLB)
+  if (world._corpses) {
+    for (const c of world._corpses) scene.remove(c);
+  }
+  world._corpses = [];
+  spawnCorpsesAroundMap();
 
   zombies.forEach(z => scene.remove(z.mesh));
   zombies.length = 0;
