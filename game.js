@@ -35,6 +35,7 @@ import { preloadGibGLBs, createLimb, hasLimb, createCorpse, listCorpseTypes } fr
 import { preloadCharacters, createCharacter } from './character-models.js';
 import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './src/render/weapon-models.js';
 import { preloadZombieAnims, hasZombieAnims, setupZombieAnimator, updateZombieAnim, handleZombieAnimState } from './zombie-anim.js';
+import { preloadZombieModel, isModelReady, createZombieInstance, tintZombie } from './zombie-model.js';
 
 bus.setAdapter(new LocalAdapter());
 
