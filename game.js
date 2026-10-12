@@ -23,7 +23,7 @@ import * as ZombieAI from './src/core/zombie-ai.js';
 import * as BossAI from './src/core/boss-ai.js';
 import * as Extraction from './src/core/extraction.js';
 import { survival } from './src/core/survival.js';
-import { pickZombieType, BOSS_ROTATION } from './src/core/zombie-types.js';
+import { ZOMBIE_TYPES, pickZombieType, BOSS_ROTATION } from './src/core/zombie-types.js';
 import { initStuckState, updateStuckDetection, applyStuckPhysics } from './src/core/zombie-stuck.js';
 import { Weapon3DView } from './src/render/viewmodel-3d.js';
 import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pickup-3d.js';
