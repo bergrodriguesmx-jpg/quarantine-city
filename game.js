@@ -174,8 +174,8 @@ const state = {
   jumpVelX:0, jumpVelZ:0,
   isSprinting:false,
   brazierFuel:1, brazierBurning:false, brazierBurnStart:0,
-  vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
-  currentBoss:null,
+   vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
+  bossSpawned: false,
   mouseDX: 0, mouseDY: 0,
 };
 // ============================================================
