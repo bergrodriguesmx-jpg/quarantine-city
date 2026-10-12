@@ -3,6 +3,7 @@ let masterGain = null;
 let compressor = null;
 let noiseBuffer = null;
 let muted = false;
+let volume = 0.85;   // ← guarda o volume atual
 
 export function initAudio() {
   if (ctx) return;
@@ -15,15 +16,25 @@ export function initAudio() {
     compressor.attack.value = 0.003;
     compressor.release.value = 0.22;
     masterGain = ctx.createGain();
-    masterGain.gain.value = 0.85;
+    masterGain.gain.value = muted ? 0 : volume;
     compressor.connect(masterGain);
     masterGain.connect(ctx.destination);
   } catch (e) { console.warn('Web Audio não suportado'); }
 }
+
 export function resumeAudio() { if (ctx && ctx.state === 'suspended') ctx.resume(); }
-export function setMuted(m) { muted = !!m; if (masterGain) masterGain.gain.value = muted ? 0 : 0.85; }
+
+export function setMuted(m) {
+  muted = !!m;
+  if (masterGain) masterGain.gain.value = muted ? 0 : volume;
+}
+
 export function isMuted() { return muted; }
-export function setVolume(v) { if (masterGain) masterGain.gain.value = muted ? 0 : Math.max(0, Math.min(1, v)); }
+
+export function setVolume(v) {
+  volume = Math.max(0, Math.min(1, v));
+  if (masterGain) masterGain.gain.value = muted ? 0 : volume;
+}
 
 function getNoiseBuffer() {
   if (!noiseBuffer && ctx) {
@@ -34,6 +45,7 @@ function getNoiseBuffer() {
   }
   return noiseBuffer;
 }
+
 function envGain(t, peak, attack, decay) {
   const g = ctx.createGain();
   g.gain.setValueAtTime(0, t);
@@ -72,6 +84,7 @@ function playNoise(t, duration, filterType, filterFreq, peak, decay, freqEnd) {
   autoCleanup(src, [filter, g], duration + 0.1);
   return { src, filter, g };
 }
+
 function playOsc(t, type, freqStart, freqEnd, peak, decay, duration) {
   const o = ctx.createOscillator();
   o.type = type;
@@ -121,7 +134,7 @@ export function playBluntHitFlesh() {
 }
 
 // ============================================================
-// FIREARMS — todos os sons do C# com pitch range variável
+// FIREARMS
 // ============================================================
 function pitchVar() { return 0.94 + Math.random() * 0.12; }
 
@@ -226,7 +239,7 @@ export function playGroan() {
 }
 
 // ============================================================
-// PLAYER — footsteps, hurt, roll, jump, wall jump
+// PLAYER
 // ============================================================
 export function playFootstep() {
   if (!ctx) return;
