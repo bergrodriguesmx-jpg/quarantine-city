@@ -1,5 +1,5 @@
 // ============================================================
-// zombie-model.js — v3 (nomes de bones normalizados)
+// zombie-model.js — v4 (retarget dinâmico + logs)
 // ============================================================
 
 import * as THREE from 'three';
@@ -10,13 +10,11 @@ import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 const fbxLoader = new FBXLoader();
 const gltfLoader = new GLTFLoader();
 const BASE = 'assets/zombie-anim/';
-
 const MODEL_CANDIDATES = ['XBot.glb', 'XBot.fbx'];
 
 let baseScene = null;
 let loaded = false;
 
-// Mapa canônico → usado pra achar bone
 const BONE_CANDIDATES = {
   head:       ['Head'],
   neck:       ['Neck'],
@@ -37,7 +35,6 @@ const BONE_CANDIDATES = {
   footR:      ['RightFoot'],
 };
 
-// Normaliza nome de bone: "mixamorig:Hips" / "mixamorigHips" → "Hips"
 export function canonicalBoneName(name) {
   if (!name) return name;
   let n = String(name);
@@ -64,6 +61,7 @@ function findBone(bonesMap, candidates) {
 
 async function loadAnyModel(filename) {
   const url = BASE + encodeURIComponent(filename).replace(/%2F/g, '/');
+  console.log(`[zombie-model] 🌐 Baixando ${url}`);
   if (/\.(glb|gltf)$/i.test(filename)) {
     const gltf = await gltfLoader.loadAsync(url);
     return { scene: gltf.scene, animations: gltf.animations || [] };
@@ -82,19 +80,22 @@ export async function preloadZombieModel() {
       const result = await loadAnyModel(filename);
       baseScene = result.scene;
 
-      // ── Renomeia TODOS os bones para a forma canônica ──
+      // Renomeia todos os bones para forma canônica
       const renamed = [];
+      const allBoneNames = [];
       baseScene.traverse(o => {
         if (!o.isBone) return;
+        allBoneNames.push(o.name);
         const canon = canonicalBoneName(o.name);
         if (canon && canon !== o.name) {
-          renamed.push(`${o.name} → ${canon}`);
           o.name = canon;
+          renamed.push(canon);
         }
       });
-      if (renamed.length) {
-        console.log(`[zombie-model] 🏷️ ${renamed.length} bones renomeados (ex: ${renamed.slice(0,3).join(', ')})`);
-      }
+
+      console.log(`[zombie-model] 🦴 ${allBoneNames.length} bones encontrados`);
+      console.log(`[zombie-model] 📋 Amostra de nomes ORIGINAIS:`, allBoneNames.slice(0, 8));
+      console.log(`[zombie-model] 📋 Amostra de nomes CANÔNICOS:`, renamed.slice(0, 8));
 
       // Sombras + materiais
       baseScene.traverse(o => {
@@ -112,25 +113,24 @@ export async function preloadZombieModel() {
         }
       });
 
-      // Diagnóstico
+      // Verifica quais bones essenciais foram encontrados
       const bonesMap = {};
-      let totalBones = 0;
-      baseScene.traverse(o => {
-        if (!o.isBone) return;
-        totalBones++;
-        bonesMap[o.name] = o;
-      });
-      console.log(`[zombie-model] ✅ ${filename} carregado (${totalBones} bones)`);
+      baseScene.traverse(o => { if (o.isBone) bonesMap[o.name] = o; });
 
       const missing = [];
+      const found = [];
       for (const [ourName, candidates] of Object.entries(BONE_CANDIDATES)) {
-        if (!findBone(bonesMap, candidates)) missing.push(ourName);
+        const hit = findBone(bonesMap, candidates);
+        if (hit) found.push(`${ourName}→${hit.name}`);
+        else missing.push(ourName);
       }
+
+      console.log(`[zombie-model] ✅ Bones essenciais: ${found.length}/${Object.keys(BONE_CANDIDATES).length}`);
       if (missing.length) {
-        console.warn(`[zombie-model] ⚠️ Bones não mapeados: ${missing.join(', ')}`);
-        console.warn('[zombie-model] Nomes disponíveis:', Object.keys(bonesMap).slice(0, 40).join(', '));
+        console.warn(`[zombie-model] ⚠️ FALTANDO: ${missing.join(', ')}`);
+        console.warn(`[zombie-model] 📋 Todos os bones disponíveis:`, Object.keys(bonesMap));
       } else {
-        console.log('[zombie-model] ✅ Todos os 17 bones mapeados');
+        console.log('[zombie-model] ✅ Todos os 17 bones mapeados:', found.join(', '));
       }
 
       loaded = true;
@@ -141,7 +141,7 @@ export async function preloadZombieModel() {
     }
   }
 
-  console.error('[zombie-model] ❌❌ NENHUM MODELO CARREGOU. Último erro:', lastError);
+  console.error('[zombie-model] ❌❌ NENHUM MODELO CARREGOU:', lastError);
   loaded = false;
   return null;
 }
@@ -150,13 +150,10 @@ export function isModelReady() { return loaded; }
 
 export function createZombieInstance() {
   if (!baseScene) return null;
-
   const clone = skeletonClone(baseScene);
 
   const bonesMap = {};
-  clone.traverse(o => {
-    if (o.isBone) bonesMap[o.name] = o;
-  });
+  clone.traverse(o => { if (o.isBone) bonesMap[o.name] = o; });
 
   const joints = {};
   for (const [ourName, candidates] of Object.entries(BONE_CANDIDATES)) {
