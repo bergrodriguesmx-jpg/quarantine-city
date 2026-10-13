@@ -1,6 +1,6 @@
 // ============================================================
-// zombie-types.js — v2
-// Velocidades rebalanceadas (runners menos absurdos)
+// zombie-types.js — v3
+// Adiciona comportamento especialista (ranged, suicide, etc)
 // ============================================================
 
 export const ZOMBIE_TYPES = {
@@ -16,7 +16,7 @@ export const ZOMBIE_TYPES = {
   },
   pt_donkey: {
     tier: 1, weight: 28, variant: 'donkey',
-    hpMul: 0.75, dmgMul: 0.85, speedMul: 1.20, xpMul: 1.30, coinMul: 1.30,  // era 1.35
+    hpMul: 0.75, dmgMul: 0.85, speedMul: 1.20, xpMul: 1.30, coinMul: 1.30,
     scale: 0.95, attackRange: 1.4, cooldown: 0.95,
     tint: 0xffeebb,
     skinPalette: [0x9E8B7A, 0x8B7A6A],
@@ -34,9 +34,13 @@ export const ZOMBIE_TYPES = {
   },
   runner: {
     tier: 1, weight: 6, variant: 'normal',
-    hpMul: 0.55, dmgMul: 0.75, speedMul: 1.55, xpMul: 1.50, coinMul: 1.70,  // era 2.20
+    hpMul: 0.55, dmgMul: 0.75, speedMul: 1.55, xpMul: 1.50, coinMul: 1.70,
     scale: 0.85, attackRange: 1.3, cooldown: 0.85,
     tint: 0xd0ffd0,
+    // 🎯 NOVO: comportamento especialista
+    behavior: 'runner',
+    sprintMultiplier: 1.4,
+    sprintRange: 12,       // começa a sprintar a esta distância
     skinPalette: [0xA0FFA0, 0x8DEE8D],
     shirtPalette: [0x1A1A1A],
     pantsPalette: [0x2C3E50],
@@ -71,23 +75,41 @@ export const ZOMBIE_TYPES = {
     shirtPalette: [0x34495E],
     pantsPalette: [0x1B2631],
   },
+
+  // 🎯 SPITTER: atira projétil tóxico, mantém distância
   spitter: {
     tier: 2, weight: 8, variant: 'normal',
     hpMul: 1.50, dmgMul: 0.90, speedMul: 0.80, xpMul: 3.00, coinMul: 3.00,
-    scale: 1.00, attackRange: 8.0, cooldown: 2.00,
+    scale: 1.00, attackRange: 12.0, cooldown: 2.00,
     tint: 0xaaffaa,
-    ranged: true, projectileType: 'tox',
+    behavior: 'spitter',
+    projectile: {
+      type: 'tox',
+      speed: 16,
+      damage: 22,
+      radius: 0.35,
+      arc: 0.15,           // leve arco
+      windupTime: 0.6,
+      preferredRange: 7,   // distância que tenta manter
+      minRange: 4,         // se player chegar perto, recua
+      maxRange: 14,        // atira até esta distância
+    },
     skinPalette: [0xA0FFA0, 0x88DD88],
     shirtPalette: [0x2A4A2A],
     pantsPalette: [0x1A2A1A],
   },
+
+  // 🎯 BOOMER: corre e explode
   boomer: {
     tier: 2, weight: 6, variant: 'normal',
     hpMul: 2.20, dmgMul: 0.60, speedMul: 1.15, xpMul: 3.20, coinMul: 3.20,
     scale: 1.10, attackRange: 1.5, cooldown: 1.20,
     tint: 0x66ff44,
+    behavior: 'boomer',
     explodesOnDeath: true,
-    explosionRadius: 4.0, explosionDamage: 60,
+    explosionRadius: 4.5,
+    explosionDamage: 75,
+    suicideRange: 1.8,       // explode ao chegar a esta distância
     skinPalette: [0x88FF66, 0x66DD44],
     shirtPalette: [0x1A2A1A],
     pantsPalette: [0x0A1A0A],
@@ -118,6 +140,9 @@ export const ZOMBIE_TYPES = {
     scale: 1.30, attackRange: 1.9, cooldown: 1.60,
     tint: 0x808080,
     knockbackResist: 0.7, heavySlam: true,
+    behavior: 'brute',
+    slamRadius: 3.5,
+    slamDamage: 45,
     skinPalette: [0x808080, 0x707070],
     shirtPalette: [0x0A0A0A],
     pantsPalette: [0x1A1A1A],
@@ -162,6 +187,7 @@ export function pickZombieType(wave) {
   const entries = Object.entries(ZOMBIE_TYPES)
     .filter(([, v]) => !v.boss && v.weight > 0 && v.tier <= maxTier);
 
+  // 🎯 Spawna boomers/spitters com mais frequência após wave 5
   const total = entries.reduce((s, [, v]) => s + v.weight, 0);
   let r = Math.random() * total;
   for (const [k, v] of entries) {
