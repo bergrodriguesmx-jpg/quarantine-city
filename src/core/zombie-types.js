@@ -1,7 +1,6 @@
 // ============================================================
-// zombie-types.js
-// Definição completa dos tipos de zumbi.
-// Cores/skins atualizadas para bater com os GLBs originais do ZB2.
+// zombie-types.js — v2
+// Velocidades rebalanceadas (runners menos absurdos)
 // ============================================================
 
 export const ZOMBIE_TYPES = {
@@ -17,7 +16,7 @@ export const ZOMBIE_TYPES = {
   },
   pt_donkey: {
     tier: 1, weight: 28, variant: 'donkey',
-    hpMul: 0.75, dmgMul: 0.85, speedMul: 1.35, xpMul: 1.30, coinMul: 1.30,
+    hpMul: 0.75, dmgMul: 0.85, speedMul: 1.20, xpMul: 1.30, coinMul: 1.30,  // era 1.35
     scale: 0.95, attackRange: 1.4, cooldown: 0.95,
     tint: 0xffeebb,
     skinPalette: [0x9E8B7A, 0x8B7A6A],
@@ -35,7 +34,7 @@ export const ZOMBIE_TYPES = {
   },
   runner: {
     tier: 1, weight: 6, variant: 'normal',
-    hpMul: 0.55, dmgMul: 0.75, speedMul: 2.20, xpMul: 1.50, coinMul: 1.70,
+    hpMul: 0.55, dmgMul: 0.75, speedMul: 1.55, xpMul: 1.50, coinMul: 1.70,  // era 2.20
     scale: 0.85, attackRange: 1.3, cooldown: 0.85,
     tint: 0xd0ffd0,
     skinPalette: [0xA0FFA0, 0x8DEE8D],
@@ -172,7 +171,6 @@ export function pickZombieType(wave) {
   return 'pt';
 }
 
-// Helper pra sortear cor de paleta
 export function pickFromPalette(palette, fallback) {
   if (!palette || palette.length === 0) return fallback;
   return palette[Math.floor(Math.random() * palette.length)];
