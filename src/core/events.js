@@ -1,5 +1,4 @@
-// Catálogo central de eventos. Adicione aqui ANTES de usar em qualquer lugar.
-// Regra: nunca escreva string crua de evento, sempre use Ev.X
+// Catálogo central de eventos.
 export const Ev = Object.freeze({
   // ---- Combate ----
   ATTACK:          'combat:attack',
@@ -52,4 +51,10 @@ export const Ev = Object.freeze({
   SURVIVAL_INFECTED:       'survival:infected',
   SURVIVAL_INFECTED_CURED: 'survival:infected_cured',
   SURVIVAL_BLEED_TICK:     'survival:bleed_tick',
+
+  // ---- 🎯 NOVOS: Especialistas ----
+  BOOMER_DETONATE:  'zombie:boomer_detonate',
+  SPITTER_FIRE:     'zombie:spitter_fire',
+  PERK_ACTIVATED:   'perk:activated',
+  POI_DISCOVERED:   'world:poi_discovered',
 });
