@@ -1,6 +1,5 @@
 // ============================================================
-// zombie-model.js — v2 (suporta GLB + FBX)
-// Tenta XBot.glb primeiro, cai pra XBot.fbx se não existir.
+// zombie-model.js — v3 (nomes de bones normalizados)
 // ============================================================
 
 import * as THREE from 'three';
@@ -12,12 +11,12 @@ const fbxLoader = new FBXLoader();
 const gltfLoader = new GLTFLoader();
 const BASE = 'assets/zombie-anim/';
 
-// Ordem de tentativa — GLB primeiro
 const MODEL_CANDIDATES = ['XBot.glb', 'XBot.fbx'];
 
 let baseScene = null;
 let loaded = false;
 
+// Mapa canônico → usado pra achar bone
 const BONE_CANDIDATES = {
   head:       ['Head'],
   neck:       ['Neck'],
@@ -38,17 +37,17 @@ const BONE_CANDIDATES = {
   footR:      ['RightFoot'],
 };
 
-function normalizeName(name) {
-  if (!name) return null;
-  let n = String(name).trim();
+// Normaliza nome de bone: "mixamorig:Hips" / "mixamorigHips" → "Hips"
+export function canonicalBoneName(name) {
+  if (!name) return name;
+  let n = String(name);
   const pipe = n.lastIndexOf('|');
   if (pipe >= 0) n = n.substring(pipe + 1);
   const colon = n.indexOf(':');
   if (colon >= 0) n = n.substring(colon + 1);
+  n = n.replace(/^mixamorig[:_]?/i, '');
   const dot = n.indexOf('.');
   if (dot >= 0) n = n.substring(0, dot);
-  if (n.startsWith('mixamorig')) n = n.substring('mixamorig'.length);
-  if (n.startsWith('_')) n = n.substring(1);
   return n;
 }
 
@@ -63,22 +62,16 @@ function findBone(bonesMap, candidates) {
   return null;
 }
 
-// ── Carrega um arquivo individual (GLB ou FBX) ────────────────
 async function loadAnyModel(filename) {
   const url = BASE + encodeURIComponent(filename).replace(/%2F/g, '/');
-  if (filename.toLowerCase().endsWith('.glb') || filename.toLowerCase().endsWith('.gltf')) {
+  if (/\.(glb|gltf)$/i.test(filename)) {
     const gltf = await gltfLoader.loadAsync(url);
     return { scene: gltf.scene, animations: gltf.animations || [] };
-  } else if (filename.toLowerCase().endsWith('.fbx')) {
-    const fbx = await fbxLoader.loadAsync(url);
-    return { scene: fbx.scene, animations: fbx.animations || [] };
   }
-  throw new Error('Formato desconhecido: ' + filename);
+  const fbx = await fbxLoader.loadAsync(url);
+  return { scene: fbx.scene, animations: fbx.animations || [] };
 }
 
-// ══════════════════════════════════════════════
-// PRELOAD
-// ══════════════════════════════════════════════
 export async function preloadZombieModel() {
   if (loaded) return baseScene;
 
@@ -89,6 +82,21 @@ export async function preloadZombieModel() {
       const result = await loadAnyModel(filename);
       baseScene = result.scene;
 
+      // ── Renomeia TODOS os bones para a forma canônica ──
+      const renamed = [];
+      baseScene.traverse(o => {
+        if (!o.isBone) return;
+        const canon = canonicalBoneName(o.name);
+        if (canon && canon !== o.name) {
+          renamed.push(`${o.name} → ${canon}`);
+          o.name = canon;
+        }
+      });
+      if (renamed.length) {
+        console.log(`[zombie-model] 🏷️ ${renamed.length} bones renomeados (ex: ${renamed.slice(0,3).join(', ')})`);
+      }
+
+      // Sombras + materiais
       baseScene.traverse(o => {
         if (o.isMesh) {
           o.castShadow = true;
@@ -105,21 +113,18 @@ export async function preloadZombieModel() {
       });
 
       // Diagnóstico
-      const rawNames = [];
       const bonesMap = {};
+      let totalBones = 0;
       baseScene.traverse(o => {
         if (!o.isBone) return;
-        rawNames.push(o.name);
-        const n = normalizeName(o.name);
-        if (n) bonesMap[n] = o;
+        totalBones++;
+        bonesMap[o.name] = o;
       });
-
-      console.log(`[zombie-model] ✅ ${filename} carregado (${rawNames.length} bones)`);
+      console.log(`[zombie-model] ✅ ${filename} carregado (${totalBones} bones)`);
 
       const missing = [];
       for (const [ourName, candidates] of Object.entries(BONE_CANDIDATES)) {
-        const found = findBone(bonesMap, candidates);
-        if (!found) missing.push(ourName);
+        if (!findBone(bonesMap, candidates)) missing.push(ourName);
       }
       if (missing.length) {
         console.warn(`[zombie-model] ⚠️ Bones não mapeados: ${missing.join(', ')}`);
@@ -137,16 +142,12 @@ export async function preloadZombieModel() {
   }
 
   console.error('[zombie-model] ❌❌ NENHUM MODELO CARREGOU. Último erro:', lastError);
-  console.error('[zombie-model] Certifique-se de que XBot.glb (ou XBot.fbx) está em assets/zombie-anim/');
   loaded = false;
   return null;
 }
 
 export function isModelReady() { return loaded; }
 
-// ══════════════════════════════════════════════
-// INSTÂNCIA
-// ══════════════════════════════════════════════
 export function createZombieInstance() {
   if (!baseScene) return null;
 
@@ -154,9 +155,7 @@ export function createZombieInstance() {
 
   const bonesMap = {};
   clone.traverse(o => {
-    if (!o.isBone) return;
-    const norm = normalizeName(o.name);
-    if (norm) bonesMap[norm] = o;
+    if (o.isBone) bonesMap[o.name] = o;
   });
 
   const joints = {};
@@ -164,14 +163,12 @@ export function createZombieInstance() {
     joints[ourName] = findBone(bonesMap, candidates) || null;
   }
 
-  // Escala pra 1.8m
   clone.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(clone);
   const height = box.max.y - box.min.y;
   const scale = height > 0.1 ? 1.8 / height : 1;
   clone.scale.setScalar(scale);
 
-  // Pés no chão
   clone.updateMatrixWorld(true);
   const box2 = new THREE.Box3().setFromObject(clone);
   clone.position.y = -box2.min.y;
