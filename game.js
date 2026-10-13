@@ -44,40 +44,33 @@ window.ZOMBIE_TYPES_FROM_MODULE = ZOMBIE_TYPES;
 const controls = getControls();
 
 // ════════ PRECACHE DOS ASSETS ════════
-// Ordem: armas primeiro (usadas desde o frame 1), zumbis depois.
-// Cada etapa é isolada pra que uma falha não derrube as próximas.
 window.__assetsReady = false;
 (async () => {
   console.log('[game] 📦 Carregando assets extraídos...');
 
-  // ── 1. ARMAS ──
   try {
     await precacheAllWeaponGLBs();
     console.log('[game] ✅ Armas prontas');
   } catch (e) { console.warn('[game] ⚠️ Erro nas armas:', e); }
 
-  // ── 2. GIBLETS ──
   try {
     await preloadGibs();
     await preloadGibGLBs();
     console.log('[game] ✅ Giblets prontos');
   } catch (e) { console.warn('[game] ⚠️ Erro nos giblets:', e); }
 
-  // ── 3. XBOT ──
   try {
     await preloadZombieModel();
     if (isModelReady()) console.log('[game] ✅ XBot pronto');
     else console.error('[game] ❌ XBot NÃO carregou — zumbis vão usar fallback');
   } catch (e) { console.warn('[game] ⚠️ Erro no XBot:', e); }
 
-  // ── 4. ANIMAÇÕES ──
   try {
     await preloadZombieAnims();
     if (hasZombieAnims()) console.log('[game] ✅ Animações prontas');
     else console.warn('[game] ⚠️ Sem animações Mixamo');
   } catch (e) { console.warn('[game] ⚠️ Erro nas animações:', e); }
 
-  // ── 5. NPCs ──
   try {
     await preloadCharacters();
     console.log('[game] ✅ Personagens prontos');
@@ -895,6 +888,7 @@ function proceduralFallback(opts = {}) {
 
 // ============================================================
 // CREATE ZOMBIE MESH
+// 🔧 PATCH 1: só usa XBot se todos os joints essenciais existirem
 // ============================================================
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
@@ -903,7 +897,13 @@ function createZombieMesh(opts = {}) {
 
   if (isModelReady()) {
     const inst = createZombieInstance();
-    if (inst) {
+
+    // 🎯 Guarda crítica: só usa XBot se TODOS os joints essenciais existirem
+    const jointsValid = inst && inst.joints
+      && inst.joints.head && inst.joints.pelvis
+      && inst.joints.spineLower && inst.joints.spineUpper;
+
+    if (jointsValid) {
       const skinPal = (type.skinPalette && type.skinPalette.length > 0)
         ? type.skinPalette
         : [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
@@ -939,6 +939,8 @@ function createZombieMesh(opts = {}) {
       };
 
       return inst.scene;
+    } else {
+      console.warn('[game] ⚠️ XBot sem joints válidos — usando procedural');
     }
   }
 
@@ -1550,6 +1552,7 @@ function raycastZombie(origin, dir, maxDist, candidates) {
 
     if (z.mesh.userData.isXBot) {
       const joints = z.mesh.userData.joints;
+      if (!joints || !joints.head) continue;
       const parts = [
         { key: 'head', bone: joints.head, radius: 0.16 },
         { key: 'torso', bone: joints.spineUpper, radius: 0.28 },
@@ -2892,6 +2895,11 @@ function updateZombies(dt) {
     const anim = z.anim;
     const alerted = z.alertedUntil > now;
 
+    // 🔧 PATCH 2: só anima se o zumbi tem todos os joints essenciais
+    const hasJoints = joints && joints.head && joints.pelvis
+                   && joints.spineLower && joints.spineUpper
+                   && joints.spineUpper && joints.neck;
+
     const hpFrac = z.health / z.maxHealth;
     const hpSpeedMul = 0.6 + 0.4 * Math.max(0, Math.min(1, (hpFrac - 0.5) / 0.25));
 
@@ -3017,205 +3025,211 @@ function updateZombies(dt) {
     z._prevX = z.mesh.position.x;
     z._prevZ = z.mesh.position.z;
 
-    const speedNorm = Math.min(1.5, realSpeed / Math.max(0.01, z.speed));
-    const walkStyle = z.walkStyle;
-    const shuffling = dist < 3.0;
-
-    const accelX = (z.vx - anim.bodyAccelX) / Math.max(dt, 0.001);
-    const accelZ = (z.vz - anim.bodyAccelZ) / Math.max(dt, 0.001);
-    anim.bodyAccelX = z.vx;
-    anim.bodyAccelZ = z.vz;
-    anim.bankX = smoothDamp(anim.bankX, Math.max(-1, Math.min(1, accelX * 0.03)), 8, dt);
-    anim.bankZ = smoothDamp(anim.bankZ, Math.max(-1, Math.min(1, accelZ * 0.03)), 8, dt);
-
-    const strideLength = 0.85;
-    const idealCadence = (realSpeed / strideLength) * Math.PI * 2 + 0.4;
-    anim.cadenceSmooth = smoothDamp(anim.cadenceSmooth, idealCadence, 6, dt);
-    const styleMul = (1 - walkStyle*0.35) * (shuffling ? 1.35 : 1.0) * (alerted ? 1.15 : 1);
-    anim.walkPhaseSmooth += dt * anim.cadenceSmooth * styleMul * emerge;
-    const phase = anim.walkPhaseSmooth;
-
-    anim.crawlPhase += dt * (anim.cadenceSmooth * 0.55 + 1.4) * emerge;
-    const crawlCycle = Math.sin(anim.crawlPhase);
-    const crawlCycle2 = Math.sin(anim.crawlPhase + Math.PI);
-
-    const idleTarget = 1 - smoothstep(Math.min(1, realSpeed / 0.6));
-    anim.idleBlend = smoothDamp(anim.idleBlend, idleTarget, 3, dt);
-    const idle = anim.idleBlend;
-
-    z.idlePhase += dt * 1.4;
-    const breathe = Math.sin(z.idlePhase) * 0.5 + Math.sin(z.idlePhase * 0.37 + 1.3) * 0.5;
-    const idleSway = Math.sin(z.idlePhase * 0.6 + walkStyle * 6.28) * 0.015;
-
-    const legLPhase = (phase / (Math.PI * 2)) % 1;
-    const legRPhase = ((phase + Math.PI) / (Math.PI * 2)) % 1;
-    const inStanceL = (legLPhase > 0.35 && legLPhase < 0.65) ? 1 : 0;
-    const inStanceR = (legRPhase > 0.35 && legRPhase < 0.65) ? 1 : 0;
-    anim.plantPhaseL = smoothDamp(anim.plantPhaseL, inStanceL, 18, dt);
-    anim.plantPhaseR = smoothDamp(anim.plantPhaseR, inStanceR, 18, dt);
-
-    const stepL = Math.sin(phase), stepR = Math.sin(phase + Math.PI);
-    const speedAmp = 0.35 + smoothstep(Math.min(1, speedNorm)) * 0.65;
-    const legAmp = (0.5 + walkStyle * 0.2) * speedAmp * (1 + hunt * 0.15);
-    let legL = stepL * legAmp;
-    let legR = stepR * legAmp;
-
-    let thighLTarget = legL, thighRTarget = legR;
-    const kneeAmp = 0.85 * (0.4 + speedNorm * 0.6);
-    thighLTarget *= (1 - anim.plantPhaseL * 0.55);
-    thighRTarget *= (1 - anim.plantPhaseR * 0.55);
-    let kneeLTarget = Math.max(0, stepL) * kneeAmp + 0.06 + walkStyle * 0.18;
-    let kneeRTarget = Math.max(0, stepR) * kneeAmp + 0.06 + walkStyle * 0.18;
-    let footLTarget = -stepL * 0.35 * (1 + walkStyle * 0.4);
-    let footRTarget = -stepR * 0.35 * (1 + walkStyle * 0.4);
-    footLTarget *= (1 - anim.plantPhaseL * 0.7);
-    footRTarget *= (1 - anim.plantPhaseR * 0.7);
-
-    let pelvisRollTarget = -Math.cos(phase) * 0.09 * speedNorm;
-    let pelvisTwistTarget = stepL * 0.18 * speedNorm;
-    let pelvisBobTarget = -Math.abs(Math.sin(phase)) * 0.04 * speedNorm - 0.008 * speedNorm;
-    let pelvisYTmp = P_PELVIS_Y;
-    let spineTwistTarget = -stepL * 0.13 * speedNorm;
-    const leanBase = hpFrac < 0.5 ? 0.22 : 0.10;
-    let spineLeanTarget = leanBase + (dist < 3 ? 0.10 : 0) + speedNorm * 0.05;
-    let spineSideTarget = Math.cos(phase) * 0.06 * speedNorm;
-    let spineRollTarget = 0;
-    let headRollTarget = z.headLoll + Math.cos(phase) * 0.07 * speedNorm + anim.bankZ * 2.0;
-    let headTwistTarget = spineTwistTarget * 0.4 + stepL * 0.05 * speedNorm;
-    let headPitchTarget = z.headPitchBase + speedNorm * 0.10 + (dist < 3 ? 0.15 : 0);
-
-    if (crawl > 0.001) {
-      pelvisYTmp = P_PELVIS_Y * (1 - crawl) + 0.28 * crawl;
-      spineLeanTarget = spineLeanTarget * (1 - crawl) + 1.35 * crawl;
-      thighLTarget = thighLTarget * (1 - crawl) + (-0.15) * crawl;
-      thighRTarget = thighRTarget * (1 - crawl) + (-0.15) * crawl;
-      kneeLTarget = kneeLTarget * (1 - crawl) + 0.35 * crawl;
-      kneeRTarget = kneeRTarget * (1 - crawl) + 0.35 * crawl;
-      footLTarget = footLTarget * (1 - crawl) + 0.5 * crawl;
-      footRTarget = footRTarget * (1 - crawl) + 0.5 * crawl;
-      pelvisBobTarget = pelvisBobTarget * (1 - crawl) + (crawlCycle * 0.03) * crawl;
-      headPitchTarget = headPitchTarget * (1 - crawl) + (-0.5 + crawlCycle * 0.05) * crawl;
-    }
-
-    let armLXTarget, armRXTarget;
-    if (z.attackWindupActive) {
-      const wElapsed = now - (z.attackWindupEnd - 0.30);
-      const wT = Math.max(0, Math.min(1, wElapsed / 0.30));
-      const windupArm = -0.6 - wT * 0.9;
-      armLXTarget = windupArm;
-      armRXTarget = windupArm;
-      spineLeanTarget -= wT * 0.15 * (1 - crawl);
-      headPitchTarget += wT * 0.20 * (1 - crawl);
-    } else if (anim.attackPhase === 3) {
-      const recT = Math.min(1, (now - anim.attackPhaseT) / 0.25);
-      const recArm = -1.2 + recT * 1.2;
-      armLXTarget = Math.max(-1.55, recArm);
-      armRXTarget = Math.max(-1.55, recArm);
+    // ── Animação ──────────────────────────────────────────
+    if (!hasJoints) {
+      // Zumbi sem skeleton válido: só atualiza mixer (se houver), ignora o resto
+      if (z.mixer) updateZombieAnim(z, dt);
     } else {
-      const reaching = dist < 3.5 && !staggering;
-      const armAmp = 0.5 * (0.4 + speedNorm * 0.6);
-      if (reaching) {
-        const reach = -1.55;
-        armLXTarget = reach + Math.sin(phase * 2.1 + walkStyle * 6.28) * 0.12;
-        armRXTarget = reach + Math.sin(phase * 1.8 + walkStyle * 5.1 + 1.7) * 0.12;
-      } else {
-        armLXTarget = -stepL * armAmp + z.armDroopL;
-        armRXTarget = -stepR * armAmp + z.armDroopR;
+      const speedNorm = Math.min(1.5, realSpeed / Math.max(0.01, z.speed));
+      const walkStyle = z.walkStyle;
+      const shuffling = dist < 3.0;
+
+      const accelX = (z.vx - anim.bodyAccelX) / Math.max(dt, 0.001);
+      const accelZ = (z.vz - anim.bodyAccelZ) / Math.max(dt, 0.001);
+      anim.bodyAccelX = z.vx;
+      anim.bodyAccelZ = z.vz;
+      anim.bankX = smoothDamp(anim.bankX, Math.max(-1, Math.min(1, accelX * 0.03)), 8, dt);
+      anim.bankZ = smoothDamp(anim.bankZ, Math.max(-1, Math.min(1, accelZ * 0.03)), 8, dt);
+
+      const strideLength = 0.85;
+      const idealCadence = (realSpeed / strideLength) * Math.PI * 2 + 0.4;
+      anim.cadenceSmooth = smoothDamp(anim.cadenceSmooth, idealCadence, 6, dt);
+      const styleMul = (1 - walkStyle*0.35) * (shuffling ? 1.35 : 1.0) * (alerted ? 1.15 : 1);
+      anim.walkPhaseSmooth += dt * anim.cadenceSmooth * styleMul * emerge;
+      const phase = anim.walkPhaseSmooth;
+
+      anim.crawlPhase += dt * (anim.cadenceSmooth * 0.55 + 1.4) * emerge;
+      const crawlCycle = Math.sin(anim.crawlPhase);
+      const crawlCycle2 = Math.sin(anim.crawlPhase + Math.PI);
+
+      const idleTarget = 1 - smoothstep(Math.min(1, realSpeed / 0.6));
+      anim.idleBlend = smoothDamp(anim.idleBlend, idleTarget, 3, dt);
+      const idle = anim.idleBlend;
+
+      z.idlePhase += dt * 1.4;
+      const breathe = Math.sin(z.idlePhase) * 0.5 + Math.sin(z.idlePhase * 0.37 + 1.3) * 0.5;
+      const idleSway = Math.sin(z.idlePhase * 0.6 + walkStyle * 6.28) * 0.015;
+
+      const legLPhase = (phase / (Math.PI * 2)) % 1;
+      const legRPhase = ((phase + Math.PI) / (Math.PI * 2)) % 1;
+      const inStanceL = (legLPhase > 0.35 && legLPhase < 0.65) ? 1 : 0;
+      const inStanceR = (legRPhase > 0.35 && legRPhase < 0.65) ? 1 : 0;
+      anim.plantPhaseL = smoothDamp(anim.plantPhaseL, inStanceL, 18, dt);
+      anim.plantPhaseR = smoothDamp(anim.plantPhaseR, inStanceR, 18, dt);
+
+      const stepL = Math.sin(phase), stepR = Math.sin(phase + Math.PI);
+      const speedAmp = 0.35 + smoothstep(Math.min(1, speedNorm)) * 0.65;
+      const legAmp = (0.5 + walkStyle * 0.2) * speedAmp * (1 + hunt * 0.15);
+      let legL = stepL * legAmp;
+      let legR = stepR * legAmp;
+
+      let thighLTarget = legL, thighRTarget = legR;
+      const kneeAmp = 0.85 * (0.4 + speedNorm * 0.6);
+      thighLTarget *= (1 - anim.plantPhaseL * 0.55);
+      thighRTarget *= (1 - anim.plantPhaseR * 0.55);
+      let kneeLTarget = Math.max(0, stepL) * kneeAmp + 0.06 + walkStyle * 0.18;
+      let kneeRTarget = Math.max(0, stepR) * kneeAmp + 0.06 + walkStyle * 0.18;
+      let footLTarget = -stepL * 0.35 * (1 + walkStyle * 0.4);
+      let footRTarget = -stepR * 0.35 * (1 + walkStyle * 0.4);
+      footLTarget *= (1 - anim.plantPhaseL * 0.7);
+      footRTarget *= (1 - anim.plantPhaseR * 0.7);
+
+      let pelvisRollTarget = -Math.cos(phase) * 0.09 * speedNorm;
+      let pelvisTwistTarget = stepL * 0.18 * speedNorm;
+      let pelvisBobTarget = -Math.abs(Math.sin(phase)) * 0.04 * speedNorm - 0.008 * speedNorm;
+      let pelvisYTmp = P_PELVIS_Y;
+      let spineTwistTarget = -stepL * 0.13 * speedNorm;
+      const leanBase = hpFrac < 0.5 ? 0.22 : 0.10;
+      let spineLeanTarget = leanBase + (dist < 3 ? 0.10 : 0) + speedNorm * 0.05;
+      let spineSideTarget = Math.cos(phase) * 0.06 * speedNorm;
+      let spineRollTarget = 0;
+      let headRollTarget = z.headLoll + Math.cos(phase) * 0.07 * speedNorm + anim.bankZ * 2.0;
+      let headTwistTarget = spineTwistTarget * 0.4 + stepL * 0.05 * speedNorm;
+      let headPitchTarget = z.headPitchBase + speedNorm * 0.10 + (dist < 3 ? 0.15 : 0);
+
+      if (crawl > 0.001) {
+        pelvisYTmp = P_PELVIS_Y * (1 - crawl) + 0.28 * crawl;
+        spineLeanTarget = spineLeanTarget * (1 - crawl) + 1.35 * crawl;
+        thighLTarget = thighLTarget * (1 - crawl) + (-0.15) * crawl;
+        thighRTarget = thighRTarget * (1 - crawl) + (-0.15) * crawl;
+        kneeLTarget = kneeLTarget * (1 - crawl) + 0.35 * crawl;
+        kneeRTarget = kneeRTarget * (1 - crawl) + 0.35 * crawl;
+        footLTarget = footLTarget * (1 - crawl) + 0.5 * crawl;
+        footRTarget = footRTarget * (1 - crawl) + 0.5 * crawl;
+        pelvisBobTarget = pelvisBobTarget * (1 - crawl) + (crawlCycle * 0.03) * crawl;
+        headPitchTarget = headPitchTarget * (1 - crawl) + (-0.5 + crawlCycle * 0.05) * crawl;
       }
-    }
 
-    if (crawl > 0.001) {
-      const crawlArmL = -1.9 + crawlCycle * 0.9;
-      const crawlArmR = -1.9 + crawlCycle2 * 0.9;
-      armLXTarget = armLXTarget * (1 - crawl) + crawlArmL * crawl;
-      armRXTarget = armRXTarget * (1 - crawl) + crawlArmR * crawl;
-    }
+      let armLXTarget, armRXTarget;
+      if (z.attackWindupActive) {
+        const wElapsed = now - (z.attackWindupEnd - 0.30);
+        const wT = Math.max(0, Math.min(1, wElapsed / 0.30));
+        const windupArm = -0.6 - wT * 0.9;
+        armLXTarget = windupArm;
+        armRXTarget = windupArm;
+        spineLeanTarget -= wT * 0.15 * (1 - crawl);
+        headPitchTarget += wT * 0.20 * (1 - crawl);
+      } else if (anim.attackPhase === 3) {
+        const recT = Math.min(1, (now - anim.attackPhaseT) / 0.25);
+        const recArm = -1.2 + recT * 1.2;
+        armLXTarget = Math.max(-1.55, recArm);
+        armRXTarget = Math.max(-1.55, recArm);
+      } else {
+        const reaching = dist < 3.5 && !staggering;
+        const armAmp = 0.5 * (0.4 + speedNorm * 0.6);
+        if (reaching) {
+          const reach = -1.55;
+          armLXTarget = reach + Math.sin(phase * 2.1 + walkStyle * 6.28) * 0.12;
+          armRXTarget = reach + Math.sin(phase * 1.8 + walkStyle * 5.1 + 1.7) * 0.12;
+        } else {
+          armLXTarget = -stepL * armAmp + z.armDroopL;
+          armRXTarget = -stepR * armAmp + z.armDroopR;
+        }
+      }
 
-    const reaching2 = dist < 3.5 && !staggering && !z.attackWindupActive;
-    let elbowLXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armLXTarget) * 0.4;
-    let elbowRXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armRXTarget) * 0.4;
+      if (crawl > 0.001) {
+        const crawlArmL = -1.9 + crawlCycle * 0.9;
+        const crawlArmR = -1.9 + crawlCycle2 * 0.9;
+        armLXTarget = armLXTarget * (1 - crawl) + crawlArmL * crawl;
+        armRXTarget = armRXTarget * (1 - crawl) + crawlArmR * crawl;
+      }
 
-    if (crawl > 0.001) {
-      const crawlElbowL = -0.2 - Math.max(0, crawlCycle) * -0.5;
-      const crawlElbowR = -0.2 - Math.max(0, crawlCycle2) * -0.5;
-      elbowLXTarget = elbowLXTarget * (1 - crawl) + crawlElbowL * crawl;
-      elbowRXTarget = elbowRXTarget * (1 - crawl) + crawlElbowR * crawl;
-    }
+      const reaching2 = dist < 3.5 && !staggering && !z.attackWindupActive;
+      let elbowLXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armLXTarget) * 0.4;
+      let elbowRXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armRXTarget) * 0.4;
 
-    if (idle > 0.01 && crawl < 0.5) {
-      const inv = (1 - idle) * (1 - crawl);
-      spineLeanTarget = spineLeanTarget * (1 - inv) + (0.06 + breathe * 0.02) * inv;
-      spineSideTarget = spineSideTarget * (1 - inv) + idleSway * inv;
-      spineTwistTarget *= (1 - inv);
-      headTwistTarget = headTwistTarget * (1 - inv) + Math.sin(z.idlePhase * 0.4) * 0.15 * inv;
-      headPitchTarget = headPitchTarget * (1 - inv) + (z.headPitchBase + breathe * 0.03) * inv;
-      armLXTarget = armLXTarget * (1 - inv) + (z.armDroopL + breathe * 0.02) * inv;
-      armRXTarget = armRXTarget * (1 - inv) + (z.armDroopR + breathe * 0.02) * inv;
-      pelvisBobTarget = pelvisBobTarget * (1 - inv) + breathe * 0.008 * inv;
-    }
-    if (hunt > 0.01 && !z.attackWindupActive) {
-      spineLeanTarget -= hunt * 0.08 * (1 - crawl);
-      headPitchTarget += hunt * 0.25 * (1 - crawl);
-      armLXTarget -= hunt * 0.25 * (1 - crawl);
-      armRXTarget -= hunt * 0.25 * (1 - crawl);
-    }
+      if (crawl > 0.001) {
+        const crawlElbowL = -0.2 - Math.max(0, crawlCycle) * -0.5;
+        const crawlElbowR = -0.2 - Math.max(0, crawlCycle2) * -0.5;
+        elbowLXTarget = elbowLXTarget * (1 - crawl) + crawlElbowL * crawl;
+        elbowRXTarget = elbowRXTarget * (1 - crawl) + crawlElbowR * crawl;
+      }
 
-    if (z.mixer) {
-      updateZombieAnim(z, dt);
-      handleZombieAnimState(z, realSpeed);
-    } else if (skipVisual) {
-      joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
-    } else {
-      springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
-      springStep(anim, 'bankZ', -z.yawVel*0.05*speedNorm, K_BANK, C_BANK, dt);
-      springStep(anim, 'thighLX', thighLTarget, K_THIGH, C_THIGH, dt);
-      springStep(anim, 'thighRX', thighRTarget, K_THIGH, C_THIGH, dt);
-      springStep(anim, 'kneeLX', kneeLTarget, K_KNEE, C_KNEE, dt);
-      springStep(anim, 'kneeRX', kneeRTarget, K_KNEE, C_KNEE, dt);
-      springStep(anim, 'footLX', footLTarget, K_FOOT, C_FOOT, dt);
-      springStep(anim, 'footRX', footRTarget, K_FOOT, C_FOOT, dt);
-      springStep(anim, 'pelvisRoll', pelvisRollTarget, K_PELVIS, C_PELVIS, dt);
-      springStep(anim, 'pelvisTwist', pelvisTwistTarget, K_PELVIS, C_PELVIS, dt);
-      springStep(anim, 'pelvisBob', pelvisBobTarget, K_PELVIS, C_PELVIS, dt);
-      springStep(anim, 'spineTwist', spineTwistTarget, K_SPINE, C_SPINE, dt);
-      springStep(anim, 'spineLean', spineLeanTarget, K_SPINE, C_SPINE, dt);
-      springStep(anim, 'spineRoll', spineRollTarget, K_SPINE, C_SPINE, dt);
-      springStep(anim, 'spineSide', spineSideTarget, K_SPINE, C_SPINE, dt);
-      springStep(anim, 'headTwist', headTwistTarget, K_HEAD, C_HEAD, dt);
-      springStep(anim, 'headRoll', headRollTarget, K_HEAD*0.7, C_HEAD, dt);
-      springStep(anim, 'headPitch', headPitchTarget, K_HEAD, C_HEAD, dt);
-      springStep(anim, 'armLX', armLXTarget, K_ARM, C_ARM, dt);
-      springStep(anim, 'armRX', armRXTarget, K_ARM, C_ARM, dt);
-      springStep(anim, 'elbowLX', elbowLXTarget, K_ELBOW, C_ELBOW, dt);
-      springStep(anim, 'elbowRX', elbowRXTarget, K_ELBOW, C_ELBOW, dt);
+      if (idle > 0.01 && crawl < 0.5) {
+        const inv = (1 - idle) * (1 - crawl);
+        spineLeanTarget = spineLeanTarget * (1 - inv) + (0.06 + breathe * 0.02) * inv;
+        spineSideTarget = spineSideTarget * (1 - inv) + idleSway * inv;
+        spineTwistTarget *= (1 - inv);
+        headTwistTarget = headTwistTarget * (1 - inv) + Math.sin(z.idlePhase * 0.4) * 0.15 * inv;
+        headPitchTarget = headPitchTarget * (1 - inv) + (z.headPitchBase + breathe * 0.03) * inv;
+        armLXTarget = armLXTarget * (1 - inv) + (z.armDroopL + breathe * 0.02) * inv;
+        armRXTarget = armRXTarget * (1 - inv) + (z.armDroopR + breathe * 0.02) * inv;
+        pelvisBobTarget = pelvisBobTarget * (1 - inv) + breathe * 0.008 * inv;
+      }
+      if (hunt > 0.01 && !z.attackWindupActive) {
+        spineLeanTarget -= hunt * 0.08 * (1 - crawl);
+        headPitchTarget += hunt * 0.25 * (1 - crawl);
+        armLXTarget -= hunt * 0.25 * (1 - crawl);
+        armRXTarget -= hunt * 0.25 * (1 - crawl);
+      }
 
-      joints.pelvis.rotation.z = anim.pelvisRoll;
-      joints.pelvis.rotation.y = anim.pelvisTwist;
-      joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
-      joints.spineLower.rotation.x = anim.spineLean*0.4;
-      joints.spineLower.rotation.z = anim.spineRoll*0.4 + anim.spineSide*0.3 + anim.bankZ;
-      joints.spineUpper.rotation.y = anim.spineTwist;
-      joints.spineUpper.rotation.x = anim.spineLean*0.6;
-      joints.spineUpper.rotation.z = anim.spineRoll*0.6 + anim.spineSide*0.7 + anim.bankZ*0.5;
-      joints.neck.rotation.y = anim.headTwist*0.4;
-      joints.neck.rotation.x = anim.headPitch*0.3;
-      joints.head.rotation.y = anim.headTwistLag;
-      joints.head.rotation.z = anim.headRollLag;
-      joints.head.rotation.x = anim.headPitchLag;
-      joints.shoulderL.rotation.x = anim.armLX;
-      joints.shoulderR.rotation.x = anim.armRX;
-      joints.elbowL.rotation.x = anim.elbowLX;
-      joints.elbowR.rotation.x = anim.elbowRX;
-      joints.thighL.rotation.x = anim.thighLX;
-      joints.thighR.rotation.x = anim.thighRX;
-      joints.kneeL.rotation.x = anim.kneeLX;
-      joints.kneeR.rotation.x = anim.kneeRX;
-      joints.footL.rotation.x = anim.footLX;
-      joints.footR.rotation.x = anim.footRX;
+      if (z.mixer) {
+        updateZombieAnim(z, dt);
+        handleZombieAnimState(z, realSpeed);
+      } else if (skipVisual) {
+        joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
+      } else {
+        springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
+        springStep(anim, 'bankZ', -z.yawVel*0.05*speedNorm, K_BANK, C_BANK, dt);
+        springStep(anim, 'thighLX', thighLTarget, K_THIGH, C_THIGH, dt);
+        springStep(anim, 'thighRX', thighRTarget, K_THIGH, C_THIGH, dt);
+        springStep(anim, 'kneeLX', kneeLTarget, K_KNEE, C_KNEE, dt);
+        springStep(anim, 'kneeRX', kneeRTarget, K_KNEE, C_KNEE, dt);
+        springStep(anim, 'footLX', footLTarget, K_FOOT, C_FOOT, dt);
+        springStep(anim, 'footRX', footRTarget, K_FOOT, C_FOOT, dt);
+        springStep(anim, 'pelvisRoll', pelvisRollTarget, K_PELVIS, C_PELVIS, dt);
+        springStep(anim, 'pelvisTwist', pelvisTwistTarget, K_PELVIS, C_PELVIS, dt);
+        springStep(anim, 'pelvisBob', pelvisBobTarget, K_PELVIS, C_PELVIS, dt);
+        springStep(anim, 'spineTwist', spineTwistTarget, K_SPINE, C_SPINE, dt);
+        springStep(anim, 'spineLean', spineLeanTarget, K_SPINE, C_SPINE, dt);
+        springStep(anim, 'spineRoll', spineRollTarget, K_SPINE, C_SPINE, dt);
+        springStep(anim, 'spineSide', spineSideTarget, K_SPINE, C_SPINE, dt);
+        springStep(anim, 'headTwist', headTwistTarget, K_HEAD, C_HEAD, dt);
+        springStep(anim, 'headRoll', headRollTarget, K_HEAD*0.7, C_HEAD, dt);
+        springStep(anim, 'headPitch', headPitchTarget, K_HEAD, C_HEAD, dt);
+        springStep(anim, 'armLX', armLXTarget, K_ARM, C_ARM, dt);
+        springStep(anim, 'armRX', armRXTarget, K_ARM, C_ARM, dt);
+        springStep(anim, 'elbowLX', elbowLXTarget, K_ELBOW, C_ELBOW, dt);
+        springStep(anim, 'elbowRX', elbowRXTarget, K_ELBOW, C_ELBOW, dt);
 
-      applyLookAt(z, joints, player, dt, alerted);
-      applyFootIK(z, joints, anim, dt);
-      applyBodyLean(z, joints, player, dt, alerted);
+        joints.pelvis.rotation.z = anim.pelvisRoll;
+        joints.pelvis.rotation.y = anim.pelvisTwist;
+        joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
+        joints.spineLower.rotation.x = anim.spineLean*0.4;
+        joints.spineLower.rotation.z = anim.spineRoll*0.4 + anim.spineSide*0.3 + anim.bankZ;
+        joints.spineUpper.rotation.y = anim.spineTwist;
+        joints.spineUpper.rotation.x = anim.spineLean*0.6;
+        joints.spineUpper.rotation.z = anim.spineRoll*0.6 + anim.spineSide*0.7 + anim.bankZ*0.5;
+        joints.neck.rotation.y = anim.headTwist*0.4;
+        joints.neck.rotation.x = anim.headPitch*0.3;
+        joints.head.rotation.y = anim.headTwistLag;
+        joints.head.rotation.z = anim.headRollLag;
+        joints.head.rotation.x = anim.headPitchLag;
+        joints.shoulderL.rotation.x = anim.armLX;
+        joints.shoulderR.rotation.x = anim.armRX;
+        joints.elbowL.rotation.x = anim.elbowLX;
+        joints.elbowR.rotation.x = anim.elbowRX;
+        joints.thighL.rotation.x = anim.thighLX;
+        joints.thighR.rotation.x = anim.thighRX;
+        joints.kneeL.rotation.x = anim.kneeLX;
+        joints.kneeR.rotation.x = anim.kneeRX;
+        joints.footL.rotation.x = anim.footLX;
+        joints.footR.rotation.x = anim.footRX;
+
+        applyLookAt(z, joints, player, dt, alerted);
+        applyFootIK(z, joints, anim, dt);
+        applyBodyLean(z, joints, player, dt, alerted);
+      }
     }
 
     if (z.dismembered.head && !z.dying) {
