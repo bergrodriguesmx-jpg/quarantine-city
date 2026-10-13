@@ -1051,6 +1051,15 @@ function spawnZombie(forceType) {
   const type = window.ZOMBIE_TYPES_FROM_MODULE ? window.ZOMBIE_TYPES_FROM_MODULE[typeKey] : { hpMul:1, dmgMul:1, speedMul:1, xpMul:1, coinMul:1, scale:1, attackRange:1.6, cooldown:1.2 };
   const mesh = createZombieMesh({ type: typeKey });
   mesh.position.set(spawnX, 0, spawnZ);
+
+  // 🎯 Aplica o scale do tipo no mesh (brute fica maior, runner menor)
+  if (type.scale && type.scale !== 1) {
+    mesh.scale.multiplyScalar(type.scale);
+    mesh.updateMatrixWorld(true);
+    const _b = new THREE.Box3().setFromObject(mesh);
+    mesh.position.y = -_b.min.y;  // pés no chão depois de escalar
+  }
+
   scene.add(mesh);
 
   const hpScale = 1 + CONFIG.scaling.hpPerWave * Math.max(0, state.wave - 1);
