@@ -1,6 +1,7 @@
 // ============================================================
-// game.js — v2
-// Integra: IA especialista, Perks por skin, POIs, Boss AI melhorada.
+// game.js — v3
+// Integra: IA especialista, Perks, POIs, Boss AI melhorada,
+//          Zumbis cartoon procedurais.
 // ============================================================
 
 import * as THREE from 'three';
@@ -42,8 +43,9 @@ import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './src/rende
 import { preloadZombieAnims, hasZombieAnims, setupZombieAnimator, updateZombieAnim, handleZombieAnimState } from './zombie-anim.js';
 import { preloadZombieModel, isModelReady, createZombieInstance, tintZombie } from './zombie-model.js';
 
-// ════════ NOVOS IMPORTS ════════
-import { applyPerk, getPerk, PERKS, listPerks } from './perks.js';
+// ════════ PERKS + ZUMBIS CARTOON ════════
+import { applyPerk, getPerk, PERKS, listPerks } from './perks-system.js';
+import { buildCartoonZombie } from './zombie-procedural.js';
 
 bus.setAdapter(new LocalAdapter());
 
@@ -67,17 +69,8 @@ window.__assetsReady = false;
     console.log('[game] ✅ Giblets prontos');
   } catch (e) { console.warn('[game] ⚠️ Erro nos giblets:', e); }
 
-  try {
-    await preloadZombieModel();
-    if (isModelReady()) console.log('[game] ✅ XBot pronto');
-    else console.error('[game] ❌ XBot NÃO carregou — zumbis vão usar fallback');
-  } catch (e) { console.warn('[game] ⚠️ Erro no XBot:', e); }
-
-  try {
-    await preloadZombieAnims();
-    if (hasZombieAnims()) console.log('[game] ✅ Animações prontas');
-    else console.warn('[game] ⚠️ Sem animações Mixamo');
-  } catch (e) { console.warn('[game] ⚠️ Erro nas animações:', e); }
+  // 🎯 XBot desativado — usamos zumbis cartoon procedurais
+  console.log('[game] ✅ Usando zumbis cartoon procedurais');
 
   try {
     await preloadCharacters();
@@ -212,7 +205,7 @@ const state = {
   bossSpawned: false,
   mouseDX: 0, mouseDY: 0,
 
-  // ════════ PERKS (novos) ════════
+  // ════════ PERKS ════════
   reviveSpeedMult: 1,
   reviveHealBonus: 0,
   shopDiscount: 1,
@@ -230,7 +223,7 @@ const state = {
   activePerk: null,
   staminaBoostUntil: 0,
 
-  // ════════ POIs descobertos (novo) ════════
+  // ════════ POIs ════════
   discoveredPOIs: new Set(),
 };
 
@@ -364,13 +357,6 @@ const vendorVan = new THREE.Group();
   vendorVan.visible = false;
 }
 scene.add(vendorVan);
-
-const headgearMats = {
-  cap_red: matL(0xE74C3C), cap_brown: matL(0x5D4030), cap_black: matL(0x1A1A1A),
-  helmet_yellow: matL(0xFFCC00), helmet_green: matL(0x2E7D32), beanie_red: matL(0xCC1111),
-  balaclava: matL(0x1A1A1A), crown: matL(0xFFD700), hood: matL(0x0A0A0A),
-  gasMask: matL(0x2A2A2A), riotShield: matL(0x2C3E50, { transparent:true, opacity:0.6 }),
-};
 
 // ============================================================
 // VIEWMODEL + CALIBRADOR + CONTROLES
@@ -560,131 +546,11 @@ function resolveWallCollisions(pos, radius) {
 // ZOMBIES
 // ============================================================
 const zombies = [];
-const HAIR_COLORS = [0x2C1810, 0x1A0F08, 0x4A2818, 0x6B3A1F, 0x3A2A1A];
 
 const P_PELVIS_Y = 0.93;
 const P_SPINE_LOW_OFF = 0.12;
-const P_SPINE_UP_OFF = 0.22;
+const P_SPINE_UP_OFF = 0.24;
 const P_SHOULDER_Y = 0.14;
-
-function applyHeadgear(head, headgear, HR) {
-  if (!headgear) return;
-  if (headgear === 'cap_brown' || headgear === 'cap_red' || headgear === 'cap_black') {
-    const mat = headgearMats[headgear];
-    const cap = new THREE.Mesh(geoRoundBox(HR*2.2, HR*0.5, HR*2.2, HR*0.15), mat);
-    cap.position.y = HR * 1.15; head.add(cap);
-    const brim = new THREE.Mesh(geoRoundBox(HR*2.1, HR*0.12, HR*0.9, HR*0.05), mat);
-    brim.position.set(0, HR*1.05, HR*1.15); head.add(brim);
-  } else if (headgear === 'helmet_yellow') {
-    const mat = headgearMats.helmet_yellow;
-    const helmet = new THREE.Mesh(geoRoundBox(HR*2.5, HR*0.7, HR*2.5, HR*0.25), mat);
-    helmet.position.y = HR * 1.10; head.add(helmet);
-    const lamp = new THREE.Mesh(geoSphere(HR*0.18, 6), matB(0xFFFF88));
-    lamp.position.set(0, HR*1.05, HR*1.55); head.add(lamp);
-  } else if (headgear === 'helmet_green') {
-    const mat = headgearMats.helmet_green;
-    const helmet = new THREE.Mesh(geoRoundBox(HR*2.3, HR*0.75, HR*2.3, HR*0.25), mat);
-    helmet.position.y = HR * 1.15; head.add(helmet);
-  } else if (headgear === 'beanie_red') {
-    const mat = headgearMats.beanie_red;
-    const beanie = new THREE.Mesh(geoRoundBox(HR*2.3, HR*1.1, HR*2.3, HR*0.35), mat);
-    beanie.position.y = HR * 1.25; head.add(beanie);
-  } else if (headgear === 'balaclava') {
-    const mat = headgearMats.balaclava;
-    const mask = new THREE.Mesh(geoRoundBox(HR*2.05, HR*1.7, HR*1.9, HR*0.25), mat);
-    mask.position.set(0, -HR*0.15, HR*0.15); head.add(mask);
-    const top = new THREE.Mesh(geoRoundBox(HR*2.15, HR*0.6, HR*2.15, HR*0.25), mat);
-    top.position.y = HR * 0.95; head.add(top);
-  } else if (headgear === 'gasMask') {
-    const mat = headgearMats.gasMask;
-    const mask = new THREE.Mesh(geoRoundBox(HR*2.0, HR*1.4, HR*1.3, HR*0.25), mat);
-    mask.position.set(0, -HR*0.3, HR*0.55); head.add(mask);
-    const fL = new THREE.Mesh(geoCyl(HR*0.25, HR*0.25, HR*0.35, 6), mat);
-    fL.rotation.z = Math.PI/2; fL.position.set(-HR*1.05, -HR*0.4, HR*0.6); head.add(fL);
-    const fR = new THREE.Mesh(geoCyl(HR*0.25, HR*0.25, HR*0.35, 6), mat);
-    fR.rotation.z = Math.PI/2; fR.position.set(HR*1.05, -HR*0.4, HR*0.6); head.add(fR);
-  } else if (headgear === 'crown') {
-    const mat = headgearMats.crown;
-    const crown = new THREE.Mesh(geoCyl(HR*1.1, HR*1.3, HR*0.6, 6, 1, true), mat);
-    crown.position.y = HR * 1.5; head.add(crown);
-    for (let i = 0; i < 5; i++) {
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(HR*0.18, HR*0.4, 3), mat);
-      const angle = (Math.PI*2/5) * i;
-      spike.position.set(Math.cos(angle)*HR*1.1, HR*1.9, Math.sin(angle)*HR*1.1);
-      head.add(spike);
-    }
-  } else if (headgear === 'hood') {
-    const mat = headgearMats.hood;
-    const hood = new THREE.Mesh(geoRoundBox(HR*2.6, HR*2.6, HR*2.5, HR*0.4), mat);
-    hood.position.set(0, HR*0.4, -HR*0.25); head.add(hood);
-    const shadow = new THREE.Mesh(geoSphere(HR*0.85, 8), matB(0x000000));
-    shadow.position.set(0, HR*0.1, HR*0.7); head.add(shadow);
-  }
-}
-
-function buildHumanHead(head, skinMat, hairMat, wound, HR, opts = {}) {
-  const skull = new THREE.Mesh(geoSphere(HR, 12), skinMat);
-  skull.scale.set(1.05, 1.15, 1.0); head.add(skull);
-  const jaw = new THREE.Mesh(geoRoundBox(HR*1.55, HR*0.65, HR*1.45, HR*0.22), skinMat);
-  jaw.position.set(0, -HR*0.95, HR*0.15); head.add(jaw);
-  if (!opts.balaclava && !opts.hood) {
-    const hair = new THREE.Mesh(geoRoundBox(HR*2.05, HR*0.50, HR*2.00, HR*0.22), hairMat);
-    hair.position.y = HR*1.05; head.add(hair);
-  }
-  const eyeGeo = geoBox(HR*0.42, HR*0.32, HR*0.12, 1);
-  const wL = new THREE.Mesh(eyeGeo, MAT_EYE_WHITE); wL.position.set(-HR*0.48, HR*0.18, HR*0.90); head.add(wL);
-  const wR = new THREE.Mesh(eyeGeo, MAT_EYE_WHITE); wR.position.set(HR*0.48, HR*0.18, HR*0.90); head.add(wR);
-  const pupGeo = geoBox(HR*0.17, HR*0.17, HR*0.12, 1);
-  const pL = new THREE.Mesh(pupGeo, MAT_EYE_BLACK); pL.position.set(-HR*0.48, HR*0.18, HR*0.95); head.add(pL);
-  const pR = new THREE.Mesh(pupGeo, MAT_EYE_BLACK); pR.position.set(HR*0.48, HR*0.18, HR*0.95); head.add(pR);
-  const nose = new THREE.Mesh(geoSphere(HR*0.22, 6), skinMat);
-  nose.scale.set(0.8,1,1.2); nose.position.set(0, -HR*0.14, HR*0.98); head.add(nose);
-  if (!opts.balaclava && !opts.hood) {
-    const mouth = new THREE.Mesh(geoBox(HR*0.78, HR*0.16, HR*0.08, 1), matB(0x2B0000));
-    mouth.position.set(0, -HR*0.55, HR*0.95); head.add(mouth);
-  }
-  const woundHead = new THREE.Mesh(geoBox(HR*0.50, HR*0.22, HR*0.08, 1), wound);
-  woundHead.position.set(-HR*0.55, HR*0.48, HR*0.92); head.add(woundHead);
-  if (opts.headgear) applyHeadgear(head, opts.headgear, HR);
-}
-
-function buildDonkeyHead(head, skinMat, wound, HR) {
-  const dSkin = matL(0x9E8B7A), dDark = matL(0x6B5D4F), muzzleMat = matL(0xB8A796);
-  const skull = new THREE.Mesh(geoSphere(HR*0.95, 10), dSkin);
-  skull.scale.set(1.0,1.0,1.10); head.add(skull);
-  const muzzle = new THREE.Mesh(geoRoundBox(HR*1.1, HR*0.95, HR*1.5, HR*0.25), muzzleMat);
-  muzzle.position.set(0, -HR*0.30, HR*1.55); head.add(muzzle);
-  const nostrilMat = matB(0x2A1F1A);
-  const nL = new THREE.Mesh(geoBox(HR*0.18, HR*0.14, HR*0.10, 1), nostrilMat); nL.position.set(-HR*0.30, -HR*0.10, HR*2.20); head.add(nL);
-  const nR = new THREE.Mesh(geoBox(HR*0.18, HR*0.14, HR*0.10, 1), nostrilMat); nR.position.set(HR*0.30, -HR*0.10, HR*2.20); head.add(nR);
-  const eL = new THREE.Mesh(geoBox(HR*0.35, HR*0.32, HR*0.10, 1), MAT_EYE_WHITE); eL.position.set(-HR*0.75, HR*0.35, HR*1.0); head.add(eL);
-  const eR = new THREE.Mesh(geoBox(HR*0.35, HR*0.32, HR*0.10, 1), MAT_EYE_WHITE); eR.position.set(HR*0.75, HR*0.35, HR*1.0); head.add(eR);
-  const pL = new THREE.Mesh(geoBox(HR*0.17, HR*0.17, HR*0.10, 1), MAT_EYE_BLACK); pL.position.set(-HR*0.75, HR*0.35, HR*1.05); head.add(pL);
-  const pR = new THREE.Mesh(geoBox(HR*0.17, HR*0.17, HR*0.10, 1), MAT_EYE_BLACK); pR.position.set(HR*0.75, HR*0.35, HR*1.05); head.add(pR);
-  const ear = new THREE.Mesh(geoRoundBox(HR*0.35, HR*0.95, HR*0.35, HR*0.15), dSkin);
-  ear.position.set(-HR*0.65, HR*1.05, 0); ear.rotation.z = 0.25; head.add(ear);
-  const ear2 = new THREE.Mesh(geoRoundBox(HR*0.35, HR*0.95, HR*0.35, HR*0.15), dSkin);
-  ear2.position.set(HR*0.65, HR*1.05, 0); ear2.rotation.z = -0.25; head.add(ear2);
-  const woundHead = new THREE.Mesh(geoBox(HR*0.5, HR*0.28, HR*0.10, 1), wound);
-  woundHead.position.set(-HR*0.75, HR*0.80, HR*0.90); head.add(woundHead);
-}
-
-function buildJudgeHead(head, skinMat, wound, HR) {
-  const hs = new THREE.Mesh(geoSphere(HR, 12), skinMat);
-  head.add(hs);
-  const eL = new THREE.Mesh(geoBox(HR*0.40, HR*0.34, HR*0.10, 1), MAT_EYE_WHITE); eL.position.set(-HR*0.48, HR*0.18, HR*0.92); head.add(eL);
-  const eR = new THREE.Mesh(geoBox(HR*0.40, HR*0.34, HR*0.10, 1), MAT_EYE_WHITE); eR.position.set(HR*0.48, HR*0.18, HR*0.92); head.add(eR);
-  const pL = new THREE.Mesh(geoBox(HR*0.17, HR*0.17, HR*0.10, 1), MAT_EYE_BLACK); pL.position.set(-HR*0.48, HR*0.18, HR*0.96); head.add(pL);
-  const pR = new THREE.Mesh(geoBox(HR*0.17, HR*0.17, HR*0.10, 1), MAT_EYE_BLACK); pR.position.set(HR*0.48, HR*0.18, HR*0.96); head.add(pR);
-  const browMat = matB(0x888888);
-  const must = new THREE.Mesh(geoBox(HR*0.85, HR*0.16, HR*0.10, 1), browMat); must.position.set(0, -HR*0.30, HR*0.94); head.add(must);
-  const beard = new THREE.Mesh(geoRoundBox(HR*0.70, HR*0.32, HR*0.15, HR*0.12), browMat); beard.position.set(0, -HR*0.72, HR*0.85); head.add(beard);
-  const woundHead = new THREE.Mesh(geoBox(HR*0.45, HR*0.22, HR*0.10, 1), wound); woundHead.position.set(-HR*0.35, HR*0.62, HR*0.80); head.add(woundHead);
-}
-
-function buildJudgeOutfit(spineUpper) {
-  const tie = new THREE.Mesh(geoBox(0.025, 0.16, 0.008, 1), matL(0xCC1111)); tie.position.set(0, 0.04, 0.112); spineUpper.add(tie);
-}
 
 function pickFromPalette(palette, fallback) {
   if (!palette || palette.length === 0) return fallback;
@@ -692,298 +558,49 @@ function pickFromPalette(palette, fallback) {
 }
 
 // ============================================================
-// FALLBACK PROCEDURAL
-// ============================================================
-function proceduralFallback(opts = {}) {
-  const typeKey = opts.type || 'pt';
-  const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey]
-    || { scale: 1, variant: 'normal' };
-  const variant = type.variant || 'normal';
-  const scale   = type.scale   || 1;
-
-  const root = new THREE.Group();
-
-  const skinColor  = opts.skin !== undefined
-    ? opts.skin
-    : pickFromPalette(type.skinPalette, 0x7BC950);
-  const shirtColor = pickFromPalette(type.shirtPalette, 0xCC1111);
-  const pantsColor = pickFromPalette(type.pantsPalette, 0x8B5A2B);
-  const hairColor  = HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)];
-
-  const skinMat  = matL(skinColor);
-  const shirtMat = matL(shirtColor);
-  const pantsMat = matL(pantsColor);
-  const hairMat  = matL(hairColor);
-  const shoeMat  = matL(0x1A1A1A);
-  const wound    = MAT_WOUND;
-
-  const pelvis = new THREE.Group();
-  pelvis.position.y = P_PELVIS_Y;
-  root.add(pelvis);
-
-  const spineLower = new THREE.Group();
-  spineLower.position.y = P_SPINE_LOW_OFF;
-  pelvis.add(spineLower);
-
-  const torsoMesh = new THREE.Mesh(geoRoundBox(0.42, 0.42, 0.24, 0.05), shirtMat);
-  torsoMesh.position.y = 0.10;
-  torsoMesh.castShadow = true;
-  spineLower.add(torsoMesh);
-
-  const spineUpper = new THREE.Group();
-  spineUpper.position.y = P_SPINE_UP_OFF;
-  spineLower.add(spineUpper);
-
-  const chestMesh = new THREE.Mesh(geoRoundBox(0.44, 0.32, 0.26, 0.05), shirtMat);
-  chestMesh.position.y = 0.08;
-  chestMesh.castShadow = true;
-  spineUpper.add(chestMesh);
-
-  const neck = new THREE.Group();
-  neck.position.y = 0.22;
-  spineUpper.add(neck);
-
-  const head = new THREE.Group();
-  neck.add(head);
-
-  const HR = 0.13;
-  if (variant === 'donkey') {
-    buildDonkeyHead(head, skinMat, wound, HR);
-  } else if (variant === 'judge') {
-    buildJudgeHead(head, skinMat, wound, HR);
-    buildJudgeOutfit(spineUpper);
-  } else {
-    buildHumanHead(head, skinMat, hairMat, wound, HR, {
-      headgear: type.headgear || null,
-    });
-  }
-
-  const shoulderL = new THREE.Group();
-  shoulderL.position.set(-0.24, P_SHOULDER_Y, 0);
-  spineUpper.add(shoulderL);
-
-  const upperArmL = new THREE.Mesh(geoRoundBox(0.10, 0.24, 0.10, 0.03), shirtMat);
-  upperArmL.position.y = -0.12;
-  upperArmL.castShadow = true;
-  shoulderL.add(upperArmL);
-
-  const elbowL = new THREE.Group();
-  elbowL.position.y = -0.22;
-  shoulderL.add(elbowL);
-
-  const foreArmL = new THREE.Mesh(geoRoundBox(0.09, 0.22, 0.09, 0.03), skinMat);
-  foreArmL.position.y = -0.11;
-  foreArmL.castShadow = true;
-  elbowL.add(foreArmL);
-
-  const shoulderR = new THREE.Group();
-  shoulderR.position.set(0.24, P_SHOULDER_Y, 0);
-  spineUpper.add(shoulderR);
-
-  const upperArmR = new THREE.Mesh(geoRoundBox(0.10, 0.24, 0.10, 0.03), shirtMat);
-  upperArmR.position.y = -0.12;
-  upperArmR.castShadow = true;
-  shoulderR.add(upperArmR);
-
-  const elbowR = new THREE.Group();
-  elbowR.position.y = -0.22;
-  shoulderR.add(elbowR);
-
-  const foreArmR = new THREE.Mesh(geoRoundBox(0.09, 0.22, 0.09, 0.03), skinMat);
-  foreArmR.position.y = -0.11;
-  foreArmR.castShadow = true;
-  elbowR.add(foreArmR);
-
-  const thighL = new THREE.Group();
-  thighL.position.set(-0.11, 0, 0);
-  pelvis.add(thighL);
-
-  const thighMeshL = new THREE.Mesh(geoRoundBox(0.13, 0.34, 0.13, 0.04), pantsMat);
-  thighMeshL.position.y = -0.17;
-  thighMeshL.castShadow = true;
-  thighL.add(thighMeshL);
-
-  const kneeL = new THREE.Group();
-  kneeL.position.y = -0.34;
-  thighL.add(kneeL);
-
-  const shinL = new THREE.Mesh(geoRoundBox(0.12, 0.32, 0.12, 0.04), pantsMat);
-  shinL.position.y = -0.16;
-  shinL.castShadow = true;
-  kneeL.add(shinL);
-
-  const footL = new THREE.Group();
-  footL.position.y = -0.32;
-  kneeL.add(footL);
-
-  const footMeshL = new THREE.Mesh(geoRoundBox(0.13, 0.09, 0.20, 0.03), shoeMat);
-  footMeshL.position.set(0, -0.045, 0.05);
-  footMeshL.castShadow = true;
-  footL.add(footMeshL);
-
-  const thighR = new THREE.Group();
-  thighR.position.set(0.11, 0, 0);
-  pelvis.add(thighR);
-
-  const thighMeshR = new THREE.Mesh(geoRoundBox(0.13, 0.34, 0.13, 0.04), pantsMat);
-  thighMeshR.position.y = -0.17;
-  thighMeshR.castShadow = true;
-  thighR.add(thighMeshR);
-
-  const kneeR = new THREE.Group();
-  kneeR.position.y = -0.34;
-  thighR.add(kneeR);
-
-  const shinR = new THREE.Mesh(geoRoundBox(0.12, 0.32, 0.12, 0.04), pantsMat);
-  shinR.position.y = -0.16;
-  shinR.castShadow = true;
-  kneeR.add(shinR);
-
-  const footR = new THREE.Group();
-  footR.position.y = -0.32;
-  kneeR.add(footR);
-
-  const footMeshR = new THREE.Mesh(geoRoundBox(0.13, 0.09, 0.20, 0.03), shoeMat);
-  footMeshR.position.set(0, -0.045, 0.05);
-  footMeshR.castShadow = true;
-  footR.add(footMeshR);
-
-  const joints = {
-    pelvis, spineLower, spineUpper, neck, head,
-    shoulderL, elbowL, shoulderR, elbowR,
-    thighL, kneeL, footL, thighR, kneeR, footR,
-  };
-
-  root.scale.setScalar(scale);
-  root.updateMatrixWorld(true);
-  const _fb = new THREE.Box3().setFromObject(root);
-  const feetOffset = _fb.min.y;
-  if (Math.abs(feetOffset) > 0.001) {
-    for (const child of root.children) {
-      child.position.y -= feetOffset;
-    }
-  }
-
-  const localBoxes = {
-    head:  new THREE.Box3(
-      new THREE.Vector3(-0.16, -0.20, -0.16),
-      new THREE.Vector3( 0.16,  0.22,  0.18)
-    ),
-    torso: new THREE.Box3(
-      new THREE.Vector3(-0.24, -0.15, -0.15),
-      new THREE.Vector3( 0.24,  0.36,  0.15)
-    ),
-    armL:  new THREE.Box3(
-      new THREE.Vector3(-0.07, -0.46, -0.08),
-      new THREE.Vector3( 0.07,  0.03,  0.08)
-    ),
-    armR:  new THREE.Box3(
-      new THREE.Vector3(-0.07, -0.46, -0.08),
-      new THREE.Vector3( 0.07,  0.03,  0.08)
-    ),
-    legL:  new THREE.Box3(
-      new THREE.Vector3(-0.09, -0.74, -0.12),
-      new THREE.Vector3( 0.09,  0.05,  0.14)
-    ),
-    legR:  new THREE.Box3(
-      new THREE.Vector3(-0.09, -0.74, -0.12),
-      new THREE.Vector3( 0.09,  0.05,  0.14)
-    ),
-  };
-
-  const headLoll      = (Math.random() - 0.5) * 0.4;
-  const headPitchBase = (Math.random() - 0.5) * 0.3;
-  const armDroopL     = -0.10 - Math.random() * 0.30;
-  const armDroopR     = -0.10 - Math.random() * 0.30;
-  const limpAmount    = Math.random();
-  const limpSide      = Math.random() < 0.5 ? -1 : 1;
-  const walkStyle     = Math.random();
-
-  root.userData = {
-    isXBot: false,
-    head,
-    torso:  spineLower,
-    armL:   shoulderL,
-    armR:   shoulderR,
-    legL:   thighL,
-    legR:   thighR,
-    joints,
-    localBoxes,
-    skinColor,
-    variant,
-    heightScale: scale,
-    zombieType: typeKey,
-    typeKey,
-    type,
-    headLoll,
-    headPitchBase,
-    armDroopL,
-    armDroopR,
-    limpAmount,
-    limpSide,
-    walkStyle,
-  };
-
-  return root;
-}
-
-// ============================================================
-// CREATE ZOMBIE MESH
+// CREATE ZOMBIE MESH — v2 (cartoon procedural)
 // ============================================================
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
   const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey]
     || { scale: 1, variant: 'normal' };
 
-  if (isModelReady()) {
-    const inst = createZombieInstance();
+  const cartoon = buildCartoonZombie(typeKey, type);
+  const root = cartoon.root;
 
-    const jointsValid = inst && inst.joints
-      && inst.joints.head && inst.joints.pelvis
-      && inst.joints.spineLower && inst.joints.spineUpper;
-
-    if (jointsValid) {
-      const skinPal = (type.skinPalette && type.skinPalette.length > 0)
-        ? type.skinPalette
-        : [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
-      const skinColor = opts.skin !== undefined
-        ? opts.skin
-        : skinPal[Math.floor(Math.random() * skinPal.length)];
-
-      tintZombie(inst, skinColor);
-
-      inst.scene.userData = {
-        isXBot: true,
-        instance: inst,
-        joints: inst.joints,
-        head:  inst.joints.head,
-        armL:  inst.joints.shoulderL,
-        armR:  inst.joints.shoulderR,
-        legL:  inst.joints.thighL,
-        legR:  inst.joints.thighR,
-        torso: inst.joints.spineLower,
-        skinColor,
-        variant: type.variant || 'normal',
-        heightScale: inst.scale,
-        zombieType: typeKey,
-        typeKey, type,
-        localBoxes: null,
-        headLoll:      (Math.random() - 0.5) * 0.4,
-        headPitchBase: (Math.random() - 0.5) * 0.3,
-        armDroopL:     -0.10 - Math.random() * 0.30,
-        armDroopR:     -0.10 - Math.random() * 0.30,
-        limpAmount:    Math.random(),
-        limpSide:      Math.random() < 0.5 ? -1 : 1,
-        walkStyle:     Math.random(),
-      };
-
-      return inst.scene;
-    } else {
-      console.warn('[game] ⚠️ XBot sem joints válidos — usando procedural');
-    }
+  if (type.scale && type.scale !== 1) {
+    root.scale.setScalar(type.scale);
+    root.updateMatrixWorld(true);
+    const _b = new THREE.Box3().setFromObject(root);
+    root.position.y = -_b.min.y;
   }
 
-  return proceduralFallback(opts);
+  root.userData = {
+    isXBot: false,
+    joints: cartoon.joints,
+    head:  cartoon.joints.head,
+    torso: cartoon.joints.spineLower,
+    armL:  cartoon.joints.shoulderL,
+    armR:  cartoon.joints.shoulderR,
+    legL:  cartoon.joints.thighL,
+    legR:  cartoon.joints.thighR,
+    localBoxes: cartoon.localBoxes,
+    skinColor: cartoon.skinColor,
+    variant: cartoon.variant,
+    heightScale: 1,
+    zombieType: typeKey,
+    typeKey,
+    type,
+    headLoll: cartoon.headLoll,
+    headPitchBase: cartoon.headPitchBase,
+    armDroopL: cartoon.armDroopL,
+    armDroopR: cartoon.armDroopR,
+    limpAmount: cartoon.limpAmount,
+    limpSide: cartoon.limpSide,
+    walkStyle: cartoon.walkStyle,
+  };
+
+  return root;
 }
 
 // ============================================================
@@ -1091,13 +708,6 @@ function spawnZombie(forceType) {
   const mesh = createZombieMesh({ type: typeKey });
   mesh.position.set(spawnX, 0, spawnZ);
 
-  if (type.scale && type.scale !== 1) {
-    mesh.scale.multiplyScalar(type.scale);
-    mesh.updateMatrixWorld(true);
-    const _b = new THREE.Box3().setFromObject(mesh);
-    mesh.position.y = -_b.min.y;
-  }
-
   scene.add(mesh);
 
   const hpScale = 1 + CONFIG.scaling.hpPerWave * Math.max(0, state.wave - 1);
@@ -1142,10 +752,7 @@ function spawnZombie(forceType) {
     _groundTime: 0,
   };
 
-  if (mesh.userData.isXBot) {
-    z.instance = mesh.userData.instance;
-    setupZombieAnimator(z);
-  }
+  // 🎯 Sem mixer (não usamos mais animações FBX)
 
   zombies.push(z);
   initStuckState(z);
@@ -1349,35 +956,7 @@ function detachLimb(z, key, hitDir, hitPoint) {
   }
 
   if (gibModel) {
-    if (z.mesh.userData.isXBot) {
-      z.dismembered[key] = true;
-      const joint = key === 'head' ? ud.joints.head
-                  : key === 'armL' ? ud.joints.shoulderL
-                  : key === 'armR' ? ud.joints.shoulderR
-                  : key === 'legL' ? ud.joints.thighL
-                  : key === 'legR' ? ud.joints.thighR
-                  : null;
-      if (joint) joint.scale.setScalar(0.01);
-
-      let gibModelX = hasLimb(key) ? createLimb(key) : createGib(key);
-      if (gibModelX) {
-        const wrapper = new THREE.Group();
-        wrapper.position.copy(_wpTmp);
-        wrapper.quaternion.copy(_wqTmp);
-        scene.add(wrapper);
-        wrapper.add(gibModelX);
-        const size = gibModelX.userData.size || new THREE.Vector3(0.3, 0.3, 0.3);
-        const piece = new Debris(wrapper, size, 1.2, CONFIG.dismember.limbLife);
-        piece.key = key;
-        piece.velocity.set(hitDir.x*16, 8+Math.random()*4, hitDir.z*16);
-        piece.angularVelocity.set((Math.random()-0.5)*35, (Math.random()-0.5)*35, (Math.random()-0.5)*35);
-        flyingLimbs.push(piece);
-      }
-
-      spawnBlood(_wpTmp, hitDir, 30, true);
-      bus.emit(Ev.DISMEMBER, { zombieId:z.id, part:key, pos:{ x:_wpTmp.x, y:_wpTmp.y, z:_wpTmp.z } });
-      return;
-    }
+    // Para cartoon procedural, esconde o joint e solta o gib
     limbObj.visible = false;
     const wrapper = new THREE.Group();
     wrapper.position.copy(_wpTmp);
@@ -1399,6 +978,7 @@ function detachLimb(z, key, hitDir, hitPoint) {
     return;
   }
 
+  // Fallback: solta o próprio limb
   limbObj.rotation.set(0, 0, 0);
   if (limbObj.parent) limbObj.parent.remove(limbObj);
   scene.add(limbObj);
@@ -1597,51 +1177,13 @@ function raycastZombie(origin, dir, maxDist, candidates) {
     const z = list[i];
     if (z.health <= 0) continue;
 
-    if (z.mesh.userData.isXBot) {
-      const joints = z.mesh.userData.joints;
-      if (!joints || !joints.head) continue;
-      const parts = [
-        { key: 'head', bone: joints.head, radius: 0.16 },
-        { key: 'torso', bone: joints.spineUpper, radius: 0.28 },
-        { key: 'torso', bone: joints.spineLower, radius: 0.28 },
-        { key: 'armL', bone: joints.shoulderL, radius: 0.14 },
-        { key: 'armL', bone: joints.elbowL, radius: 0.11 },
-        { key: 'armR', bone: joints.shoulderR, radius: 0.14 },
-        { key: 'armR', bone: joints.elbowR, radius: 0.11 },
-        { key: 'legL', bone: joints.thighL, radius: 0.14 },
-        { key: 'legL', bone: joints.kneeL, radius: 0.11 },
-        { key: 'legR', bone: joints.thighR, radius: 0.14 },
-        { key: 'legR', bone: joints.kneeR, radius: 0.11 },
-      ];
-
-      for (const p of parts) {
-        if (!p.bone) continue;
-        if (z.dismembered[p.key]) continue;
-
-        const bonePos = new THREE.Vector3();
-        p.bone.getWorldPosition(bonePos);
-
-        const toBone = bonePos.clone().sub(origin);
-        const t = toBone.dot(dir);
-        if (t < 0 || t > maxDist) continue;
-        const closest = origin.clone().addScaledVector(dir, t);
-        const distToLine = closest.distanceTo(bonePos);
-        if (distToLine <= p.radius && t < bestDist) {
-          bestDist = t;
-          bestZ = z;
-          bestPart = p.key;
-          bestPoint.copy(closest);
-        }
-      }
-    } else {
-      const entries = getZombiePartEntries(z, _partEntriesCache);
-      for (let b = 0; b < entries.length; b++) {
-        const e = entries[b];
-        const dist = rayOBBPart(origin, dir, e.box, e.group, maxDist, _hitPointScratch);
-        if (dist !== null && dist < bestDist) {
-          bestDist = dist; bestZ = z; bestPart = e.key;
-          bestPoint.copy(_hitPointScratch);
-        }
+    const entries = getZombiePartEntries(z, _partEntriesCache);
+    for (let b = 0; b < entries.length; b++) {
+      const e = entries[b];
+      const dist = rayOBBPart(origin, dir, e.box, e.group, maxDist, _hitPointScratch);
+      if (dist !== null && dist < bestDist) {
+        bestDist = dist; bestZ = z; bestPart = e.key;
+        bestPoint.copy(_hitPointScratch);
       }
     }
   }
@@ -1998,7 +1540,6 @@ function startReload(wid) {
   if (am.mag >= w.magSize || am.reserve <= 0) return;
   state.reload.active = true; state.reload.wid = wid;
   state.reload.startTime = performance.now()/1000;
-  // 🎯 PERK: reload speed
   const duration = w.reloadTime / state.reloadSpeedMult;
   state.reload.duration = duration;
   state.reload.endTime = state.reload.startTime + duration;
@@ -2317,7 +1858,6 @@ function checkWaveComplete() {
       am.reserve = Math.min(w.reserveMax, am.reserve + give);
       ammoGiven += am.reserve - before;
     });
-    // 🎯 PERK: brazier duration + fuel bonus
     state.brazierFuel = Math.min(
       CONFIG.brazier.maxFuel * state.brazierDurationMult,
       state.brazierFuel + CONFIG.brazier.fuelPerWave * state.brazierFuelBonus
@@ -2384,7 +1924,6 @@ function enterDownedState() {
 function exitDownedState(hpFraction) {
   if (!state.downed) return;
   state.downed = false; state.downedElapsed = 0; state.reviveProgress = 0;
-  // 🎯 PERK: revive heal bonus
   const finalFraction = Math.min(1, (hpFraction || 0.5) + state.reviveHealBonus);
   state.health = Math.max(20, Math.round(state.maxHealth * finalFraction));
   state.invulnUntil = performance.now()/1000 + 2.0;
@@ -2406,7 +1945,6 @@ function updateDownedState(dt) {
   if (state.downedElapsed >= CONFIG.downed.selfReviveAt && state.revivesLeft > 0) {
     prompt.classList.add('visible');
     if (controls.isDown(Action.Interact, state.keys)) {
-      // 🎯 PERK: revive speed
       state.reviveProgress += dt*1000 * state.reviveSpeedMult;
       progressWrap.classList.add('visible');
       const pct = Math.min(1, state.reviveProgress / CONFIG.downed.selfReviveHold);
@@ -2502,7 +2040,6 @@ function renderShop() {
     const w = WEAPONS[wid], am = state.ammo[wid];
     if (!am || !AMMO_PACKS[wid]) return;
     const pack = AMMO_PACKS[wid];
-    // 🎯 PERK: shop discount
     const price = Math.round(AMMO_PRICES[wid] * state.shopDiscount);
     const canBuy = state.coins >= price && am.reserve < w.reserveMax;
 
@@ -2842,7 +2379,6 @@ function updatePlayer(dt) {
   let speedMult = state.aiming ? 0.5 : 1;
   if (state.downed) speedMult = 0.25;
 
-  // 🎯 PERK: stamina boost ativo
   const now = performance.now()/1000;
   if (now < state.staminaBoostUntil) {
     state.stamina = state.staminaMax;
@@ -2851,7 +2387,6 @@ function updatePlayer(dt) {
   const sprintKeyHeld = controls.isDown(Action.Sprint, state.keys);
   const canSprint = state.isMoving && !state.downed && !state.aiming && state.stamina > 0;
   state.isSprinting = canSprint && sprintKeyHeld;
-  // 🎯 PERK: sprint speed bonus
   const sprintMult = state.isSprinting ? CONFIG.player.sprintMult * state.sprintSpeedBonus : 1;
 
   const speed = CONFIG.player.speed * state.speedMult * speedMult * sprintMult;
@@ -3057,7 +2592,6 @@ function updateZombies(dt) {
           aggroSoundCooldown: 0, _wasAlerted: false,
           _forceGroan: false, _groundTime: 0,
         };
-        setupZombieAnimator(minion);
         initStuckState(minion);
         ZombieAI.initZombieAIState(minion);
         zombies.push(minion); state.zombiesAlive++;
@@ -3111,209 +2645,204 @@ function updateZombies(dt) {
     z._prevX = z.mesh.position.x;
     z._prevZ = z.mesh.position.z;
 
-    if (!hasJoints) {
-      if (z.mixer) updateZombieAnim(z, dt);
+    if (!hasJoints) continue;
+
+    const speedNorm = Math.min(1.5, realSpeed / Math.max(0.01, z.speed));
+    const walkStyle = z.walkStyle;
+    const shuffling = dist < 3.0;
+
+    const accelX = (z.vx - anim.bodyAccelX) / Math.max(dt, 0.001);
+    const accelZ = (z.vz - anim.bodyAccelZ) / Math.max(dt, 0.001);
+    anim.bodyAccelX = z.vx;
+    anim.bodyAccelZ = z.vz;
+    anim.bankX = smoothDamp(anim.bankX, Math.max(-1, Math.min(1, accelX * 0.03)), 8, dt);
+    anim.bankZ = smoothDamp(anim.bankZ, Math.max(-1, Math.min(1, accelZ * 0.03)), 8, dt);
+
+    const strideLength = 0.85;
+    const idealCadence = (realSpeed / strideLength) * Math.PI * 2 + 0.4;
+    anim.cadenceSmooth = smoothDamp(anim.cadenceSmooth, idealCadence, 6, dt);
+    const styleMul = (1 - walkStyle*0.35) * (shuffling ? 1.35 : 1.0) * (alerted ? 1.15 : 1);
+    anim.walkPhaseSmooth += dt * anim.cadenceSmooth * styleMul * emerge;
+    const phase = anim.walkPhaseSmooth;
+
+    anim.crawlPhase += dt * (anim.cadenceSmooth * 0.55 + 1.4) * emerge;
+    const crawlCycle = Math.sin(anim.crawlPhase);
+    const crawlCycle2 = Math.sin(anim.crawlPhase + Math.PI);
+
+    const idleTarget = 1 - smoothstep(Math.min(1, realSpeed / 0.6));
+    anim.idleBlend = smoothDamp(anim.idleBlend, idleTarget, 3, dt);
+    const idle = anim.idleBlend;
+
+    z.idlePhase += dt * 1.4;
+    const breathe = Math.sin(z.idlePhase) * 0.5 + Math.sin(z.idlePhase * 0.37 + 1.3) * 0.5;
+    const idleSway = Math.sin(z.idlePhase * 0.6 + walkStyle * 6.28) * 0.015;
+
+    const legLPhase = (phase / (Math.PI * 2)) % 1;
+    const legRPhase = ((phase + Math.PI) / (Math.PI * 2)) % 1;
+    const inStanceL = (legLPhase > 0.35 && legLPhase < 0.65) ? 1 : 0;
+    const inStanceR = (legRPhase > 0.35 && legRPhase < 0.65) ? 1 : 0;
+    anim.plantPhaseL = smoothDamp(anim.plantPhaseL, inStanceL, 18, dt);
+    anim.plantPhaseR = smoothDamp(anim.plantPhaseR, inStanceR, 18, dt);
+
+    const stepL = Math.sin(phase), stepR = Math.sin(phase + Math.PI);
+    const speedAmp = 0.35 + smoothstep(Math.min(1, speedNorm)) * 0.65;
+    const legAmp = (0.5 + walkStyle * 0.2) * speedAmp * (1 + hunt * 0.15);
+    let legL = stepL * legAmp;
+    let legR = stepR * legAmp;
+
+    let thighLTarget = legL, thighRTarget = legR;
+    const kneeAmp = 0.85 * (0.4 + speedNorm * 0.6);
+    thighLTarget *= (1 - anim.plantPhaseL * 0.55);
+    thighRTarget *= (1 - anim.plantPhaseR * 0.55);
+    let kneeLTarget = Math.max(0, stepL) * kneeAmp + 0.06 + walkStyle * 0.18;
+    let kneeRTarget = Math.max(0, stepR) * kneeAmp + 0.06 + walkStyle * 0.18;
+    let footLTarget = -stepL * 0.35 * (1 + walkStyle * 0.4);
+    let footRTarget = -stepR * 0.35 * (1 + walkStyle * 0.4);
+    footLTarget *= (1 - anim.plantPhaseL * 0.7);
+    footRTarget *= (1 - anim.plantPhaseR * 0.7);
+
+    let pelvisRollTarget = -Math.cos(phase) * 0.09 * speedNorm;
+    let pelvisTwistTarget = stepL * 0.18 * speedNorm;
+    let pelvisBobTarget = -Math.abs(Math.sin(phase)) * 0.04 * speedNorm - 0.008 * speedNorm;
+    let pelvisYTmp = P_PELVIS_Y;
+    let spineTwistTarget = -stepL * 0.13 * speedNorm;
+    const leanBase = hpFrac < 0.5 ? 0.22 : 0.10;
+    let spineLeanTarget = leanBase + (dist < 3 ? 0.10 : 0) + speedNorm * 0.05;
+    let spineSideTarget = Math.cos(phase) * 0.06 * speedNorm;
+    let spineRollTarget = 0;
+    let headRollTarget = z.headLoll + Math.cos(phase) * 0.07 * speedNorm + anim.bankZ * 2.0;
+    let headTwistTarget = spineTwistTarget * 0.4 + stepL * 0.05 * speedNorm;
+    let headPitchTarget = z.headPitchBase + speedNorm * 0.10 + (dist < 3 ? 0.15 : 0);
+
+    if (crawl > 0.001) {
+      pelvisYTmp = P_PELVIS_Y * (1 - crawl) + 0.28 * crawl;
+      spineLeanTarget = spineLeanTarget * (1 - crawl) + 1.35 * crawl;
+      thighLTarget = thighLTarget * (1 - crawl) + (-0.15) * crawl;
+      thighRTarget = thighRTarget * (1 - crawl) + (-0.15) * crawl;
+      kneeLTarget = kneeLTarget * (1 - crawl) + 0.35 * crawl;
+      kneeRTarget = kneeRTarget * (1 - crawl) + 0.35 * crawl;
+      footLTarget = footLTarget * (1 - crawl) + 0.5 * crawl;
+      footRTarget = footRTarget * (1 - crawl) + 0.5 * crawl;
+      pelvisBobTarget = pelvisBobTarget * (1 - crawl) + (crawlCycle * 0.03) * crawl;
+      headPitchTarget = headPitchTarget * (1 - crawl) + (-0.5 + crawlCycle * 0.05) * crawl;
+    }
+
+    let armLXTarget, armRXTarget;
+    if (z.attackWindupActive) {
+      const wElapsed = now - (z.attackWindupEnd - 0.30);
+      const wT = Math.max(0, Math.min(1, wElapsed / 0.30));
+      const windupArm = -0.6 - wT * 0.9;
+      armLXTarget = windupArm;
+      armRXTarget = windupArm;
+      spineLeanTarget -= wT * 0.15 * (1 - crawl);
+      headPitchTarget += wT * 0.20 * (1 - crawl);
+    } else if (anim.attackPhase === 3) {
+      const recT = Math.min(1, (now - anim.attackPhaseT) / 0.25);
+      const recArm = -1.2 + recT * 1.2;
+      armLXTarget = Math.max(-1.55, recArm);
+      armRXTarget = Math.max(-1.55, recArm);
     } else {
-      const speedNorm = Math.min(1.5, realSpeed / Math.max(0.01, z.speed));
-      const walkStyle = z.walkStyle;
-      const shuffling = dist < 3.0;
-
-      const accelX = (z.vx - anim.bodyAccelX) / Math.max(dt, 0.001);
-      const accelZ = (z.vz - anim.bodyAccelZ) / Math.max(dt, 0.001);
-      anim.bodyAccelX = z.vx;
-      anim.bodyAccelZ = z.vz;
-      anim.bankX = smoothDamp(anim.bankX, Math.max(-1, Math.min(1, accelX * 0.03)), 8, dt);
-      anim.bankZ = smoothDamp(anim.bankZ, Math.max(-1, Math.min(1, accelZ * 0.03)), 8, dt);
-
-      const strideLength = 0.85;
-      const idealCadence = (realSpeed / strideLength) * Math.PI * 2 + 0.4;
-      anim.cadenceSmooth = smoothDamp(anim.cadenceSmooth, idealCadence, 6, dt);
-      const styleMul = (1 - walkStyle*0.35) * (shuffling ? 1.35 : 1.0) * (alerted ? 1.15 : 1);
-      anim.walkPhaseSmooth += dt * anim.cadenceSmooth * styleMul * emerge;
-      const phase = anim.walkPhaseSmooth;
-
-      anim.crawlPhase += dt * (anim.cadenceSmooth * 0.55 + 1.4) * emerge;
-      const crawlCycle = Math.sin(anim.crawlPhase);
-      const crawlCycle2 = Math.sin(anim.crawlPhase + Math.PI);
-
-      const idleTarget = 1 - smoothstep(Math.min(1, realSpeed / 0.6));
-      anim.idleBlend = smoothDamp(anim.idleBlend, idleTarget, 3, dt);
-      const idle = anim.idleBlend;
-
-      z.idlePhase += dt * 1.4;
-      const breathe = Math.sin(z.idlePhase) * 0.5 + Math.sin(z.idlePhase * 0.37 + 1.3) * 0.5;
-      const idleSway = Math.sin(z.idlePhase * 0.6 + walkStyle * 6.28) * 0.015;
-
-      const legLPhase = (phase / (Math.PI * 2)) % 1;
-      const legRPhase = ((phase + Math.PI) / (Math.PI * 2)) % 1;
-      const inStanceL = (legLPhase > 0.35 && legLPhase < 0.65) ? 1 : 0;
-      const inStanceR = (legRPhase > 0.35 && legRPhase < 0.65) ? 1 : 0;
-      anim.plantPhaseL = smoothDamp(anim.plantPhaseL, inStanceL, 18, dt);
-      anim.plantPhaseR = smoothDamp(anim.plantPhaseR, inStanceR, 18, dt);
-
-      const stepL = Math.sin(phase), stepR = Math.sin(phase + Math.PI);
-      const speedAmp = 0.35 + smoothstep(Math.min(1, speedNorm)) * 0.65;
-      const legAmp = (0.5 + walkStyle * 0.2) * speedAmp * (1 + hunt * 0.15);
-      let legL = stepL * legAmp;
-      let legR = stepR * legAmp;
-
-      let thighLTarget = legL, thighRTarget = legR;
-      const kneeAmp = 0.85 * (0.4 + speedNorm * 0.6);
-      thighLTarget *= (1 - anim.plantPhaseL * 0.55);
-      thighRTarget *= (1 - anim.plantPhaseR * 0.55);
-      let kneeLTarget = Math.max(0, stepL) * kneeAmp + 0.06 + walkStyle * 0.18;
-      let kneeRTarget = Math.max(0, stepR) * kneeAmp + 0.06 + walkStyle * 0.18;
-      let footLTarget = -stepL * 0.35 * (1 + walkStyle * 0.4);
-      let footRTarget = -stepR * 0.35 * (1 + walkStyle * 0.4);
-      footLTarget *= (1 - anim.plantPhaseL * 0.7);
-      footRTarget *= (1 - anim.plantPhaseR * 0.7);
-
-      let pelvisRollTarget = -Math.cos(phase) * 0.09 * speedNorm;
-      let pelvisTwistTarget = stepL * 0.18 * speedNorm;
-      let pelvisBobTarget = -Math.abs(Math.sin(phase)) * 0.04 * speedNorm - 0.008 * speedNorm;
-      let pelvisYTmp = P_PELVIS_Y;
-      let spineTwistTarget = -stepL * 0.13 * speedNorm;
-      const leanBase = hpFrac < 0.5 ? 0.22 : 0.10;
-      let spineLeanTarget = leanBase + (dist < 3 ? 0.10 : 0) + speedNorm * 0.05;
-      let spineSideTarget = Math.cos(phase) * 0.06 * speedNorm;
-      let spineRollTarget = 0;
-      let headRollTarget = z.headLoll + Math.cos(phase) * 0.07 * speedNorm + anim.bankZ * 2.0;
-      let headTwistTarget = spineTwistTarget * 0.4 + stepL * 0.05 * speedNorm;
-      let headPitchTarget = z.headPitchBase + speedNorm * 0.10 + (dist < 3 ? 0.15 : 0);
-
-      if (crawl > 0.001) {
-        pelvisYTmp = P_PELVIS_Y * (1 - crawl) + 0.28 * crawl;
-        spineLeanTarget = spineLeanTarget * (1 - crawl) + 1.35 * crawl;
-        thighLTarget = thighLTarget * (1 - crawl) + (-0.15) * crawl;
-        thighRTarget = thighRTarget * (1 - crawl) + (-0.15) * crawl;
-        kneeLTarget = kneeLTarget * (1 - crawl) + 0.35 * crawl;
-        kneeRTarget = kneeRTarget * (1 - crawl) + 0.35 * crawl;
-        footLTarget = footLTarget * (1 - crawl) + 0.5 * crawl;
-        footRTarget = footRTarget * (1 - crawl) + 0.5 * crawl;
-        pelvisBobTarget = pelvisBobTarget * (1 - crawl) + (crawlCycle * 0.03) * crawl;
-        headPitchTarget = headPitchTarget * (1 - crawl) + (-0.5 + crawlCycle * 0.05) * crawl;
-      }
-
-      let armLXTarget, armRXTarget;
-      if (z.attackWindupActive) {
-        const wElapsed = now - (z.attackWindupEnd - 0.30);
-        const wT = Math.max(0, Math.min(1, wElapsed / 0.30));
-        const windupArm = -0.6 - wT * 0.9;
-        armLXTarget = windupArm;
-        armRXTarget = windupArm;
-        spineLeanTarget -= wT * 0.15 * (1 - crawl);
-        headPitchTarget += wT * 0.20 * (1 - crawl);
-      } else if (anim.attackPhase === 3) {
-        const recT = Math.min(1, (now - anim.attackPhaseT) / 0.25);
-        const recArm = -1.2 + recT * 1.2;
-        armLXTarget = Math.max(-1.55, recArm);
-        armRXTarget = Math.max(-1.55, recArm);
+      const reaching = dist < 3.5 && !staggering;
+      const armAmp = 0.5 * (0.4 + speedNorm * 0.6);
+      if (reaching) {
+        const reach = -1.55;
+        armLXTarget = reach + Math.sin(phase * 2.1 + walkStyle * 6.28) * 0.12;
+        armRXTarget = reach + Math.sin(phase * 1.8 + walkStyle * 5.1 + 1.7) * 0.12;
       } else {
-        const reaching = dist < 3.5 && !staggering;
-        const armAmp = 0.5 * (0.4 + speedNorm * 0.6);
-        if (reaching) {
-          const reach = -1.55;
-          armLXTarget = reach + Math.sin(phase * 2.1 + walkStyle * 6.28) * 0.12;
-          armRXTarget = reach + Math.sin(phase * 1.8 + walkStyle * 5.1 + 1.7) * 0.12;
-        } else {
-          armLXTarget = -stepL * armAmp + z.armDroopL;
-          armRXTarget = -stepR * armAmp + z.armDroopR;
-        }
+        armLXTarget = -stepL * armAmp + z.armDroopL;
+        armRXTarget = -stepR * armAmp + z.armDroopR;
       }
+    }
 
-      if (crawl > 0.001) {
-        const crawlArmL = -1.9 + crawlCycle * 0.9;
-        const crawlArmR = -1.9 + crawlCycle2 * 0.9;
-        armLXTarget = armLXTarget * (1 - crawl) + crawlArmL * crawl;
-        armRXTarget = armRXTarget * (1 - crawl) + crawlArmR * crawl;
-      }
+    if (crawl > 0.001) {
+      const crawlArmL = -1.9 + crawlCycle * 0.9;
+      const crawlArmR = -1.9 + crawlCycle2 * 0.9;
+      armLXTarget = armLXTarget * (1 - crawl) + crawlArmL * crawl;
+      armRXTarget = armRXTarget * (1 - crawl) + crawlArmR * crawl;
+    }
 
-      const reaching2 = dist < 3.5 && !staggering && !z.attackWindupActive;
-      let elbowLXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armLXTarget) * 0.4;
-      let elbowRXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armRXTarget) * 0.4;
+    const reaching2 = dist < 3.5 && !staggering && !z.attackWindupActive;
+    let elbowLXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armLXTarget) * 0.4;
+    let elbowRXTarget = reaching2 ? -0.9 : -0.15 - Math.max(0, armRXTarget) * 0.4;
 
-      if (crawl > 0.001) {
-        const crawlElbowL = -0.2 - Math.max(0, crawlCycle) * -0.5;
-        const crawlElbowR = -0.2 - Math.max(0, crawlCycle2) * -0.5;
-        elbowLXTarget = elbowLXTarget * (1 - crawl) + crawlElbowL * crawl;
-        elbowRXTarget = elbowRXTarget * (1 - crawl) + crawlElbowR * crawl;
-      }
+    if (crawl > 0.001) {
+      const crawlElbowL = -0.2 - Math.max(0, crawlCycle) * -0.5;
+      const crawlElbowR = -0.2 - Math.max(0, crawlCycle2) * -0.5;
+      elbowLXTarget = elbowLXTarget * (1 - crawl) + crawlElbowL * crawl;
+      elbowRXTarget = elbowRXTarget * (1 - crawl) + crawlElbowR * crawl;
+    }
 
-      if (idle > 0.01 && crawl < 0.5) {
-        const inv = (1 - idle) * (1 - crawl);
-        spineLeanTarget = spineLeanTarget * (1 - inv) + (0.06 + breathe * 0.02) * inv;
-        spineSideTarget = spineSideTarget * (1 - inv) + idleSway * inv;
-        spineTwistTarget *= (1 - inv);
-        headTwistTarget = headTwistTarget * (1 - inv) + Math.sin(z.idlePhase * 0.4) * 0.15 * inv;
-        headPitchTarget = headPitchTarget * (1 - inv) + (z.headPitchBase + breathe * 0.03) * inv;
-        armLXTarget = armLXTarget * (1 - inv) + (z.armDroopL + breathe * 0.02) * inv;
-        armRXTarget = armRXTarget * (1 - inv) + (z.armDroopR + breathe * 0.02) * inv;
-        pelvisBobTarget = pelvisBobTarget * (1 - inv) + breathe * 0.008 * inv;
-      }
-      if (hunt > 0.01 && !z.attackWindupActive) {
-        spineLeanTarget -= hunt * 0.08 * (1 - crawl);
-        headPitchTarget += hunt * 0.25 * (1 - crawl);
-        armLXTarget -= hunt * 0.25 * (1 - crawl);
-        armRXTarget -= hunt * 0.25 * (1 - crawl);
-      }
+    if (idle > 0.01 && crawl < 0.5) {
+      const inv = (1 - idle) * (1 - crawl);
+      spineLeanTarget = spineLeanTarget * (1 - inv) + (0.06 + breathe * 0.02) * inv;
+      spineSideTarget = spineSideTarget * (1 - inv) + idleSway * inv;
+      spineTwistTarget *= (1 - inv);
+      headTwistTarget = headTwistTarget * (1 - inv) + Math.sin(z.idlePhase * 0.4) * 0.15 * inv;
+      headPitchTarget = headPitchTarget * (1 - inv) + (z.headPitchBase + breathe * 0.03) * inv;
+      armLXTarget = armLXTarget * (1 - inv) + (z.armDroopL + breathe * 0.02) * inv;
+      armRXTarget = armRXTarget * (1 - inv) + (z.armDroopR + breathe * 0.02) * inv;
+      pelvisBobTarget = pelvisBobTarget * (1 - inv) + breathe * 0.008 * inv;
+    }
+    if (hunt > 0.01 && !z.attackWindupActive) {
+      spineLeanTarget -= hunt * 0.08 * (1 - crawl);
+      headPitchTarget += hunt * 0.25 * (1 - crawl);
+      armLXTarget -= hunt * 0.25 * (1 - crawl);
+      armRXTarget -= hunt * 0.25 * (1 - crawl);
+    }
 
-      if (z.mixer) {
-        updateZombieAnim(z, dt);
-        handleZombieAnimState(z, realSpeed);
-      } else if (skipVisual) {
-        joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
-      } else {
-        springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
-        springStep(anim, 'bankZ', -z.yawVel*0.05*speedNorm, K_BANK, C_BANK, dt);
-        springStep(anim, 'thighLX', thighLTarget, K_THIGH, C_THIGH, dt);
-        springStep(anim, 'thighRX', thighRTarget, K_THIGH, C_THIGH, dt);
-        springStep(anim, 'kneeLX', kneeLTarget, K_KNEE, C_KNEE, dt);
-        springStep(anim, 'kneeRX', kneeRTarget, K_KNEE, C_KNEE, dt);
-        springStep(anim, 'footLX', footLTarget, K_FOOT, C_FOOT, dt);
-        springStep(anim, 'footRX', footRTarget, K_FOOT, C_FOOT, dt);
-        springStep(anim, 'pelvisRoll', pelvisRollTarget, K_PELVIS, C_PELVIS, dt);
-        springStep(anim, 'pelvisTwist', pelvisTwistTarget, K_PELVIS, C_PELVIS, dt);
-        springStep(anim, 'pelvisBob', pelvisBobTarget, K_PELVIS, C_PELVIS, dt);
-        springStep(anim, 'spineTwist', spineTwistTarget, K_SPINE, C_SPINE, dt);
-        springStep(anim, 'spineLean', spineLeanTarget, K_SPINE, C_SPINE, dt);
-        springStep(anim, 'spineRoll', spineRollTarget, K_SPINE, C_SPINE, dt);
-        springStep(anim, 'spineSide', spineSideTarget, K_SPINE, C_SPINE, dt);
-        springStep(anim, 'headTwist', headTwistTarget, K_HEAD, C_HEAD, dt);
-        springStep(anim, 'headRoll', headRollTarget, K_HEAD*0.7, C_HEAD, dt);
-        springStep(anim, 'headPitch', headPitchTarget, K_HEAD, C_HEAD, dt);
-        springStep(anim, 'armLX', armLXTarget, K_ARM, C_ARM, dt);
-        springStep(anim, 'armRX', armRXTarget, K_ARM, C_ARM, dt);
-        springStep(anim, 'elbowLX', elbowLXTarget, K_ELBOW, C_ELBOW, dt);
-        springStep(anim, 'elbowRX', elbowRXTarget, K_ELBOW, C_ELBOW, dt);
+    if (skipVisual) {
+      joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
+    } else {
+      springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
+      springStep(anim, 'bankZ', -z.yawVel*0.05*speedNorm, K_BANK, C_BANK, dt);
+      springStep(anim, 'thighLX', thighLTarget, K_THIGH, C_THIGH, dt);
+      springStep(anim, 'thighRX', thighRTarget, K_THIGH, C_THIGH, dt);
+      springStep(anim, 'kneeLX', kneeLTarget, K_KNEE, C_KNEE, dt);
+      springStep(anim, 'kneeRX', kneeRTarget, K_KNEE, C_KNEE, dt);
+      springStep(anim, 'footLX', footLTarget, K_FOOT, C_FOOT, dt);
+      springStep(anim, 'footRX', footRTarget, K_FOOT, C_FOOT, dt);
+      springStep(anim, 'pelvisRoll', pelvisRollTarget, K_PELVIS, C_PELVIS, dt);
+      springStep(anim, 'pelvisTwist', pelvisTwistTarget, K_PELVIS, C_PELVIS, dt);
+      springStep(anim, 'pelvisBob', pelvisBobTarget, K_PELVIS, C_PELVIS, dt);
+      springStep(anim, 'spineTwist', spineTwistTarget, K_SPINE, C_SPINE, dt);
+      springStep(anim, 'spineLean', spineLeanTarget, K_SPINE, C_SPINE, dt);
+      springStep(anim, 'spineRoll', spineRollTarget, K_SPINE, C_SPINE, dt);
+      springStep(anim, 'spineSide', spineSideTarget, K_SPINE, C_SPINE, dt);
+      springStep(anim, 'headTwist', headTwistTarget, K_HEAD, C_HEAD, dt);
+      springStep(anim, 'headRoll', headRollTarget, K_HEAD*0.7, C_HEAD, dt);
+      springStep(anim, 'headPitch', headPitchTarget, K_HEAD, C_HEAD, dt);
+      springStep(anim, 'armLX', armLXTarget, K_ARM, C_ARM, dt);
+      springStep(anim, 'armRX', armRXTarget, K_ARM, C_ARM, dt);
+      springStep(anim, 'elbowLX', elbowLXTarget, K_ELBOW, C_ELBOW, dt);
+      springStep(anim, 'elbowRX', elbowRXTarget, K_ELBOW, C_ELBOW, dt);
 
-        joints.pelvis.rotation.z = anim.pelvisRoll;
-        joints.pelvis.rotation.y = anim.pelvisTwist;
-        joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
-        joints.spineLower.rotation.x = anim.spineLean*0.4;
-        joints.spineLower.rotation.z = anim.spineRoll*0.4 + anim.spineSide*0.3 + anim.bankZ;
-        joints.spineUpper.rotation.y = anim.spineTwist;
-        joints.spineUpper.rotation.x = anim.spineLean*0.6;
-        joints.spineUpper.rotation.z = anim.spineRoll*0.6 + anim.spineSide*0.7 + anim.bankZ*0.5;
-        joints.neck.rotation.y = anim.headTwist*0.4;
-        joints.neck.rotation.x = anim.headPitch*0.3;
-        joints.head.rotation.y = anim.headTwistLag;
-        joints.head.rotation.z = anim.headRollLag;
-        joints.head.rotation.x = anim.headPitchLag;
-        joints.shoulderL.rotation.x = anim.armLX;
-        joints.shoulderR.rotation.x = anim.armRX;
-        joints.elbowL.rotation.x = anim.elbowLX;
-        joints.elbowR.rotation.x = anim.elbowRX;
-        joints.thighL.rotation.x = anim.thighLX;
-        joints.thighR.rotation.x = anim.thighRX;
-        joints.kneeL.rotation.x = anim.kneeLX;
-        joints.kneeR.rotation.x = anim.kneeRX;
-        joints.footL.rotation.x = anim.footLX;
-        joints.footR.rotation.x = anim.footRX;
+      joints.pelvis.rotation.z = anim.pelvisRoll;
+      joints.pelvis.rotation.y = anim.pelvisTwist;
+      joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
+      joints.spineLower.rotation.x = anim.spineLean*0.4;
+      joints.spineLower.rotation.z = anim.spineRoll*0.4 + anim.spineSide*0.3 + anim.bankZ;
+      joints.spineUpper.rotation.y = anim.spineTwist;
+      joints.spineUpper.rotation.x = anim.spineLean*0.6;
+      joints.spineUpper.rotation.z = anim.spineRoll*0.6 + anim.spineSide*0.7 + anim.bankZ*0.5;
+      joints.neck.rotation.y = anim.headTwist*0.4;
+      joints.neck.rotation.x = anim.headPitch*0.3;
+      joints.head.rotation.y = anim.headTwistLag;
+      joints.head.rotation.z = anim.headRollLag;
+      joints.head.rotation.x = anim.headPitchLag;
+      joints.shoulderL.rotation.x = anim.armLX;
+      joints.shoulderR.rotation.x = anim.armRX;
+      joints.elbowL.rotation.x = anim.elbowLX;
+      joints.elbowR.rotation.x = anim.elbowRX;
+      joints.thighL.rotation.x = anim.thighLX;
+      joints.thighR.rotation.x = anim.thighRX;
+      joints.kneeL.rotation.x = anim.kneeLX;
+      joints.kneeR.rotation.x = anim.kneeRX;
+      joints.footL.rotation.x = anim.footLX;
+      joints.footR.rotation.x = anim.footRX;
 
-        applyLookAt(z, joints, player, dt, alerted);
-        applyFootIK(z, joints, anim, dt);
-        applyBodyLean(z, joints, player, dt, alerted);
-      }
+      applyLookAt(z, joints, player, dt, alerted);
+      applyFootIK(z, joints, anim, dt);
+      applyBodyLean(z, joints, player, dt, alerted);
     }
 
     if (z.dismembered.head && !z.dying) {
@@ -3327,7 +2856,6 @@ function updateZombies(dt) {
       continue;
     }
 
-    // 🎯 Spitter/boomer NÃO causam dano por contato
     const dealsContactDamage = ZombieAI.shouldDealContactDamage(z);
 
     if (dealsContactDamage &&
@@ -3439,7 +2967,6 @@ function spawnWeaponPickup(weaponId, x, z, y = 0.9, isDrop = false) {
   });
 }
 function setupWeaponSpawns() {
-  // 🎯 Spawns baseados nos POIs
   const houses = [
     { x:-14, z:-14 }, { x:14, z:-14 }, { x:-14, z:14 }, { x:14, z:14 },
     { x:-28, z:-8 }, { x:28, z:-8 }, { x:-28, z:8 }, { x:28, z:8 },
@@ -3451,20 +2978,16 @@ function setupWeaponSpawns() {
   const shuffled = [...pool].sort(() => Math.random() - 0.5);
   houses.slice(5).forEach((h, i) => spawnWeaponPickup(shuffled[i % shuffled.length], h.x - 2, h.z + 0.5, 0.95));
 
-  // 🎯 Weapon spawns especiais por POI
-  // Delegacia: armas de fogo de alta qualidade
   if (world.pois && world.pois.police) {
     const p = world.pois.police;
     spawnWeaponPickup('rifle', p.x, p.z, 0.95);
     spawnWeaponPickup('shotgun', p.x + 3, p.z, 0.95);
   }
-  // Hospital: armas de suporte
   if (world.pois && world.pois.hospital) {
     const p = world.pois.hospital;
     spawnWeaponPickup('smg', p.x, p.z, 0.95);
     spawnWeaponPickup('pistol', p.x + 3, p.z, 0.95);
   }
-  // Igreja: reaperScythe raro
   if (world.pois && world.pois.church) {
     const p = world.pois.church;
     spawnWeaponPickup('katana', p.x, p.z, 0.95);
@@ -3556,13 +3079,11 @@ function updateWeaponPickups(dt) {
 function tryBuyWeapon() {
   if (!nearWeapon || nearWeapon.bought) return;
   const w = WEAPONS[nearWeapon.weaponId];
-  // 🎯 PERK: shop discount
   const finalCost = Math.round(w.cost * state.shopDiscount);
   if (!nearWeapon.isDrop && state.coins < finalCost) { Sfx.playPlayerHurt(); return; }
   if (!nearWeapon.isDrop) state.coins -= finalCost;
   state.inventory[w.slot] = nearWeapon.weaponId;
   if (w.type === 'ranged') {
-    // 🎯 PERK: reserve ammo bonus
     const reserveBonus = Math.floor(w.reserveMax * state.reserveAmmoBonus);
     state.ammo[w.id] = { mag: w.magSize, reserve: Math.min(w.reserveMax * 2, w.reserveMax + reserveBonus) };
   }
@@ -3714,7 +3235,6 @@ function animate() {
     Extraction.updateExtraction(dt);
     updateBossProjectiles(dt);
 
-    // 🎯 POI discovery
     checkPOIDiscovery();
 
     if (state.downed) {
@@ -3817,23 +3337,6 @@ function updateRecordDisplay() {
 updateRecordDisplay();
 
 function startGame() {
-  if (!isModelReady()) {
-    const btn = document.getElementById('btn-start');
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = 'CARREGANDO...';
-      const check = setInterval(() => {
-        if (isModelReady()) {
-          clearInterval(check);
-          btn.disabled = false;
-          btn.textContent = 'JOGAR SOLO';
-          startGame();
-        }
-      }, 300);
-    }
-    return;
-  }
-
   if (state.waveIntervalId !== null) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; }
   if (state.waveStartTimeoutId !== null) { clearTimeout(state.waveStartTimeoutId); state.waveStartTimeoutId = null; }
   Sfx.initAudio(); Sfx.resumeAudio();
