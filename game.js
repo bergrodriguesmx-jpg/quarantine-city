@@ -2516,8 +2516,7 @@ function updateZombies(dt) {
     const dxLod = z.mesh.position.x - player.position.x;
     const dzLod = z.mesh.position.z - player.position.z;
     const distLod2 = dxLod*dxLod + dzLod*dzLod;
-    const skipVisual = distLod2 > 400 && ((i & 1) !== (Math.floor(performance.now() / 33) & 1));
-
+   const skipVisual = false; // 🐛 sempre renderiza
     z.emergeTime += dt;
     const emerge = Math.min(1, z.emergeTime/1.5);
     const ud = z.mesh.userData;
