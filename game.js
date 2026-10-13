@@ -3586,6 +3586,24 @@ function updateRecordDisplay() {
 updateRecordDisplay();
 
 function startGame() {
+  // 🎯 Espera o XBot carregar antes de deixar começar
+  if (!isModelReady()) {
+    const btn = document.getElementById('btn-start');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'CARREGANDO...';
+      const check = setInterval(() => {
+        if (isModelReady()) {
+          clearInterval(check);
+          btn.disabled = false;
+          btn.textContent = 'JOGAR SOLO';
+          startGame();
+        }
+      }, 300);
+    }
+    return;
+  }
+
   if (state.waveIntervalId !== null) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; }
   if (state.waveStartTimeoutId !== null) { clearTimeout(state.waveStartTimeoutId); state.waveStartTimeoutId = null; }
   Sfx.initAudio(); Sfx.resumeAudio();
