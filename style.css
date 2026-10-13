@@ -28,10 +28,12 @@ canvas { display: block; }
 .menu-container {
   text-align: center;
   border: 4px solid #cc0000;
-  padding: 40px 50px;
+  padding: 30px 50px;
   background: #0b0b0b;
   box-shadow: 0 0 30px rgba(204, 0, 0, 0.5);
-  min-width: 380px;
+  min-width: 420px;
+  max-height: 95vh;
+  overflow-y: auto;
 }
 .menu-container h1 {
   color: #cc0000; font-size: 2.6rem;
@@ -540,7 +542,6 @@ body.downed #crosshair { opacity: 0; }
   filter: grayscale(0.5);
 }
 
-/* Ícone principal (caixa de munição 3D) */
 .shop-icon-main {
   width: 84px;
   height: 84px;
@@ -560,7 +561,6 @@ body.downed #crosshair { opacity: 0; }
   pointer-events: none;
 }
 
-/* Ícone secundário (arma 3D no canto) */
 .shop-icon-gun {
   position: absolute;
   top: 6px;
@@ -795,6 +795,7 @@ body.downed #crosshair { opacity: 0; }
   position: fixed; inset: 0;
   pointer-events: none; z-index: 14;
 }
+
 /* ============================================ */
 /* CALIBRAÇÃO DE ARMAS                          */
 /* ============================================ */
@@ -992,6 +993,7 @@ body.downed #crosshair { opacity: 0; }
   background: #ff2020;
   box-shadow: 0 0 15px #cc0000;
 }
+
 /* ============================================ */
 /* CONTROLES                                    */
 /* ============================================ */
@@ -1123,4 +1125,122 @@ body.downed #crosshair { opacity: 0; }
 .controls-actions {
   display: flex;
   gap: 8px;
+}
+
+/* ============================================ */
+/* 🎯 NOVO: SKIN SELECTOR                       */
+/* ============================================ */
+.skin-selector {
+  margin: 14px auto 20px;
+  padding: 14px 16px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 2px solid #333;
+  width: 100%;
+  max-width: 340px;
+}
+.skin-title {
+  color: #ffdd00;
+  font-size: 12px;
+  letter-spacing: 3px;
+  margin-bottom: 10px;
+  text-align: center;
+  font-weight: bold;
+  text-shadow: 1px 1px 0 #000;
+}
+.skin-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.skin-option {
+  padding: 8px 4px;
+  background: #1a1a1a;
+  border: 2px solid #333;
+  cursor: pointer;
+  font-family: inherit;
+  color: #888;
+  transition: 0.15s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.skin-option:hover {
+  border-color: #666;
+  color: #fff;
+  background: #222;
+}
+.skin-option.active {
+  border-color: #ffdd00;
+  background: #2a2200;
+  color: #ffdd00;
+  box-shadow: 0 0 12px rgba(255, 220, 0, 0.4);
+}
+.skin-option .skin-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+.skin-option .skin-name {
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+.skin-perk-preview {
+  text-align: center;
+  padding: 8px 10px;
+  background: rgba(255, 220, 0, 0.06);
+  border-left: 3px solid #ffdd00;
+  font-size: 11px;
+  color: #ccc;
+  line-height: 1.5;
+  min-height: 42px;
+}
+.skin-perk-preview .perk-name {
+  color: #ffdd00;
+  font-weight: bold;
+  font-size: 12px;
+  letter-spacing: 2px;
+  display: block;
+  margin-bottom: 3px;
+  text-shadow: 1px 1px 0 #000;
+}
+
+/* ============================================ */
+/* 🎯 NOVO: POI NOTIFICATION                    */
+/* ============================================ */
+#poi-notification {
+  position: fixed;
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  background: rgba(0, 0, 0, 0.92);
+  border: 3px solid #4ade80;
+  padding: 14px 34px;
+  color: #4ade80;
+  font-family: 'Courier New', monospace;
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  z-index: 55;
+  opacity: 0;
+  transition: all 0.4s ease-out;
+  pointer-events: none;
+  text-align: center;
+  box-shadow: 0 0 25px rgba(74, 222, 128, 0.5);
+  text-shadow: 0 0 10px rgba(74, 222, 128, 0.6), 2px 2px 0 #000;
+}
+#poi-notification.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+#poi-notification .poi-name {
+  color: #fff;
+  font-size: 13px;
+  display: block;
+  margin-top: 6px;
+  letter-spacing: 1px;
+  font-weight: normal;
+  text-shadow: 1px 1px 0 #000;
+  opacity: 0.85;
 }
