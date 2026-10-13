@@ -43,20 +43,28 @@ window.ZOMBIE_TYPES_FROM_MODULE = ZOMBIE_TYPES;
 
 const controls = getControls();
 
-// ════════ PRECACHE DOS ASSETS EXTRAÍDOS ════════
+// ════════ PRECACHE DOS ASSETS ════════
 window.__assetsReady = false;
 (async () => {
   console.log('[game] 📦 Carregando assets extraídos...');
   try {
     // 🎯 XBot PRIMEIRO — zumbis dependem dele
     await preloadZombieModel();
-    console.log('[game] ✅ XBot pronto');
+    if (isModelReady()) {
+      console.log('[game] ✅ XBot pronto');
+    } else {
+      console.error('[game] ❌ XBot NÃO carregou — zumbis vão usar fallback blocky');
+      console.error('[game] 👉 Converta XBot.fbx para XBot.glb (https://products.aspose.app/3d/conversion/fbx-to-glb)');
+    }
+
     await preloadZombieAnims();
-    console.log('[game] ✅ Animações prontas');
+    if (hasZombieAnims()) console.log('[game] ✅ Animações prontas');
+    else console.warn('[game] ⚠️ Nenhuma animação Mixamo carregou');
+
     await preloadCharacters();
     console.log('[game] ✅ Personagens prontos');
 
-    // Assets secundários (podem demorar)
+    // Assets secundários (não bloqueiam o jogo)
     await precacheAllWeaponGLBs();
     await preloadGibs();
     await preloadGibGLBs();
@@ -810,6 +818,16 @@ function proceduralFallback(opts = {}) {
   };
 
   root.scale.setScalar(scale);
+
+  // Corrige pés flutuando
+  root.updateMatrixWorld(true);
+  const _fb = new THREE.Box3().setFromObject(root);
+  const feetOffset = _fb.min.y;
+  if (Math.abs(feetOffset) > 0.001) {
+    for (const child of root.children) {
+      child.position.y -= feetOffset;
+    }
+  }
 
   const localBoxes = {
     head:  new THREE.Box3(
@@ -1855,7 +1873,6 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     checkLevelUp();
     randomDismemberOnDeath(z);
 
-    // 🔧 PATCH C: proteção contra torso null
     const torsoWorldPos = new THREE.Vector3();
     if (z.mesh.userData.torso) {
       z.mesh.userData.torso.getWorldPosition(torsoWorldPos);
@@ -3142,7 +3159,7 @@ function updateZombies(dt) {
       armRXTarget -= hunt * 0.25 * (1 - crawl);
     }
 
-    // 🔧 PATCH B: modo XBot usa SOMENTE o mixer — não toca em bones proceduralmente
+    // Modo XBot usa SOMENTE o mixer — não mexe em bones proceduralmente
     if (z.mixer) {
       updateZombieAnim(z, dt);
       handleZombieAnimState(z, realSpeed);
