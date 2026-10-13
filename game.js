@@ -2483,7 +2483,7 @@ function updateZombieLOD() {
     const dx = z.mesh.position.x - camX;
     const dz = z.mesh.position.z - camZ;
     const d2 = dx*dx + dz*dz;
-    z.mesh.visible = d2 < 2500;
+     z.mesh.visible = true; // 🐛 nunca esconder (era o que causava zumbis transparentes)
   }
 }
 
