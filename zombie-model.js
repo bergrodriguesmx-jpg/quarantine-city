@@ -1,6 +1,7 @@
 // ============================================================
 // zombie-model.js
-// Carrega o personagem Mixamo (XBot.fbx) e cria clones rigados.
+// Carrega o XBot.fbx (Mixamo) e cria clones rigados.
+// Mapeamento robusto de bones + diagnóstico no console.
 // ============================================================
 
 import * as THREE from 'three';
@@ -13,59 +14,107 @@ const BASE = 'assets/zombie-anim/';
 let baseScene = null;
 let loaded = false;
 
-// Nomes dos bones do Mixamo (úteis pra outras partes do código)
-export const BONE_NAMES = {
-  head:      'mixamorigHead',
-  neck:      'mixamorigNeck',
-  spineUpper:'mixamorigSpine1',
-  spineLower:'mixamorigSpine',
-  pelvis:    'mixamorigHips',
-  shoulderL: 'mixamorigLeftArm',
-  elbowL:    'mixamorigLeftForeArm',
-  handL:     'mixamorigLeftHand',
-  shoulderR: 'mixamorigRightArm',
-  elbowR:    'mixamorigRightForeArm',
-  handR:     'mixamorigRightHand',
-  thighL:    'mixamorigLeftUpLeg',
-  kneeL:     'mixamorigLeftLeg',
-  footL:     'mixamorigLeftFoot',
-  thighR:    'mixamorigRightUpLeg',
-  kneeR:     'mixamorigRightLeg',
-  footR:     'mixamorigRightFoot',
+// Candidatos aceitos por joint (ordem de preferência)
+const BONE_CANDIDATES = {
+  head:       ['Head'],
+  neck:       ['Neck'],
+  spineUpper: ['Spine1', 'Spine2'],
+  spineLower: ['Spine'],
+  pelvis:     ['Hips'],
+  shoulderL:  ['LeftArm'],
+  elbowL:     ['LeftForeArm'],
+  handL:      ['LeftHand'],
+  shoulderR:  ['RightArm'],
+  elbowR:     ['RightForeArm'],
+  handR:      ['RightHand'],
+  thighL:     ['LeftUpLeg'],
+  kneeL:      ['LeftLeg'],
+  footL:      ['LeftFoot'],
+  thighR:     ['RightUpLeg'],
+  kneeR:      ['RightLeg'],
+  footR:      ['RightFoot'],
 };
 
+// ──────────────────────────────────────────────
+// Normaliza qualquer nome de bone do Mixamo
+// "mixamorig:Hips" → "Hips"
+// "mixamorigHips.001" → "Hips"
+// "Armature|mixamorigHips" → "Hips"
+// ──────────────────────────────────────────────
 function normalizeName(name) {
   if (!name) return null;
-  let n = name;
+  let n = String(name).trim();
+  const pipe = n.lastIndexOf('|');
+  if (pipe >= 0) n = n.substring(pipe + 1);
   const colon = n.indexOf(':');
-  if (colon >= 0) n = 'mixamorig' + n.substring(colon + 1);
+  if (colon >= 0) n = n.substring(colon + 1);
   const dot = n.indexOf('.');
   if (dot >= 0) n = n.substring(0, dot);
+  if (n.startsWith('mixamorig')) n = n.substring('mixamorig'.length);
+  if (n.startsWith('_')) n = n.substring(1);
   return n;
 }
 
+function findBone(bonesMap, candidates) {
+  for (const c of candidates) if (bonesMap[c]) return bonesMap[c];
+  const lower = {};
+  for (const k in bonesMap) lower[k.toLowerCase()] = bonesMap[k];
+  for (const c of candidates) {
+    const hit = lower[c.toLowerCase()];
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// ══════════════════════════════════════════════
+// PRELOAD
+// ══════════════════════════════════════════════
 export async function preloadZombieModel() {
   if (loaded) return baseScene;
   try {
     const fbx = await loader.loadAsync(BASE + 'XBot.fbx');
     baseScene = fbx.scene;
 
-    // Normaliza: bone names limpos
     baseScene.traverse(o => {
       if (o.isMesh) {
         o.castShadow = true;
         o.receiveShadow = true;
+        o.frustumCulled = false;
         if (o.material) {
           const mats = Array.isArray(o.material) ? o.material : [o.material];
           for (const m of mats) {
             if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+            m.needsUpdate = true;
           }
         }
       }
     });
 
+    // Diagnóstico: lista todos os bones e testa o mapeamento
+    const rawNames = [];
+    const bonesMap = {};
+    baseScene.traverse(o => {
+      if (!o.isBone) return;
+      rawNames.push(o.name);
+      const n = normalizeName(o.name);
+      if (n) bonesMap[n] = o;
+    });
+    console.log(`[zombie-model] 🦴 ${rawNames.length} bones no XBot`);
+    console.log('[zombie-model] Primeiros bones:', rawNames.slice(0, 12));
+
+    const missing = [];
+    for (const [ourName, candidates] of Object.entries(BONE_CANDIDATES)) {
+      const found = findBone(bonesMap, candidates);
+      if (!found) missing.push(`${ourName} (tentou ${candidates.join('|')})`);
+    }
+    if (missing.length) {
+      console.warn('[zombie-model] ⚠️ Bones NÃO encontrados:', missing);
+      console.warn('[zombie-model] Nomes disponíveis:', Object.keys(bonesMap).slice(0, 40).join(', '));
+    } else {
+      console.log('[zombie-model] ✅ Todos os 17 bones mapeados');
+    }
+
     loaded = true;
-    console.log('[zombie-model] ✅ XBot carregado');
     return baseScene;
   } catch (e) {
     console.error('[zombie-model] ❌ Falha ao carregar XBot:', e);
@@ -75,57 +124,58 @@ export async function preloadZombieModel() {
 
 export function isModelReady() { return loaded; }
 
-// Cria um clone rigado + retorna estrutura de bones e partes
+// ══════════════════════════════════════════════
+// INSTÂNCIA
+// ══════════════════════════════════════════════
 export function createZombieInstance() {
   if (!baseScene) return null;
 
   const clone = skeletonClone(baseScene);
 
-  // Mapa nome do bone → objeto Bone
-  const bones = {};
+  const bonesMap = {};
   clone.traverse(o => {
     if (!o.isBone) return;
     const norm = normalizeName(o.name);
-    if (norm) bones[norm] = o;
+    if (norm) bonesMap[norm] = o;
   });
 
-  // Resolve cada bone que interessa
   const joints = {};
-  for (const [ourName, mixName] of Object.entries(BONE_NAMES)) {
-    joints[ourName] = bones[mixName] || null;
+  for (const [ourName, candidates] of Object.entries(BONE_CANDIDATES)) {
+    joints[ourName] = findBone(bonesMap, candidates) || null;
   }
 
-  // Corrige escala — XBot fica ~1.9m; escala pra 1.8m
+  // Escala pra 1.8m
   clone.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(clone);
   const height = box.max.y - box.min.y;
-  const targetHeight = 1.8;
-  const scale = height > 0.1 ? targetHeight / height : 1;
+  const scale = height > 0.1 ? 1.8 / height : 1;
   clone.scale.setScalar(scale);
 
-  // Reajusta pra pés no chão
+  // Pés no chão
   clone.updateMatrixWorld(true);
   const box2 = new THREE.Box3().setFromObject(clone);
   clone.position.y = -box2.min.y;
 
-  return {
-    scene: clone,
-    bones,
-    joints,
-    scale,
-  };
+  return { scene: clone, bones: bonesMap, joints, scale };
 }
 
-// Aplica cor (tint) numa instância
-export function tintZombie(instance, skinColor, shirtColor) {
+// ══════════════════════════════════════════════
+// TINT
+// ══════════════════════════════════════════════
+export function tintZombie(instance, skinColor) {
   const scene = instance.scene;
   scene.traverse(o => {
     if (!o.isMesh || !o.material) return;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
     for (const m of mats) {
       if (m.color) {
-        // XBot usa um único material — usa skin como base
         m.color.setHex(skinColor);
+        // Dessatura um pouco pra parecer cadavérico
+        const c = m.color;
+        const gray = (c.r + c.g + c.b) / 3;
+        c.r = c.r * 0.75 + gray * 0.25;
+        c.g = c.g * 0.75 + gray * 0.25;
+        c.b = c.b * 0.75 + gray * 0.25;
       }
     }
   });
