@@ -1,5 +1,5 @@
 // ============================================================
-// zombie-anim.js — v8 (retargeting + nomes normalizados)
+// zombie-anim.js — v9 (retargeting sem clone, mutação in-place)
 // ============================================================
 
 import * as THREE from 'three';
@@ -29,7 +29,7 @@ const loadedClips = {};
 const loadPromises = {};
 let preloaded = false;
 
-// ── Mesma função usada em zombie-model.js ──
+// Normaliza nome: "mixamorig:Hips" / "mixamorigHips" → "Hips"
 function canonicalBoneName(name) {
   if (!name) return name;
   let n = String(name);
@@ -43,7 +43,7 @@ function canonicalBoneName(name) {
   return n;
 }
 
-// Reescreve track "mixamorig:Hips.position" → "Hips.position"
+// Track "mixamorig:Hips.position" → "Hips.position"
 function canonicalTrackName(trackName) {
   const dot = trackName.lastIndexOf('.');
   if (dot < 0) return trackName;
@@ -52,20 +52,18 @@ function canonicalTrackName(trackName) {
   return canonicalBoneName(bonePart) + propPart;
 }
 
+// Mutação em-place (track.clone() NÃO existe)
 function retargetClip(clip) {
+  if (!clip || !clip.tracks) return clip;
   let changed = 0;
-  const newTracks = clip.tracks.map(track => {
+  for (const track of clip.tracks) {
     const newName = canonicalTrackName(track.name);
-    if (newName === track.name) return track;
-    changed++;
-    const t = track.clone();
-    t.name = newName;
-    return t;
-  });
-  if (changed > 0) {
-    // console.log(`[zombie-anim] 🔁 ${clip.name}: ${changed}/${clip.tracks.length} tracks renomeados`);
+    if (newName !== track.name) {
+      track.name = newName;
+      changed++;
+    }
   }
-  return new THREE.AnimationClip(clip.name, clip.duration, newTracks);
+  return clip;
 }
 
 async function loadAnyAnim(filename) {
@@ -116,25 +114,6 @@ export function setupZombieAnimator(z) {
   if (!z.instance) return false;
   if (z.mixer) return true;
 
-  // Debug: comparar names de bones do skeleton vs tracks do primeiro clip
-  const boneNames = [];
-  z.instance.scene.traverse(o => { if (o.isBone) boneNames.push(o.name); });
-  const firstClip = Object.values(loadedClips)[0];
-
-  console.log(`[zombie-anim] 🦴 Skeleton tem ${boneNames.length} bones (ex: ${boneNames.slice(0,3).join(', ')})`);
-  if (firstClip) {
-    console.log(`[zombie-anim] 🎬 Track names do clip (ex: ${firstClip.tracks.slice(0,3).map(t => t.name).join(', ')})`);
-    // Checa se o primeiro track encontra o bone
-    const firstTrack = firstClip.tracks[0];
-    if (firstTrack) {
-      const dot = firstTrack.name.lastIndexOf('.');
-      const bonePart = firstTrack.name.substring(0, dot);
-      const found = boneNames.includes(bonePart);
-      if (found) console.log(`[zombie-anim] ✅ Match OK: "${bonePart}" existe no skeleton`);
-      else console.warn(`[zombie-anim] ⚠️ Match FALHOU: "${bonePart}" NÃO existe no skeleton`);
-    }
-  }
-
   const mixer = new THREE.AnimationMixer(z.instance.scene);
   z.mixer = mixer;
   z.mixerActions = {};
@@ -150,22 +129,16 @@ export function setupZombieAnimator(z) {
     z.mixerActions[name] = action;
   }
 
-  // Toca walk como default (idle pode ter falhado)
-  if (z.mixerActions.walk) {
-    z.mixerActions.walk.play();
-    z.currentAnim = z.mixerActions.walk;
-    z.currentAnimName = 'walk';
-  } else if (z.mixerActions.idle) {
-    z.mixerActions.idle.play();
-    z.currentAnim = z.mixerActions.idle;
-    z.currentAnimName = 'idle';
-  } else {
-    const firstName = Object.keys(z.mixerActions)[0];
-    if (firstName) {
-      z.mixerActions[firstName].play();
-      z.currentAnim = z.mixerActions[firstName];
-      z.currentAnimName = firstName;
-    }
+  // Default: walk se existir, senão idle, senão o primeiro disponível
+  const defaultName =
+    (z.mixerActions.walk && 'walk') ||
+    (z.mixerActions.idle && 'idle') ||
+    Object.keys(z.mixerActions)[0];
+
+  if (defaultName) {
+    z.mixerActions[defaultName].play();
+    z.currentAnim = z.mixerActions[defaultName];
+    z.currentAnimName = defaultName;
   }
 
   return true;
