@@ -1,7 +1,5 @@
 // ============================================================
-// zombie-anim.js — v10 (retarget dinâmico + logs detalhados)
-// Em vez de renomear as tracks para uma forma fixa, procuramos
-// o bone REAL no skeleton e reescrevemos a track pra ele.
+// zombie-anim.js — v11 (retarget agressivo + logs detalhados)
 // ============================================================
 
 import * as THREE from 'three';
@@ -31,17 +29,15 @@ const loadedClips = {};
 const loadPromises = {};
 let preloaded = false;
 
-function canonicalBoneName(name) {
-  if (!name) return name;
-  let n = String(name);
-  const pipe = n.lastIndexOf('|');
-  if (pipe >= 0) n = n.substring(pipe + 1);
-  const colon = n.indexOf(':');
-  if (colon >= 0) n = n.substring(colon + 1);
-  n = n.replace(/^mixamorig[:_]?/i, '');
-  const dot = n.indexOf('.');
-  if (dot >= 0) n = n.substring(0, dot);
-  return n;
+function stripPrefix(name) {
+  return String(name).replace(/^mixamorig[:_]?/i, '').replace(/^Armature\|/, '');
+}
+function stripSuffix(name) {
+  const dot = name.indexOf('.');
+  return dot >= 0 ? name.substring(0, dot) : name;
+}
+function normalize(name) {
+  return stripSuffix(stripPrefix(name)).toLowerCase().replace(/[\s_\-:]/g, '');
 }
 
 async function loadAnyAnim(filename) {
@@ -60,15 +56,12 @@ async function loadAnim(name, candidates) {
     for (const file of candidates) {
       try {
         const clip = await loadAnyAnim(file);
-        if (!clip) continue;
+        if (!clip || clip.tracks.length === 0) continue;
         loadedClips[name] = clip;
         console.log(`[zombie-anim] ✅ ${name} ← ${file} (${clip.tracks.length} tracks, ${clip.duration.toFixed(2)}s)`);
         return clip;
-      } catch (err) {
-        console.warn(`[zombie-anim] ⚠️ ${name} ← ${file}: ${err.message}`);
-      }
+      } catch (_) { /* ignora 404 */ }
     }
-    console.warn(`[zombie-anim] ❌ ${name}: nenhum candidato funcionou`);
     return null;
   })();
   return loadPromises[name];
@@ -82,10 +75,6 @@ export async function preloadZombieAnims() {
   preloaded = true;
   const loaded = Object.keys(loadedClips).length;
   console.log(`[zombie-anim] 📦 ${loaded}/${entries.length} animações prontas`);
-  if (loaded > 0) {
-    const first = Object.values(loadedClips)[0];
-    console.log(`[zombie-anim] 📋 Amostra de tracks originais do 1º clip:`, first.tracks.slice(0, 5).map(t => t.name));
-  }
 }
 
 export function hasZombieAnims() {
@@ -93,21 +82,54 @@ export function hasZombieAnims() {
 }
 
 // ════════════════════════════════════════════════════════════
-// RETARGET DINÂMICO
-// Pra cada track, achamos o bone correspondente no skeleton
-// e reescrevemos a track com o nome EXATO do bone do skeleton.
+// RETARGET AGRESSIVO
+// Monta um mapa com TODAS as variações possíveis de cada bone.
+// Pra cada track, testa 5 padrões diferentes.
 // ════════════════════════════════════════════════════════════
-function buildRetargetedClip(clip, root) {
-  // Mapa lowercase → nome real do bone
-  const boneMap = new Map();
+function buildBoneLookup(root) {
+  const lookup = new Map();
+  const boneNames = [];
+
   root.traverse(o => {
-    if (o.isBone) {
-      boneMap.set(o.name.toLowerCase(), o.name);
-      const canon = canonicalBoneName(o.name).toLowerCase();
-      if (canon && !boneMap.has(canon)) boneMap.set(canon, o.name);
+    if (!o.isBone) return;
+    const real = o.name;
+    boneNames.push(real);
+
+    // Registra todas as variações que apontam pro mesmo bone real
+    const variants = new Set([
+      real,                              // "mixamorigHips"
+      real.toLowerCase(),                // "mixamorighips"
+      stripPrefix(real),                 // "Hips"
+      stripPrefix(real).toLowerCase(),   // "hips"
+      normalize(real),                   // "hips"
+    ]);
+
+    for (const v of variants) {
+      if (!lookup.has(v)) lookup.set(v, real);
     }
   });
 
+  return { lookup, boneNames };
+}
+
+function findRealBone(trackBoneName, lookup) {
+  const variants = [
+    trackBoneName,                              // "mixamorig:Hips"
+    trackBoneName.toLowerCase(),                // "mixamorig:hips"
+    stripPrefix(trackBoneName),                 // "Hips"
+    stripPrefix(trackBoneName).toLowerCase(),   // "hips"
+    normalize(trackBoneName),                   // "hips"
+  ];
+
+  for (const v of variants) {
+    const hit = lookup.get(v);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function buildRetargetedClip(clip, root) {
+  const { lookup } = buildBoneLookup(root);
   const newTracks = [];
   let matched = 0;
   let unmatched = 0;
@@ -118,19 +140,7 @@ function buildRetargetedClip(clip, root) {
     const bonePart = track.name.substring(0, dot);
     const propPart = track.name.substring(dot);
 
-    // Tenta: exato, lowercase, canônico, sem prefixo mixamorig
-    const candidates = [
-      bonePart,
-      bonePart.toLowerCase(),
-      canonicalBoneName(bonePart).toLowerCase(),
-    ];
-
-    let realName = null;
-    for (const c of candidates) {
-      realName = boneMap.get(c);
-      if (realName) break;
-    }
-
+    const realName = findRealBone(bonePart, lookup);
     if (realName) {
       track.name = realName + propPart;
       newTracks.push(track);
@@ -140,45 +150,48 @@ function buildRetargetedClip(clip, root) {
     }
   }
 
-  return { clip: new THREE.AnimationClip(clip.name, clip.duration, newTracks), matched, unmatched, total: clip.tracks.length };
+  return {
+    clip: new THREE.AnimationClip(clip.name, clip.duration, newTracks),
+    matched, unmatched, total: clip.tracks.length,
+  };
 }
 
 export function setupZombieAnimator(z) {
-  if (!hasZombieAnims()) {
-    console.warn('[zombie-anim] ⚠️ setupZombieAnimator: sem animações carregadas');
-    return false;
-  }
-  if (!z.instance || !z.instance.scene) {
-    console.warn('[zombie-anim] ⚠️ setupZombieAnimator: z.instance inválido');
-    return false;
-  }
+  if (!hasZombieAnims()) return false;
+  if (!z.instance || !z.instance.scene) return false;
   if (z.mixer) return true;
 
   const root = z.instance.scene;
 
-  // Conta bones
-  let boneCount = 0;
-  root.traverse(o => { if (o.isBone) boneCount++; });
-  console.log(`[zombie-anim] 🦴 Skeleton do zumbi: ${boneCount} bones`);
+  // Diagnóstico: mostra os bones do skeleton
+  const boneNames = [];
+  root.traverse(o => { if (o.isBone) boneNames.push(o.name); });
+  console.log(`[zombie-anim] 🦴 Skeleton tem ${boneNames.length} bones`);
+  console.log(`[zombie-anim] 📋 Primeiros 10:`, boneNames.slice(0, 10));
 
-  // Cria mixer e retargeta cada clip
+  // Diagnóstico: mostra as primeiras tracks de cada clip
+  const firstName = Object.keys(loadedClips)[0];
+  if (firstName) {
+    const firstClip = loadedClips[firstName];
+    console.log(`[zombie-anim] 🎬 Tracks de "${firstName}" (primeiras 5):`, firstClip.tracks.slice(0, 5).map(t => t.name));
+  }
+
   const mixer = new THREE.AnimationMixer(root);
   z.mixer = mixer;
   z.mixerActions = {};
 
-  const firstName = Object.keys(loadedClips)[0];
+  let totalMatched = 0;
+  let totalTracks = 0;
+
   for (const [name, rawClip] of Object.entries(loadedClips)) {
     const { clip, matched, unmatched, total } = buildRetargetedClip(rawClip, root);
+    totalMatched += matched;
+    totalTracks += total;
 
-    if (name === firstName) {
-      console.log(`[zombie-anim] 🔁 Retarget de "${name}": ${matched}/${total} tracks casaram (${unmatched} sem bone)`);
-      if (unmatched > 0) {
-        console.log(`[zombie-anim] 📋 Tracks sem match (amostra):`, rawClip.tracks.slice(0, 3).map(t => t.name));
-      }
-    }
+    console.log(`[zombie-anim] 🔁 ${name}: ${matched}/${total} tracks casaram${unmatched > 0 ? ` (${unmatched} órfãs)` : ''}`);
 
     if (matched === 0) {
-      console.warn(`[zombie-anim] ❌ "${name}": NENHUMA track encontrou bone!`);
+      console.warn(`[zombie-anim] ❌ "${name}" não tem NENHUMA track válida`);
       continue;
     }
 
@@ -192,13 +205,14 @@ export function setupZombieAnimator(z) {
 
   const actionNames = Object.keys(z.mixerActions);
   console.log(`[zombie-anim] 🎬 ${actionNames.length} ações criadas: ${actionNames.join(', ')}`);
+  console.log(`[zombie-anim] 📊 Taxa de retarget global: ${totalMatched}/${totalTracks} (${Math.round(totalMatched/totalTracks*100)}%)`);
 
   if (actionNames.length === 0) {
-    console.error('[zombie-anim] ❌❌ NENHUMA ação criada — zumbi vai ficar em T-pose!');
+    console.error('[zombie-anim] ❌❌ NENHUMA AÇÃO — zumbi vai ficar em T-pose!');
+    console.error('[zombie-anim] 👉 O skeleton do XBot e as tracks das animações têm nomes incompatíveis');
     return false;
   }
 
-  // Default: walk > idle > primeiro
   const defaultName = (z.mixerActions.walk && 'walk') || (z.mixerActions.idle && 'idle') || actionNames[0];
   z.mixerActions[defaultName].play();
   z.currentAnim = z.mixerActions[defaultName];
