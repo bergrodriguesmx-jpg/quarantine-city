@@ -149,7 +149,7 @@ const CONFIG = {
    zombie: { speed:3.0, maxHealth:40, damage:8, attackRange:1.6, attackCooldown:1.2, xpReward:10, coinReward:2, knockbackStagger:0.25, radius:0.4 },
   pursuit: { responsiveness:3.8, arrivalRadius:1.15, minSpeedFactor:0.35 },
   scaling: { hpPerWave:0.10, dmgPerWave:0.05, speedPerWave:0.02, speedCap:1.30 },
-  aggro: { alertRadius:8.0, alertDuration:3.0, alertSpeedMult:1.35 },
+   aggro: { alertRadius:8.0, alertDuration:3.0, alertSpeedMult:1.4 },
   wave: { baseZombies:6, zombiesPerWave:2, maxZombies:32, breakTime:5, bossEvery:5, clearBonusBase:15, clearBonusPerWave:5, clearHealFrac:0.15, clearAmmoFrac:0.30 },
   arena: { size:80 },
   ragdoll: { maxActive:3, settleTime:15, fadeDuration:1.2, impactImpulse:10, sliceRange:3.5, sliceDotMin:0.25 },
