@@ -2895,8 +2895,9 @@ function updateZombies(dt) {
         joints.footR.rotation.x = anim.footRX;
 
         applyLookAt(z, joints, player, dt, alerted);
-        applyFootIK(z, joints, anim, dt);
-        applyBodyLean(z, joints, player, dt, alerted);
+// 🐛 applyFootIK removido — acumulava posição Y e fazia pés flutuarem
+// applyFootIK(z, joints, anim, dt);
+applyBodyLean(z, joints, player, dt, alerted);
       }
     }
 
