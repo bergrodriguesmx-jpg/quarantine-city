@@ -44,37 +44,47 @@ window.ZOMBIE_TYPES_FROM_MODULE = ZOMBIE_TYPES;
 const controls = getControls();
 
 // ════════ PRECACHE DOS ASSETS ════════
+// Ordem: armas primeiro (usadas desde o frame 1), zumbis depois.
+// Cada etapa é isolada pra que uma falha não derrube as próximas.
 window.__assetsReady = false;
 (async () => {
   console.log('[game] 📦 Carregando assets extraídos...');
+
+  // ── 1. ARMAS ──
   try {
-    // 🎯 XBot PRIMEIRO — zumbis dependem dele
-    await preloadZombieModel();
-    if (isModelReady()) {
-      console.log('[game] ✅ XBot pronto');
-    } else {
-      console.error('[game] ❌ XBot NÃO carregou — zumbis vão usar fallback blocky');
-      console.error('[game] 👉 Converta XBot.fbx para XBot.glb (https://products.aspose.app/3d/conversion/fbx-to-glb)');
-    }
-
-    await preloadZombieAnims();
-    if (hasZombieAnims()) console.log('[game] ✅ Animações prontas');
-    else console.warn('[game] ⚠️ Nenhuma animação Mixamo carregou');
-
-    await preloadCharacters();
-    console.log('[game] ✅ Personagens prontos');
-
-    // Assets secundários (não bloqueiam o jogo)
     await precacheAllWeaponGLBs();
+    console.log('[game] ✅ Armas prontas');
+  } catch (e) { console.warn('[game] ⚠️ Erro nas armas:', e); }
+
+  // ── 2. GIBLETS ──
+  try {
     await preloadGibs();
     await preloadGibGLBs();
+    console.log('[game] ✅ Giblets prontos');
+  } catch (e) { console.warn('[game] ⚠️ Erro nos giblets:', e); }
 
-    console.log('[game] ✅ Assets prontos');
-  } catch (e) {
-    console.warn('[game] ⚠️ Erro no precache:', e);
-  } finally {
-    window.__assetsReady = true;
-  }
+  // ── 3. XBOT ──
+  try {
+    await preloadZombieModel();
+    if (isModelReady()) console.log('[game] ✅ XBot pronto');
+    else console.error('[game] ❌ XBot NÃO carregou — zumbis vão usar fallback');
+  } catch (e) { console.warn('[game] ⚠️ Erro no XBot:', e); }
+
+  // ── 4. ANIMAÇÕES ──
+  try {
+    await preloadZombieAnims();
+    if (hasZombieAnims()) console.log('[game] ✅ Animações prontas');
+    else console.warn('[game] ⚠️ Sem animações Mixamo');
+  } catch (e) { console.warn('[game] ⚠️ Erro nas animações:', e); }
+
+  // ── 5. NPCs ──
+  try {
+    await preloadCharacters();
+    console.log('[game] ✅ Personagens prontos');
+  } catch (e) { console.warn('[game] ⚠️ Erro nos NPCs:', e); }
+
+  console.log('[game] ✅ Todos os assets prontos');
+  window.__assetsReady = true;
 })();
 
 // ============================================================
@@ -516,19 +526,12 @@ function resolveWallCollisions(pos, radius) {
 // ZOMBIES
 // ============================================================
 const zombies = [];
-const PANTS_COLORS = [0x8B5A2B, 0x5D4030, 0x3E2723, 0x2C3E50, 0x34495E, 0x1B2631];
-const SKIN_COLORS = [0x7BC950, 0x6BB840, 0x8DD65A, 0x5DAE3F, 0x9DE06B];
 const HAIR_COLORS = [0x2C1810, 0x1A0F08, 0x4A2818, 0x6B3A1F, 0x3A2A1A];
-const SHIRT_RED = 0xCC1111, SHIRT_BLACK = 0x1A1A1A;
 
 const P_PELVIS_Y = 0.93;
 const P_SPINE_LOW_OFF = 0.12;
 const P_SPINE_UP_OFF = 0.22;
 const P_SHOULDER_Y = 0.14;
-
-const BONE_MAT = matL(0xE8E0D0);
-const BONE_DARK_MAT = matL(0xC8BFA8);
-const BONE_DARKER = matL(0xA89F88);
 
 function applyHeadgear(head, headgear, HR) {
   if (!headgear) return;
@@ -818,8 +821,6 @@ function proceduralFallback(opts = {}) {
   };
 
   root.scale.setScalar(scale);
-
-  // Corrige pés flutuando
   root.updateMatrixWorld(true);
   const _fb = new THREE.Box3().setFromObject(root);
   const feetOffset = _fb.min.y;
@@ -3159,7 +3160,6 @@ function updateZombies(dt) {
       armRXTarget -= hunt * 0.25 * (1 - crawl);
     }
 
-    // Modo XBot usa SOMENTE o mixer — não mexe em bones proceduralmente
     if (z.mixer) {
       updateZombieAnim(z, dt);
       handleZombieAnimState(z, realSpeed);
@@ -3603,7 +3603,6 @@ function updateRecordDisplay() {
 updateRecordDisplay();
 
 function startGame() {
-  // 🎯 Espera o XBot carregar antes de deixar começar
   if (!isModelReady()) {
     const btn = document.getElementById('btn-start');
     if (btn) {
