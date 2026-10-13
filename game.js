@@ -1,7 +1,7 @@
 // ============================================================
-// game.js — v5
-// Integra: IA especialista, Perks, POIs, Boss AI, Zumbis cartoon
-//          com SKELETON MIXAMO e animações FBX da pasta.
+// game.js — v7 FINAL
+// Fixes: Ragdoll procedural, sem applyFootIK, sem LOD agressivo,
+//        animações Mixamo, zumbis cartoon com anatomia completa.
 // ============================================================
 
 import * as THREE from 'three';
@@ -18,7 +18,7 @@ import { SpatialGrid } from './src/core/spatial-grid.js';
 import { geoBox, geoSphere, geoCyl, geoTorus, matL, matB, zMat } from './src/core/geo-cache.js';
 import { computePartLocalBoxes } from './src/core/part-box.js';
 import { enrichWeapons, MELEE_TYPES, ZOMBIE_LORE, formatWeaponTooltip } from './src/core/lore.js';
-import { initPhysics, stepPhysics, addStaticBox, clearPhysics, Ragdoll as PhysicsRagdoll } from './src/core/ragdoll-physics.js';
+import { initPhysics, stepPhysics, addStaticBox, clearPhysics } from './src/core/ragdoll-physics.js';
 
 import { Action, getControls } from './save-controls.js';
 import { ControlsUI } from './controls-ui.js';
@@ -41,7 +41,6 @@ import { preloadGibGLBs, createLimb, hasLimb, createCorpse, listCorpseTypes } fr
 import { preloadCharacters, createCharacter } from './character-models.js';
 import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './src/render/weapon-models.js';
 import { preloadZombieAnims, hasZombieAnims, setupZombieAnimator, updateZombieAnim, handleZombieAnimState } from './zombie-anim.js';
-import { preloadZombieModel, isModelReady, createZombieInstance, tintZombie } from './zombie-model.js';
 
 // ════════ PERKS + ZUMBIS CARTOON RIGGED ════════
 import { applyPerk, getPerk, PERKS, listPerks } from './perks-system.js';
@@ -69,7 +68,6 @@ window.__assetsReady = false;
     console.log('[game] ✅ Giblets prontos');
   } catch (e) { console.warn('[game] ⚠️ Erro nos giblets:', e); }
 
-  // 🎯 Carrega as animações FBX da pasta assets/zombie-anim/
   try {
     await preloadZombieAnims();
     if (hasZombieAnims()) console.log('[game] ✅ Animações Mixamo prontas');
@@ -437,7 +435,6 @@ Gore.initGore(scene);
 Extraction.initExtraction(scene, player);
 BossAI.initBossSystem(scene, camera, player, spawnBossProjectile);
 
-// 🎯 REGISTRA CALLBACKS DA IA ESPECIALISTA
 ZombieAI.registerAICallbacks({
   spawnToxProjectile: ({ origin, dir, speed, damage, radius, ownerId }) => {
     spawnBossProjectile({
@@ -551,16 +548,11 @@ function resolveWallCollisions(pos, radius) {
 // ============================================================
 const zombies = [];
 
-const P_PELVIS_Y = 0.94;
-
 function pickFromPalette(palette, fallback) {
   if (!palette || palette.length === 0) return fallback;
   return palette[Math.floor(Math.random() * palette.length)];
 }
 
-// ============================================================
-// CREATE ZOMBIE MESH — v3 (rigged, Mixamo-compatível)
-// ============================================================
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
   const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey]
@@ -638,7 +630,6 @@ function makeAnimState() {
     alertBlend:0, idleBlend:0,
     crawlBlend:0, crawlPhase:0,
     lookAtYaw:0, lookAtPitch:0,
-    footCorrectionL:0, footCorrectionR:0,
     leanX:0, leanXVel:0,
   };
 }
@@ -662,18 +653,7 @@ function applyLookAt(z, joints, player, dt, alerted) {
   joints.head.rotation.y += anim.lookAtYaw * cfg.lookAtHeadShare;
 }
 
-function applyFootIK(z, joints, anim, dt) {
-  const cfg = CONFIG.ik;
-  const minY = cfg.footMinY;
-  const footLY = joints.footL.position.y;
-  const targetL = footLY < minY ? minY - footLY : 0;
-  anim.footCorrectionL = smoothDamp(anim.footCorrectionL, targetL, 12, dt);
-  joints.footL.position.y += anim.footCorrectionL;
-  const footRY = joints.footR.position.y;
-  const targetR = footRY < minY ? minY - footRY : 0;
-  anim.footCorrectionR = smoothDamp(anim.footCorrectionR, targetR, 12, dt);
-  joints.footR.position.y += anim.footCorrectionR;
-}
+// 🐛 applyFootIK removido — causava pés flutuando
 
 function applyBodyLean(z, joints, player, dt, alerted) {
   const anim = z.anim;
@@ -763,6 +743,9 @@ function spawnZombie(forceType) {
   if (hasZombieAnims()) {
     setupZombieAnimator(z);
   }
+
+  // 🎯 Guarda referência pro ragdoll poder parar o mixer depois
+  mesh.userData.zombieRef = z;
 
   zombies.push(z);
   initStuckState(z);
@@ -916,20 +899,128 @@ class Debris {
 }
 
 // ============================================================
-// RAGDOLL
+// RAGDOLL PROCEDURAL CARTOON
+// Corpo inteiro tomba + desliza + desvanece. Sem física de bones.
 // ============================================================
 const ragdolls = [];
 const _wpTmp = new THREE.Vector3();
 const _wqTmp = new THREE.Quaternion();
 const flyingLimbs = [];
+
 function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
-  if (ragdolls.length >= CONFIG.ragdoll.maxActive) {
-    const oldest = ragdolls.shift();
-    oldest.dispose();
+  // Para o mixer se existir
+  if (mesh.userData.zombieRef && mesh.userData.zombieRef.mixer) {
+    try { mesh.userData.zombieRef.mixer.stopAllAction(); } catch(_) {}
   }
-  const r = new PhysicsRagdoll(mesh, hitDir, hitStrength, missingParts);
-  r.onFadeStart = (pos) => spawnBloodPool(pos);
-  ragdolls.push(r);
+
+  // Cria wrapper em world space
+  const wrapper = new THREE.Group();
+  mesh.updateMatrixWorld(true);
+  const worldPos = new THREE.Vector3();
+  const worldQuat = new THREE.Quaternion();
+  mesh.getWorldPosition(worldPos);
+  mesh.getWorldQuaternion(worldQuat);
+
+  wrapper.position.copy(worldPos);
+  wrapper.quaternion.copy(worldQuat);
+
+  if (mesh.parent) mesh.parent.remove(mesh);
+  wrapper.add(mesh);
+  mesh.position.set(0, 0, 0);
+  mesh.quaternion.set(0, 0, 0, 1);
+
+  scene.add(wrapper);
+
+  const dir = hitDir.clone(); dir.y = 0;
+  if (dir.lengthSq() < 0.0001) dir.set(1, 0, 0);
+  dir.normalize();
+
+  const strength = Math.min(2.5, Math.max(0.6, hitStrength));
+
+  const ragdoll = {
+    wrapper,
+    mesh,
+    velocity: new THREE.Vector3(
+      dir.x * 4 * strength,
+      2 + strength * 1.5,
+      dir.z * 4 * strength,
+    ),
+    tumbleAxis: new THREE.Vector3(-dir.z, 0, dir.x).normalize(),
+    tumbleSpeed: 2.5 + Math.random() * 2,
+    settleTimer: 0,
+    life: 25,
+    fadeProgress: 0,
+    state: 'falling',
+    pieces: [],
+    sliceAt: () => null,
+    onFadeStart: null,
+
+    update(dt) {
+      this.life -= dt;
+      if (this.life <= 0) return true;
+
+      if (this.state === 'falling') {
+        this.velocity.y -= 22 * dt;
+        this.wrapper.position.addScaledVector(this.velocity, dt);
+        this.wrapper.rotateOnAxis(this.tumbleAxis, this.tumbleSpeed * dt);
+
+        if (this.wrapper.position.y <= 0.15) {
+          this.wrapper.position.y = 0.15;
+          if (this.velocity.y < 0) this.velocity.y = -this.velocity.y * 0.15;
+          this.velocity.x *= 0.7;
+          this.velocity.z *= 0.7;
+          const speedSq = this.velocity.lengthSq();
+          if (speedSq < 0.5) {
+            this.settleTimer += dt;
+            if (this.settleTimer > 0.4) {
+              this.state = 'settled';
+              this.velocity.set(0, 0, 0);
+            }
+          } else { this.settleTimer = 0; }
+        }
+      } else if (this.state === 'settled') {
+        this.settleTimer += dt;
+        if (this.settleTimer > 8) {
+          this.state = 'fading';
+          this.fadeProgress = 0;
+          if (typeof this.onFadeStart === 'function') {
+            this.onFadeStart(this.wrapper.position.clone());
+          }
+        }
+      } else if (this.state === 'fading') {
+        this.fadeProgress += dt / 1.5;
+        const op = Math.max(0, 1 - this.fadeProgress);
+        this.mesh.traverse(c => {
+          if (!c.isMesh || !c.material) return;
+          const mats = Array.isArray(c.material) ? c.material : [c.material];
+          for (const m of mats) {
+            m.transparent = true;
+            m.opacity = op;
+          }
+        });
+        if (this.fadeProgress >= 1) return true;
+      }
+      return false;
+    },
+
+    dispose() {
+      if (this.wrapper.parent) this.wrapper.parent.remove(this.wrapper);
+    },
+
+    applyImpulse(worldPos, dir, force) {
+      const f = Math.min(6, force);
+      this.velocity.x += dir.x * f;
+      this.velocity.z += dir.z * f;
+      this.velocity.y += 2;
+      if (this.state === 'settled') this.state = 'falling';
+    },
+  };
+
+  ragdolls.push(ragdoll);
+  if (ragdolls.length > CONFIG.ragdoll.maxActive) {
+    const oldest = ragdolls.shift();
+    if (oldest) oldest.dispose();
+  }
 }
 
 function detachLimb(z, key, hitDir, hitPoint) {
@@ -953,7 +1044,7 @@ function detachLimb(z, key, hitDir, hitPoint) {
   const stump = new THREE.Mesh(geoSphere(stumpR, 8), stumpMat);
   stump.position.copy(limbObj.position);
   stump.scale.set(1, 0.8, 1);
-  parent.add(stump);
+  if (parent) parent.add(stump);
 
   let gibModel = null;
   let gibSource = 'procedural';
@@ -966,7 +1057,6 @@ function detachLimb(z, key, hitDir, hitPoint) {
   }
 
   if (gibModel) {
-    // Para zumbis rigged, esconde o bone e solta o gib
     limbObj.visible = false;
     const wrapper = new THREE.Group();
     wrapper.position.copy(_wpTmp);
@@ -1691,24 +1781,6 @@ function attack(isRightClick = false) {
     if (hitCount > 0) {
       state.hitstopUntil = performance.now() + CONFIG.melee.hitstop * 1000;
       Sfx.playKnifeHitFlesh();
-    }
-    const camPos = camera.position.clone();
-    for (let ri = ragdolls.length - 1; ri >= 0; ri--) {
-      const r = ragdolls[ri];
-      const detached = r.sliceAt(camPos, camForward, CONFIG.ragdoll.sliceRange);
-      if (detached) {
-        const piece = new Debris(detached.mesh, detached.size, 1.2, CONFIG.dismember.limbLife);
-        piece.key = detached.key;
-        piece.velocity.copy(detached.velocity);
-        piece.angularVelocity.copy(detached.angularVelocity);
-        piece.settled = false; piece.settleTimer = 0;
-        flyingLimbs.push(piece);
-        Sfx.playKnifeHitFlesh();
-        showHitMarker(false);
-        spawnBlood(detached.mesh.position.clone(), detached.velocity.clone().normalize(), 15, true);
-        spawnBloodFountain(detached.mesh.position.clone(), 1.2);
-        break;
-      }
     }
     return true;
   }
@@ -2472,19 +2544,9 @@ const K_ARM   = 45,  C_ARM   = 9;
 const K_ELBOW = 55,  C_ELBOW = 9;
 const K_BANK  = 30,  C_BANK  = 5;
 
-let lodFrame = 0;
+// 🐛 LOD desativado — não esconde mais zumbis
 function updateZombieLOD() {
-  lodFrame++;
-  if (lodFrame % 5 !== 0) return;
-  const camX = player.position.x, camZ = player.position.z;
-  for (let i = 0; i < zombies.length; i++) {
-    const z = zombies[i];
-    if (z.health <= 0) continue;
-    const dx = z.mesh.position.x - camX;
-    const dz = z.mesh.position.z - camZ;
-    const d2 = dx*dx + dz*dz;
-     z.mesh.visible = true; // 🐛 nunca esconder (era o que causava zumbis transparentes)
-  }
+  // Sempre visível — evita transparência em hordas grandes
 }
 
 function updateZombies(dt) {
@@ -2498,7 +2560,6 @@ function updateZombies(dt) {
     const aiMult = ZombieAI.getAIMultiplier(z);
     const aiDir = ZombieAI.getDesiredDirection(z, player);
 
-    // 🎯 BOOMER: check de explosão
     if (z.type && z.type.behavior === 'boomer' && z.aiState === 'SUICIDE_RUN') {
       if (ZombieAI.checkBoomerExplosion(z, player)) {
         bus.emit(Ev.BOOMER_DETONATE, { id: z.id, pos: { x: z.mesh.position.x, y: 0, z: z.mesh.position.z } });
@@ -2513,10 +2574,9 @@ function updateZombies(dt) {
       }
     }
 
-    const dxLod = z.mesh.position.x - player.position.x;
-    const dzLod = z.mesh.position.z - player.position.z;
-    const distLod2 = dxLod*dxLod + dzLod*dzLod;
-   const skipVisual = false; // 🐛 sempre renderiza
+    // 🐛 skipVisual sempre false
+    const skipVisual = false;
+
     z.emergeTime += dt;
     const emerge = Math.min(1, z.emergeTime/1.5);
     const ud = z.mesh.userData;
@@ -2599,9 +2659,9 @@ function updateZombies(dt) {
           aggroSoundCooldown: 0, _wasAlerted: false,
           _forceGroan: false, _groundTime: 0,
         };
-        // 🎯 Setup do mixer
         minion.instance = { scene: mesh, joints: mesh.userData.joints };
         if (hasZombieAnims()) setupZombieAnimator(minion);
+        mesh.userData.zombieRef = minion;
         initStuckState(minion);
         ZombieAI.initZombieAIState(minion);
         zombies.push(minion); state.zombiesAlive++;
@@ -2658,14 +2718,14 @@ function updateZombies(dt) {
     if (!hasJoints) continue;
 
     // ════════════════════════════════════════════════════════════
-    // 🎯 ANIMAÇÃO: usa Mixer (FBX) OU fallback spring procedural
+    // ANIMAÇÃO: mixer FBX ou fallback spring
     // ════════════════════════════════════════════════════════════
     if (z.mixer) {
-      // 🎬 Modo animação FBX (Mixamo)
+      // Modo FBX (Mixamo)
       updateZombieAnim(z, dt);
       handleZombieAnimState(z, realSpeed);
 
-      // Ainda aplica lookAt suave + leaning por cima do mixer
+      // LookAt adicional
       const lookAtBlend = Math.min(1, dt * 5);
       if (alerted) {
         const lookDx = player.position.x - z.mesh.position.x;
@@ -2679,7 +2739,7 @@ function updateZombies(dt) {
         anim.lookAtYaw += (0 - anim.lookAtYaw) * lookAtBlend;
       }
     } else {
-      // 🎬 Fallback: spring procedural (v2 - walk cycle natural)
+      // Fallback: spring procedural v2
       const speedNorm = Math.min(1.5, realSpeed / Math.max(0.01, z.speed));
       const walkStyle = z.walkStyle;
       const shuffling = dist < 3.0;
@@ -2744,7 +2804,6 @@ function updateZombies(dt) {
       let pelvisRollTarget  = -swingL * 0.10 * speedNorm;
       let pelvisTwistTarget = stepL * 0.18 * speedNorm;
       let pelvisBobTarget   = -Math.abs(Math.sin(phase * 2)) * 0.05 * speedNorm - 0.008 * speedNorm;
-      let pelvisYTmp = P_PELVIS_Y;
 
       let spineTwistTarget = -stepL * 0.14 * speedNorm;
       const leanBase = hpFrac < 0.5 ? 0.22 : 0.10;
@@ -2758,7 +2817,6 @@ function updateZombies(dt) {
       headPitchTarget += Math.sin(phase * 2) * 0.03 * speedNorm;
 
       if (crawl > 0.001) {
-        pelvisYTmp = P_PELVIS_Y * (1 - crawl) + 0.28 * crawl;
         spineLeanTarget = spineLeanTarget * (1 - crawl) + 1.35 * crawl;
         thighLTarget = thighLTarget * (1 - crawl) + (-0.15) * crawl;
         thighRTarget = thighRTarget * (1 - crawl) + (-0.15) * crawl;
@@ -2784,7 +2842,6 @@ function updateZombies(dt) {
         const recArm = -1.3 + recT * 1.3;
         armLXTarget = Math.max(-1.6, recArm);
         armRXTarget = Math.max(-1.6, recArm);
-        spineLeanTarget += (1 - recT) * 0.10;
       } else if (anim.attackPhase === 2) {
         const strikeT = Math.min(1, (now - anim.attackPhaseT) / 0.12);
         const strikeArm = -1.7 + strikeT * 1.5;
@@ -2794,7 +2851,6 @@ function updateZombies(dt) {
       } else {
         const reaching = dist < 3.5 && !staggering;
         const armAmp = 0.55 * (0.4 + speedNorm * 0.6);
-
         if (reaching) {
           const reach = -1.55;
           armLXTarget = reach + Math.sin(phase * 2.1 + walkStyle * 6.28) * 0.15;
@@ -2844,7 +2900,7 @@ function updateZombies(dt) {
       }
 
       if (skipVisual) {
-        joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
+        joints.pelvis.position.y += anim.pelvisBob;
       } else {
         springStep(anim, 'bankX', 0, K_BANK, C_BANK, dt);
         springStep(anim, 'bankZ', -z.yawVel*0.05*speedNorm, K_BANK, C_BANK, dt);
@@ -2871,7 +2927,6 @@ function updateZombies(dt) {
 
         joints.pelvis.rotation.z = anim.pelvisRoll;
         joints.pelvis.rotation.y = anim.pelvisTwist;
-        joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
         joints.spineLower.rotation.x = anim.spineLean*0.4;
         joints.spineLower.rotation.z = anim.spineRoll*0.4 + anim.spineSide*0.3 + anim.bankZ;
         joints.spineUpper.rotation.y = anim.spineTwist;
@@ -2894,9 +2949,7 @@ function updateZombies(dt) {
         joints.footR.rotation.x = anim.footRX;
 
         applyLookAt(z, joints, player, dt, alerted);
-// 🐛 applyFootIK removido — acumulava posição Y e fazia pés flutuarem
-// applyFootIK(z, joints, anim, dt);
-applyBodyLean(z, joints, player, dt, alerted);
+        applyBodyLean(z, joints, player, dt, alerted);
       }
     }
 
