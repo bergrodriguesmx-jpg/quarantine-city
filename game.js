@@ -43,19 +43,29 @@ window.ZOMBIE_TYPES_FROM_MODULE = ZOMBIE_TYPES;
 
 const controls = getControls();
 
-// ════════ PRECACHE DOS ASSETS ════════
+// ════════ PRECACHE DOS ASSETS EXTRAÍDOS ════════
+window.__assetsReady = false;
 (async () => {
   console.log('[game] 📦 Carregando assets extraídos...');
   try {
+    // 🎯 XBot PRIMEIRO — zumbis dependem dele
+    await preloadZombieModel();
+    console.log('[game] ✅ XBot pronto');
+    await preloadZombieAnims();
+    console.log('[game] ✅ Animações prontas');
+    await preloadCharacters();
+    console.log('[game] ✅ Personagens prontos');
+
+    // Assets secundários (podem demorar)
     await precacheAllWeaponGLBs();
     await preloadGibs();
     await preloadGibGLBs();
-    await preloadZombieAnims();
-    await preloadZombieModel();
-    await preloadCharacters();
+
     console.log('[game] ✅ Assets prontos');
   } catch (e) {
     console.warn('[game] ⚠️ Erro no precache:', e);
+  } finally {
+    window.__assetsReady = true;
   }
 })();
 
