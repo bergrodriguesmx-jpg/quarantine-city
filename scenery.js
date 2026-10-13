@@ -1,22 +1,18 @@
 // ============================================================
-// scenery.js — v2
-// Mapa com POIs fixos: delegacia, hospital, igreja, mercado.
-// Cada POI tem layout único e loot contextual.
+// scenery.js — v3
+// Mapa com POIs + colliders em WORLD SPACE (corrige bug de
+// paredes invisíveis no centro do mapa).
 // ============================================================
 
 import * as THREE from 'three';
 import * as Textures from './textures.js';
 
-// ════════════════════════════════════════════════════════════
-// DEFINIÇÃO DOS POIs
-// ════════════════════════════════════════════════════════════
 export const POIS = [
   { id: 'police',    type: 'police',    x: -28, z: -28, rot: Math.PI * 0.25,   size: 'large'  },
   { id: 'hospital',  type: 'hospital',  x:  28, z: -28, rot: -Math.PI * 0.25,  size: 'large'  },
   { id: 'church',    type: 'church',    x:   0, z:  35, rot: Math.PI,          size: 'medium' },
   { id: 'market',    type: 'market',    x: -35, z:  15, rot: 0,                size: 'medium' },
   { id: 'gasStation',type: 'gas',       x:  35, z:  15, rot: 0,                size: 'small'  },
-  // Casas normais espalhadas
   { id: 'house1',    type: 'house',     x: -14, z: -14, rot: 0,                size: 'medium' },
   { id: 'house2',    type: 'house',     x:  14, z: -14, rot: 0,                size: 'small'  },
   { id: 'house3',    type: 'house',     x: -14, z:  14, rot: 0,                size: 'large'  },
@@ -32,10 +28,10 @@ export function buildWorld(scene, arenaSize) {
     furnitureColliders: [],
     doors: [],
     weaponSpots: [],
-    pois: {}, // id → { x, z, type, bounds }
+    pois: {},
   };
 
-  // Ruas principais
+  // Ruas
   scene.add(createRoad(0, 0, 8, arenaSize, true));
   scene.add(createRoad(0, 0, 8, arenaSize, false));
   scene.add(createRoad(0, -20, 5, arenaSize, true));
@@ -43,7 +39,7 @@ export function buildWorld(scene, arenaSize) {
   scene.add(createRoad(-20, 0, 5, arenaSize, false));
   scene.add(createRoad(20, 0, 5, arenaSize, false));
 
-  // Construir cada POI
+  // POIs
   for (const poi of POIS) {
     let bounds;
     switch (poi.type) {
@@ -54,23 +50,22 @@ export function buildWorld(scene, arenaSize) {
       case 'gas':      bounds = buildGasStation(scene, poi, world); break;
       default:         bounds = buildHouse(scene, poi, world);
     }
-    world.pois[poi.id] = {
-      x: poi.x, z: poi.z, type: poi.type, bounds,
-    };
+    world.pois[poi.id] = { x: poi.x, z: poi.z, type: poi.type, bounds };
   }
 
-  // Árvores espalhadas (evita POIs)
+  // Árvores
   const treePositions = [];
   for (let i = 0; i < 40; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const dist = 20 + Math.random() * (arenaSize * 0.35);
+    const dist = 22 + Math.random() * (arenaSize * 0.32);
     const x = Math.cos(angle) * dist;
     const z = Math.sin(angle) * dist;
-    // Skip se perto de POI
     let tooClose = false;
     for (const poi of POIS) {
-      if (Math.hypot(x - poi.x, z - poi.z) < 10) { tooClose = true; break; }
+      if (Math.hypot(x - poi.x, z - poi.z) < 12) { tooClose = true; break; }
     }
+    // Não bloqueia spawn central
+    if (Math.hypot(x, z) < 8) tooClose = true;
     if (!tooClose) treePositions.push([x, z]);
   }
   treePositions.forEach(([x, z]) => {
@@ -79,11 +74,12 @@ export function buildWorld(scene, arenaSize) {
     }
   });
 
+  console.log(`[scenery] 🌍 Mundo construído: ${world.wallColliders.length} wallColliders, ${world.furnitureColliders.length} furnitureColliders`);
   return world;
 }
 
 // ════════════════════════════════════════════════════════════
-// HELPERS BÁSICOS
+// MATERIAIS
 // ════════════════════════════════════════════════════════════
 const MATS = {
   wallCream:   new THREE.MeshLambertMaterial({ color: 0xECF0F1 }),
@@ -102,33 +98,52 @@ const MATS = {
   floorCarpet: new THREE.MeshLambertMaterial({ color: 0x6B4423 }),
   metal:       new THREE.MeshLambertMaterial({ color: 0x95A5A6 }),
   darkMetal:   new THREE.MeshLambertMaterial({ color: 0x34495E }),
-  glass:       new THREE.MeshLambertMaterial({ color: 0xAED6F1, transparent: true, opacity: 0.5 }),
   cross:       new THREE.MeshLambertMaterial({ color: 0xC0392B }),
 };
 
-function box(w, h, d, x, y, z, mat, parent, collider) {
+// ════════════════════════════════════════════════════════════
+// HELPERS DE CONSTRUÇÃO — WORLD SPACE COLLIDERS
+// ════════════════════════════════════════════════════════════
+
+/**
+ * Cria uma mesh e adiciona em `parent`.
+ * Se `colliderArray` for passado, calcula o AABB em WORLD SPACE
+ * (após o parent ser posicionado/rotacionado) e registra lá.
+ *
+ * IMPORTANTE: chama parent.updateMatrixWorld(true) para garantir
+ * que a matriz do parent está correta antes de calcular o AABB.
+ */
+function addBoxMesh(w, h, d, x, y, z, mat, parent, colliderArray) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z);
   m.castShadow = true;
   m.receiveShadow = true;
   parent.add(m);
-  if (collider) collider.push({ minX: x - w/2, maxX: x + w/2, minZ: z - d/2, maxZ: z + d/2 });
+
+  if (colliderArray) {
+    parent.updateMatrixWorld(true);
+    m.updateMatrixWorld(true);
+    const worldBox = new THREE.Box3().setFromObject(m);
+    colliderArray.push({
+      minX: worldBox.min.x, maxX: worldBox.max.x,
+      minZ: worldBox.min.z, maxZ: worldBox.max.z,
+    });
+  }
   return m;
 }
 
 // ════════════════════════════════════════════════════════════
-// 🏠 CASA PADRÃO
+// 🏠 CASA
 // ════════════════════════════════════════════════════════════
 function buildHouse(scene, poi, world) {
   const sizes = { small: [6, 5], medium: [8, 6], large: [11, 8] };
   const [W, D] = sizes[poi.size] || sizes.medium;
   const H = 3.5, T = 0.22;
   const DOOR_W = 1.4, DOOR_H = 2.3;
-  const cx = poi.x, cz = poi.z;
 
   const g = new THREE.Group();
   g.rotation.y = poi.rot;
-  g.position.set(cx, 0, cz);
+  g.position.set(poi.x, 0, poi.z);
   scene.add(g);
 
   const wallMat = Math.random() < 0.5 ? MATS.wallCream : MATS.wallWhite;
@@ -141,19 +156,19 @@ function buildHouse(scene, poi, world) {
   floor.receiveShadow = true;
   g.add(floor);
 
-  // Paredes
-  addWall(g, world, 0, -D/2 + T/2, W, T, H, wallMat);
-  addWall(g, world, -W/2 + T/2, 0, T, D, H, wallMat);
-  addWall(g, world,  W/2 - T/2, 0, T, D, H, wallMat);
+  // Paredes externas com collider
+  addBoxMesh(W, H, T, 0, H/2, -D/2 + T/2, wallMat, g, world.wallColliders);
+  addBoxMesh(T, H, D, -W/2 + T/2, H/2, 0, wallMat, g, world.wallColliders);
+  addBoxMesh(T, H, D,  W/2 - T/2, H/2, 0, wallMat, g, world.wallColliders);
 
   // Frente com porta
   const frontZ = D/2 - T/2;
   const segW = (W - DOOR_W) / 2;
-  addWall(g, world, -W/2 + segW/2, frontZ, segW, T, H, wallMat);
-  addWall(g, world,  W/2 - segW/2, frontZ, segW, T, H, wallMat);
+  addBoxMesh(segW, H, T, -W/2 + segW/2, H/2, frontZ, wallMat, g, world.wallColliders);
+  addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, wallMat, g, world.wallColliders);
 
   const headerH = H - DOOR_H;
-  if (headerH > 0.1) box(DOOR_W, headerH, T, 0, H - headerH/2, frontZ, wallMat, g, null);
+  if (headerH > 0.1) addBoxMesh(DOOR_W, headerH, T, 0, H - headerH/2, frontZ, wallMat, g, null);
 
   // Porta
   const doorX = -DOOR_W/2;
@@ -167,12 +182,15 @@ function buildHouse(scene, poi, world) {
   doorPivot.add(doorMesh);
   g.add(doorPivot);
 
-  // Registra door (coordenadas locais convertidas pra mundo é complexo; simplifica)
+  // Registra door em world space (pra detecção de proximidade)
+  g.updateMatrixWorld(true);
+  const doorWorldPos = new THREE.Vector3(doorX, 0, frontZ);
+  g.localToWorld(doorWorldPos);
   world.doors.push({
     group: doorPivot,
     currentAngle: 0,
-    worldX: cx + Math.cos(poi.rot) * doorX, // aprox
-    worldZ: cz + Math.sin(poi.rot) * doorX,
+    worldX: doorWorldPos.x,
+    worldZ: doorWorldPos.z,
   });
 
   // Telhado
@@ -182,20 +200,22 @@ function buildHouse(scene, poi, world) {
   roof.castShadow = true;
   g.add(roof);
 
-  return { x: cx, z: cz, w: W, d: D };
+  // Móveis
+  addBoxMesh(1.4, 0.75, 0.8, 0, 0.375, 2, MATS.wood, g, world.furnitureColliders);
+  addBoxMesh(1.6, 0.4, 0.65, 0.5, 0.35, -D/2 + 0.55, MATS.darkWood, g, world.furnitureColliders);
+
+  return { x: poi.x, z: poi.z, w: W, d: D };
 }
 
 // ════════════════════════════════════════════════════════════
-// 🚓 DELEGACIA (POI: police)
-// Contém: armas de fogo, coletes, munição. Guardada por riot zombie.
+// 🚓 DELEGACIA
 // ════════════════════════════════════════════════════════════
 function buildPoliceStation(scene, poi, world) {
   const W = 16, D = 12, H = 4.5, T = 0.28;
-  const cx = poi.x, cz = poi.z;
 
   const g = new THREE.Group();
   g.rotation.y = poi.rot;
-  g.position.set(cx, 0, cz);
+  g.position.set(poi.x, 0, poi.z);
   scene.add(g);
 
   // Chão
@@ -206,46 +226,35 @@ function buildPoliceStation(scene, poi, world) {
   g.add(floor);
 
   // Paredes externas
-  addWall(g, world, 0, -D/2 + T/2, W, T, H, MATS.wallGray);
-  addWall(g, world, -W/2 + T/2, 0, T, D, H, MATS.wallGray);
-  addWall(g, world,  W/2 - T/2, 0, T, D, H, MATS.wallGray);
+  addBoxMesh(W, H, T, 0, H/2, -D/2 + T/2, MATS.wallGray, g, world.wallColliders);
+  addBoxMesh(T, H, D, -W/2 + T/2, H/2, 0, MATS.wallGray, g, world.wallColliders);
+  addBoxMesh(T, H, D,  W/2 - T/2, H/2, 0, MATS.wallGray, g, world.wallColliders);
 
   // Frente com porta dupla
   const frontZ = D/2 - T/2;
   const doorW = 3.0;
   const segW = (W - doorW) / 2;
-  addWall(g, world, -W/2 + segW/2, frontZ, segW, T, H, MATS.wallGray);
-  addWall(g, world,  W/2 - segW/2, frontZ, segW, T, H, MATS.wallGray);
+  addBoxMesh(segW, H, T, -W/2 + segW/2, H/2, frontZ, MATS.wallGray, g, world.wallColliders);
+  addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, MATS.wallGray, g, world.wallColliders);
 
-  // Símbolo "POLICE" (letreiro)
+  // Letreiro POLICE
   const signMat = new THREE.MeshBasicMaterial({ color: 0x2196F3 });
   const sign = new THREE.Mesh(new THREE.BoxGeometry(W * 0.6, 0.6, 0.1), signMat);
   sign.position.set(0, H - 0.6, frontZ + 0.06);
   g.add(sign);
 
-  // Cerca
-  const fenceMat = MATS.darkMetal;
-  for (let i = 0; i < 8; i++) {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.5, 0.08), fenceMat);
-    bar.position.set(-W/2 + 1 + i * 1.8, 0.75, D/2 + 1.5);
-    g.add(bar);
-  }
+  // Balcão recepção
+  addBoxMesh(6, 1.1, 0.6, 0, 0.55, 2, MATS.darkWood, g, world.furnitureColliders);
 
-  // Balcão de recepção
-  box(6, 1.1, 0.6, 0, 0.55, 2, MATS.darkWood, g, world.furnitureColliders);
-
-  // Celas (2x)
+  // Celas (2x) — apenas as paredes laterais têm collider
   for (let i = 0; i < 2; i++) {
     const cellX = -W/2 + 3 + i * 5;
-    box(3, 2.5, 3, cellX, 1.25, -D/2 + 2.2, MATS.darkMetal, g, world.furnitureColliders);
-    // Grades
-    for (let bar = 0; bar < 5; bar++) {
-      box(0.06, 2.4, 0.06, cellX - 1.5 + bar * 0.75, 1.2, -D/2 + 3.7, MATS.metal, g, null);
-    }
+    addBoxMesh(0.15, 2.5, 3, cellX - 1.5, 1.25, -D/2 + 2.2, MATS.darkMetal, g, world.wallColliders);
+    addBoxMesh(0.15, 2.5, 3, cellX + 1.5, 1.25, -D/2 + 2.2, MATS.darkMetal, g, world.wallColliders);
   }
 
-  // Mesa do chefe + cofre
-  box(2, 0.9, 1, 4, 0.45, -D/2 + 2, MATS.darkWood, g, world.furnitureColliders);
+  // Mesa do chefe
+  addBoxMesh(2, 0.9, 1, 4, 0.45, -D/2 + 2, MATS.darkWood, g, world.furnitureColliders);
 
   // Telhado
   const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.5, 0.4, D + 0.5), MATS.roofBlack);
@@ -253,113 +262,96 @@ function buildPoliceStation(scene, poi, world) {
   roof.castShadow = true;
   g.add(roof);
 
-  return { x: cx, z: cz, w: W, d: D, type: 'police' };
+  return { x: poi.x, z: poi.z, w: W, d: D, type: 'police' };
 }
 
 // ════════════════════════════════════════════════════════════
-// 🏥 HOSPITAL (POI: hospital)
-// Contém: itens de cura, defibrilador, kit médico. Possível boss Queen.
+// 🏥 HOSPITAL
 // ════════════════════════════════════════════════════════════
 function buildHospital(scene, poi, world) {
   const W = 18, D = 14, H = 5.0, T = 0.28;
-  const cx = poi.x, cz = poi.z;
 
   const g = new THREE.Group();
   g.rotation.y = poi.rot;
-  g.position.set(cx, 0, cz);
+  g.position.set(poi.x, 0, poi.z);
   scene.add(g);
 
-  // Chão branco
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W - T*2, D - T*2), MATS.floorWhite);
   floor.rotation.x = -Math.PI/2;
   floor.position.y = 0.06;
   floor.receiveShadow = true;
   g.add(floor);
 
-  // Paredes brancas
-  addWall(g, world, 0, -D/2 + T/2, W, T, H, MATS.wallWhite);
-  addWall(g, world, -W/2 + T/2, 0, T, D, H, MATS.wallWhite);
-  addWall(g, world,  W/2 - T/2, 0, T, D, H, MATS.wallWhite);
+  addBoxMesh(W, H, T, 0, H/2, -D/2 + T/2, MATS.wallWhite, g, world.wallColliders);
+  addBoxMesh(T, H, D, -W/2 + T/2, H/2, 0, MATS.wallWhite, g, world.wallColliders);
+  addBoxMesh(T, H, D,  W/2 - T/2, H/2, 0, MATS.wallWhite, g, world.wallColliders);
 
-  // Frente com porta
   const frontZ = D/2 - T/2;
   const doorW = 2.8;
   const segW = (W - doorW) / 2;
-  addWall(g, world, -W/2 + segW/2, frontZ, segW, T, H, MATS.wallWhite);
-  addWall(g, world,  W/2 - segW/2, frontZ, segW, T, H, MATS.wallWhite);
+  addBoxMesh(segW, H, T, -W/2 + segW/2, H/2, frontZ, MATS.wallWhite, g, world.wallColliders);
+  addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, MATS.wallWhite, g, world.wallColliders);
 
   // Cruz vermelha
-  const crossMat = MATS.cross;
-  const crossH = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 0.1), crossMat);
+  const crossH = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 0.1), MATS.cross);
   crossH.position.set(0, H - 0.9, frontZ + 0.06);
   g.add(crossH);
-  const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 0.1), crossMat);
+  const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 0.1), MATS.cross);
   crossV.position.set(0, H - 0.9, frontZ + 0.06);
   g.add(crossV);
 
-  // Divisórias internas (2 corredores)
-  box(T, H, D * 0.5, -3, H/2, -D/4, MATS.wallWhite, g, world.wallColliders);
-  box(T, H, D * 0.5, 3, H/2, -D/4, MATS.wallWhite, g, world.wallColliders);
+  // Divisórias internas
+  addBoxMesh(T, H, D * 0.5, -3, H/2, -D/4, MATS.wallWhite, g, world.wallColliders);
+  addBoxMesh(T, H, D * 0.5,  3, H/2, -D/4, MATS.wallWhite, g, world.wallColliders);
 
   // Leitos (4)
   for (let i = 0; i < 4; i++) {
     const bx = -W/2 + 3 + i * 4;
-    const bz = -D/2 + 2.5;
-    box(1.8, 0.15, 0.9, bx, 0.6, bz, MATS.metal, g, world.furnitureColliders);
-    box(1.8, 0.5, 0.9, bx, 0.25, bz, MATS.wallWhite, g, null);
-    // Cabeceira
-    box(0.15, 0.8, 0.9, bx - 0.85, 1.0, bz, MATS.metal, g, null);
+    addBoxMesh(1.8, 0.55, 0.9, bx, 0.4, -D/2 + 2.5, MATS.metal, g, world.furnitureColliders);
   }
 
   // Recepção
-  box(4, 1.1, 0.7, 0, 0.55, D/2 - 1.5, MATS.floorTile, g, world.furnitureColliders);
+  addBoxMesh(4, 1.1, 0.7, 0, 0.55, D/2 - 1.5, MATS.floorTile, g, world.furnitureColliders);
 
-  // Telhado
   const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.5, 0.4, D + 0.5), MATS.roofRed);
   roof.position.y = H + 0.2;
   roof.castShadow = true;
   g.add(roof);
 
-  return { x: cx, z: cz, w: W, d: D, type: 'hospital' };
+  return { x: poi.x, z: poi.z, w: W, d: D, type: 'hospital' };
 }
 
 // ════════════════════════════════════════════════════════════
-// ⛪ IGREJA (POI: church)
-// Layout único com torre. Possível boss Reaper.
+// ⛪ IGREJA
 // ════════════════════════════════════════════════════════════
 function buildChurch(scene, poi, world) {
   const W = 12, D = 20, H = 6.5, T = 0.3;
-  const cx = poi.x, cz = poi.z;
 
   const g = new THREE.Group();
   g.rotation.y = poi.rot;
-  g.position.set(cx, 0, cz);
+  g.position.set(poi.x, 0, poi.z);
   scene.add(g);
 
-  // Chão
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W - T*2, D - T*2), MATS.floorTile);
   floor.rotation.x = -Math.PI/2;
   floor.position.y = 0.06;
   floor.receiveShadow = true;
   g.add(floor);
 
-  // Paredes
-  addWall(g, world, 0, -D/2 + T/2, W, T, H, MATS.wallStone);
-  addWall(g, world, -W/2 + T/2, 0, T, D, H, MATS.wallStone);
-  addWall(g, world,  W/2 - T/2, 0, T, D, H, MATS.wallStone);
+  addBoxMesh(W, H, T, 0, H/2, -D/2 + T/2, MATS.wallStone, g, world.wallColliders);
+  addBoxMesh(T, H, D, -W/2 + T/2, H/2, 0, MATS.wallStone, g, world.wallColliders);
+  addBoxMesh(T, H, D,  W/2 - T/2, H/2, 0, MATS.wallStone, g, world.wallColliders);
 
-  // Frente com porta arqueada
   const frontZ = D/2 - T/2;
   const doorW = 2.4;
   const segW = (W - doorW) / 2;
-  addWall(g, world, -W/2 + segW/2, frontZ, segW, T, H, MATS.wallStone);
-  addWall(g, world,  W/2 - segW/2, frontZ, segW, T, H, MATS.wallStone);
+  addBoxMesh(segW, H, T, -W/2 + segW/2, H/2, frontZ, MATS.wallStone, g, world.wallColliders);
+  addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, MATS.wallStone, g, world.wallColliders);
 
-  // Torres gêmeas
+  // Torres
   for (const side of [-1, 1]) {
     const towerX = side * (W/2 - 1);
-    box(2.5, 10, 2.5, towerX, 5, -D/2 + 1.2, MATS.wallStone, g, world.wallColliders);
-    // Ponto da torre
+    addBoxMesh(2.5, 10, 2.5, towerX, 5, -D/2 + 1.2, MATS.wallStone, g, world.wallColliders);
     const spire = new THREE.Mesh(new THREE.ConeGeometry(1.8, 2.5, 4), MATS.roofDarkRed);
     spire.position.set(towerX, 11.25, -D/2 + 1.2);
     spire.rotation.y = Math.PI/4;
@@ -368,43 +360,43 @@ function buildChurch(scene, poi, world) {
   }
 
   // Cruz na frente
-  box(0.2, 2.0, 0.2, 0, H + 1.0, frontZ, MATS.cross, g, null);
-  box(1.2, 0.2, 0.2, 0, H + 1.4, frontZ, MATS.cross, g, null);
+  const crossH = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.2), MATS.cross);
+  crossH.position.set(0, H + 1.4, frontZ);
+  g.add(crossH);
+  const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2.0, 0.2), MATS.cross);
+  crossV.position.set(0, H + 1.0, frontZ);
+  g.add(crossV);
 
-  // Bancos (3 fileiras)
+  // Bancos
   for (let row = 0; row < 3; row++) {
     for (let col = 0; col < 4; col++) {
       const bx = -W/2 + 2 + col * 2.5;
       const bz = -D/2 + 4 + row * 3;
-      box(2.0, 0.45, 0.4, bx, 0.22, bz, MATS.darkWood, g, null);
-      box(2.0, 0.7, 0.15, bx, 0.55, bz - 0.15, MATS.darkWood, g, null);
+      addBoxMesh(2.0, 0.75, 0.4, bx, 0.375, bz, MATS.darkWood, g, world.furnitureColliders);
     }
   }
 
   // Altar
-  box(3, 1.2, 1.2, 0, 0.6, -D/2 + 3, MATS.darkWood, g, world.furnitureColliders);
+  addBoxMesh(3, 1.2, 1.2, 0, 0.6, -D/2 + 3, MATS.darkWood, g, world.furnitureColliders);
 
-  // Telhado (mais alto)
   const roof = new THREE.Mesh(new THREE.ConeGeometry(W * 0.7, 3, 4), MATS.roofDarkRed);
   roof.position.y = H + 1.5;
   roof.rotation.y = Math.PI/4;
   roof.castShadow = true;
   g.add(roof);
 
-  return { x: cx, z: cz, w: W, d: D, type: 'church' };
+  return { x: poi.x, z: poi.z, w: W, d: D, type: 'church' };
 }
 
 // ════════════════════════════════════════════════════════════
-// 🏪 MERCADO (POI: market)
-// Contém: comida, bebida, itens de sobrevivência.
+// 🏪 MERCADO
 // ════════════════════════════════════════════════════════════
 function buildMarket(scene, poi, world) {
   const W = 14, D = 10, H = 3.8, T = 0.22;
-  const cx = poi.x, cz = poi.z;
 
   const g = new THREE.Group();
   g.rotation.y = poi.rot;
-  g.position.set(cx, 0, cz);
+  g.position.set(poi.x, 0, poi.z);
   scene.add(g);
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W - T*2, D - T*2), MATS.floorTile);
@@ -413,89 +405,71 @@ function buildMarket(scene, poi, world) {
   floor.receiveShadow = true;
   g.add(floor);
 
-  addWall(g, world, 0, -D/2 + T/2, W, T, H, MATS.wallCream);
-  addWall(g, world, -W/2 + T/2, 0, T, D, H, MATS.wallCream);
-  addWall(g, world,  W/2 - T/2, 0, T, D, H, MATS.wallCream);
+  addBoxMesh(W, H, T, 0, H/2, -D/2 + T/2, MATS.wallCream, g, world.wallColliders);
+  addBoxMesh(T, H, D, -W/2 + T/2, H/2, 0, MATS.wallCream, g, world.wallColliders);
+  addBoxMesh(T, H, D,  W/2 - T/2, H/2, 0, MATS.wallCream, g, world.wallColliders);
 
   const frontZ = D/2 - T/2;
   const doorW = 2.2;
   const segW = (W - doorW) / 2;
-  addWall(g, world, -W/2 + segW/2, frontZ, segW, T, H, MATS.wallCream);
-  addWall(g, world,  W/2 - segW/2, frontZ, segW, T, H, MATS.wallCream);
+  addBoxMesh(segW, H, T, -W/2 + segW/2, H/2, frontZ, MATS.wallCream, g, world.wallColliders);
+  addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, MATS.wallCream, g, world.wallColliders);
 
   // Prateleiras
   for (let i = 0; i < 4; i++) {
     const sx = -W/2 + 2 + i * 3;
-    box(0.8, 2.4, D - 3, sx, 1.2, 0, MATS.metal, g, world.furnitureColliders);
+    addBoxMesh(0.8, 2.4, D - 3, sx, 1.2, 0, MATS.metal, g, world.furnitureColliders);
   }
 
   // Balcão
-  box(5, 1.0, 0.6, 0, 0.5, D/2 - 1.5, MATS.darkWood, g, world.furnitureColliders);
+  addBoxMesh(5, 1.0, 0.6, 0, 0.5, D/2 - 1.5, MATS.darkWood, g, world.furnitureColliders);
 
-  // Telhado
   const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.5, 0.4, D + 0.5), MATS.roofGray);
   roof.position.y = H + 0.2;
   roof.castShadow = true;
   g.add(roof);
 
-  return { x: cx, z: cz, w: W, d: D, type: 'market' };
+  return { x: poi.x, z: poi.z, w: W, d: D, type: 'market' };
 }
 
 // ════════════════════════════════════════════════════════════
-// ⛽ POSTO DE GASOLINA (POI: gas)
-// Área aberta com cobertura.
+// ⛽ POSTO
 // ════════════════════════════════════════════════════════════
 function buildGasStation(scene, poi, world) {
   const W = 10, D = 8;
-  const cx = poi.x, cz = poi.z;
 
   const g = new THREE.Group();
   g.rotation.y = poi.rot;
-  g.position.set(cx, 0, cz);
+  g.position.set(poi.x, 0, poi.z);
   scene.add(g);
 
-  // Chão
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), MATS.floorTile);
   floor.rotation.x = -Math.PI/2;
   floor.position.y = 0.06;
   floor.receiveShadow = true;
   g.add(floor);
 
-  // Cobertura (4 pilares + teto)
+  // Cobertura
   for (let i = 0; i < 4; i++) {
     const px = (i % 2 === 0 ? -W/3 : W/3);
     const pz = (i < 2 ? -D/3 : D/3);
-    box(0.4, 3.5, 0.4, px, 1.75, pz, MATS.metal, g, world.furnitureColliders);
+    addBoxMesh(0.4, 3.5, 0.4, px, 1.75, pz, MATS.metal, g, world.furnitureColliders);
   }
-  box(W * 0.9, 0.3, D * 0.9, 0, 3.6, 0, MATS.darkMetal, g, null);
+  addBoxMesh(W * 0.9, 0.3, D * 0.9, 0, 3.6, 0, MATS.darkMetal, g, null);
 
-  // Bombas de gasolina
+  // Bombas
   for (const side of [-1, 1]) {
-    box(0.7, 1.3, 0.5, side * 2, 0.65, 0, MATS.wallGray, g, world.furnitureColliders);
+    addBoxMesh(0.7, 1.3, 0.5, side * 2, 0.65, 0, MATS.wallGray, g, world.furnitureColliders);
   }
 
   // Loja pequena
-  box(4, 3, 4, -W/2 + 2, 1.5, -D/2 + 2, MATS.wallCream, g, world.wallColliders);
+  addBoxMesh(4, 3, 4, -W/2 + 2, 1.5, -D/2 + 2, MATS.wallCream, g, world.wallColliders);
 
-  return { x: cx, z: cz, w: W, d: D, type: 'gas' };
+  return { x: poi.x, z: poi.z, w: W, d: D, type: 'gas' };
 }
 
 // ════════════════════════════════════════════════════════════
-// HELPERS DE CONSTRUÇÃO
-// ════════════════════════════════════════════════════════════
-function addWall(parent, world, cx, cz, w, d, h, mat) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-  mesh.position.set(cx, h/2, cz);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  parent.add(mesh);
-  // Adiciona collider (converte pra espaço mundial via matriz)
-  // Simplificação: só considera rotação Y do parent
-  // Pra maior precisão, usar matrixWorld, mas ok pra protótipo
-}
-
-// ════════════════════════════════════════════════════════════
-// ÁRVORES E RUAS (mantido)
+// ÁRVORES E RUAS
 // ════════════════════════════════════════════════════════════
 function createTree(x, z) {
   const g = new THREE.Group();
