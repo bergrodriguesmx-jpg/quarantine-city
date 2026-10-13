@@ -1,7 +1,7 @@
 // ============================================================
-// zombie-model.js — v6
-// Testa XBot.fbx / XBot.glb / zombie-idle.fbx / zombie-walk.fbx
-// Qualquer um que tenha skeleton válido é aceito.
+// zombie-model.js — v7
+// CORRIGIDO: FBXLoader retorna THREE.Group diretamente, não { scene }
+// Testa bone E SkinnedMesh (cobre mais variações de export)
 // ============================================================
 
 import * as THREE from 'three';
@@ -13,13 +13,14 @@ const fbxLoader = new FBXLoader();
 const gltfLoader = new GLTFLoader();
 const BASE = 'assets/zombie-anim/';
 
-// 🎯 Ordem: modelo dedicado primeiro, depois fallback nas animações
+// 🎯 XBot.fbx é o modelo dedicado. Se não tiver mesh,
+//    cai pros arquivos de animação (que contêm mesh + skeleton do Mixamo).
+//    zombie-idle.fbx foi removido: está corrompido (Unknown property type).
 const MODEL_CANDIDATES = [
   'XBot.fbx',
-  'XBot.glb',
-  'zombie-idle.fbx',    // contém mesh + skeleton do Mixamo
-  'zombie-walk.fbx',    // fallback
-  'zombie-attack.fbx',  // fallback
+  'zombie-walk.fbx',
+  'zombie-attack.fbx',
+  'zombie-idle.glb',    // GLB que carrega no zombie-anim
 ];
 
 let baseScene = null;
@@ -70,17 +71,46 @@ function findBone(bonesMap, candidates) {
   return null;
 }
 
+// ══════════════════════════════════════════════
+// 🔑 CORREÇÃO: FBXLoader retorna THREE.Group direto
+// ══════════════════════════════════════════════
 async function loadAnyModel(filename) {
   const url = BASE + encodeURIComponent(filename).replace(/%2F/g, '/');
   console.log(`[zombie-model] 🌐 Baixando ${url}`);
+
   if (/\.(glb|gltf)$/i.test(filename)) {
     const gltf = await gltfLoader.loadAsync(url);
     return { scene: gltf.scene, animations: gltf.animations || [] };
   }
+
   const fbx = await fbxLoader.loadAsync(url);
-  return { scene: fbx.scene, animations: fbx.animations || [] };
+  // 🎯 Aqui estava o bug: fbx NÃO tem .scene
+  // FBXLoader retorna o Group diretamente. Animations fica em fbx.animations.
+  return { scene: fbx, animations: fbx.animations || [] };
 }
 
+// ══════════════════════════════════════════════
+// Detecção robusta de skeleton
+// ══════════════════════════════════════════════
+function countSkeleton(root) {
+  let boneCount = 0;
+  let skinnedMeshCount = 0;
+  root.traverse(o => {
+    if (o.isBone) boneCount++;
+    if (o.isSkinnedMesh && o.skeleton && o.skeleton.bones) {
+      skinnedMeshCount++;
+      // Também soma bones do skeleton (pode haver bones não marcados como isBone)
+      for (const b of o.skeleton.bones) {
+        if (!b.isBone) boneCount++;
+      }
+    }
+  });
+  return { boneCount, skinnedMeshCount };
+}
+
+// ══════════════════════════════════════════════
+// PRELOAD
+// ══════════════════════════════════════════════
 export async function preloadZombieModel() {
   if (loaded) return baseScene;
 
@@ -91,26 +121,27 @@ export async function preloadZombieModel() {
       console.log(`[zombie-model] 🔄 Tentando ${filename}...`);
       const result = await loadAnyModel(filename);
 
-      // 🛡️ Guarda: se o scene veio undefined, pula
       if (!result || !result.scene) {
-        console.warn(`[zombie-model] ❌ ${filename}: loader retornou sem 'scene'`);
+        console.warn(`[zombie-model] ❌ ${filename}: loader retornou sem scene`);
         lastError = new Error(`${filename} sem scene`);
         continue;
       }
-      const candidate = result.scene;
 
-      // Conta bones ANTES de aceitar
-      let boneCount = 0;
-      candidate.traverse(o => { if (o.isBone) boneCount++; });
+      const candidate = result.scene;
+      const { boneCount, skinnedMeshCount } = countSkeleton(candidate);
+
+      console.log(`[zombie-model] 🔍 ${filename}: ${boneCount} bones, ${skinnedMeshCount} skinned meshes`);
 
       if (boneCount === 0) {
-        console.warn(`[zombie-model] ❌ ${filename} carregou mas tem 0 bones — pulando`);
+        console.warn(`[zombie-model] ❌ ${filename}: 0 bones — pulando`);
         lastError = new Error(`${filename} sem skeleton`);
         continue;
       }
 
-      // Renomeia bones
+      // Aceito!
       baseScene = candidate;
+
+      // Renomeia bones
       const renamed = [];
       baseScene.traverse(o => {
         if (!o.isBone) return;
@@ -118,7 +149,6 @@ export async function preloadZombieModel() {
         if (canon && canon !== o.name) { o.name = canon; renamed.push(canon); }
       });
 
-      console.log(`[zombie-model] 🦴 ${boneCount} bones encontrados em ${filename}`);
       if (renamed.length) {
         console.log(`[zombie-model] 🏷️ ${renamed.length} bones renomeados`);
       }
@@ -139,7 +169,7 @@ export async function preloadZombieModel() {
         }
       });
 
-      // Verifica mapeamento
+      // Verifica mapeamento dos bones
       const bonesMap = {};
       baseScene.traverse(o => { if (o.isBone) bonesMap[o.name] = o; });
       const missing = [];
@@ -154,6 +184,7 @@ export async function preloadZombieModel() {
 
       sourceName = filename;
       loaded = true;
+      console.log(`[zombie-model] ✅ Modelo carregado: ${filename}`);
       return baseScene;
     } catch (err) {
       lastError = err;
@@ -168,6 +199,9 @@ export async function preloadZombieModel() {
 
 export function isModelReady() { return loaded; }
 
+// ══════════════════════════════════════════════
+// INSTÂNCIA
+// ══════════════════════════════════════════════
 export function createZombieInstance() {
   if (!baseScene) return null;
 
@@ -181,14 +215,12 @@ export function createZombieInstance() {
     joints[ourName] = findBone(bonesMap, candidates) || null;
   }
 
-  // Escala pra 1.8m
   clone.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(clone);
   const height = box.max.y - box.min.y;
   const scale = height > 0.1 ? 1.8 / height : 1;
   clone.scale.setScalar(scale);
 
-  // Pés no chão
   clone.updateMatrixWorld(true);
   const box2 = new THREE.Box3().setFromObject(clone);
   clone.position.y = -box2.min.y;
@@ -196,6 +228,9 @@ export function createZombieInstance() {
   return { scene: clone, bones: bonesMap, joints, scale };
 }
 
+// ══════════════════════════════════════════════
+// TINT
+// ══════════════════════════════════════════════
 export function tintZombie(instance, skinColor) {
   const scene = instance.scene;
   scene.traverse(o => {
