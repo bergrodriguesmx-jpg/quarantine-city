@@ -1,74 +1,85 @@
 // ============================================================
-// zombie-anim.js — v6 (animação direta no XBot, sem retarget)
+// zombie-anim.js — v7 (suporta GLB + FBX)
+// Tenta cada animação em .glb primeiro, cai pra .fbx se falhar.
 // ============================================================
 
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const BASE = 'assets/zombie-anim/';
+const fbxLoader = new FBXLoader();
+const gltfLoader = new GLTFLoader();
 
+// nome → [arquivos candidatos, na ordem]
 const ANIM_FILES = {
-  idle:     'zombie-idle.fbx',
-  walk:     'zombie-walk.fbx',
-  run:      'zombie-run.fbx',
-  attack:   'zombie-attack.fbx',
-  bite1:    'zombie-biting.fbx',
-  bite2:    'zombie-biting(2).fbx',
-  neckbite: 'zombie-neck-bite.fbx',
-  dying:    'zombie-dying.fbx',
-  death:    'zombie-death.fbx',
-  crawl:    'zombie-crawl.fbx',
-  runcrawl: 'running-crawl.fbx',
-  scream:   'zombie-scream.fbx',
+  idle:     ['zombie-idle.glb',     'zombie-idle.fbx'],
+  walk:     ['zombie-walk.glb',     'zombie-walk.fbx'],
+  run:      ['zombie-run.glb',      'zombie-run.fbx'],
+  attack:   ['zombie-attack.glb',   'zombie-attack.fbx'],
+  bite1:    ['zombie-biting.glb',   'zombie-biting.fbx'],
+  bite2:    ['zombie-biting(2).glb','zombie-biting(2).fbx'],
+  neckbite: ['zombie-neck-bite.glb','zombie-neck-bite.fbx'],
+  dying:    ['zombie-dying.glb',    'zombie-dying.fbx'],
+  death:    ['zombie-death.glb',    'zombie-death.fbx'],
+  crawl:    ['zombie-crawl.glb',    'zombie-crawl.fbx'],
+  runcrawl: ['running-crawl.glb',   'running-crawl.fbx'],
+  scream:   ['zombie-scream.glb',   'zombie-scream.fbx'],
 };
 
-const loader = new FBXLoader();
 const loadedClips = {};
 const loadPromises = {};
 let preloaded = false;
 
-async function loadAnim(name, file) {
+async function loadAnyAnim(filename) {
+  const url = BASE + encodeURIComponent(filename).replace(/%2F/g, '/');
+  if (filename.toLowerCase().endsWith('.glb') || filename.toLowerCase().endsWith('.gltf')) {
+    const gltf = await gltfLoader.loadAsync(url);
+    return (gltf.animations && gltf.animations[0]) || null;
+  } else {
+    const fbx = await fbxLoader.loadAsync(url);
+    return (fbx.animations && fbx.animations[0]) || null;
+  }
+}
+
+async function loadAnim(name, candidates) {
   if (loadPromises[name]) return loadPromises[name];
   loadPromises[name] = (async () => {
-    try {
-      const url = BASE + encodeURIComponent(file).replace(/%2F/g, '/');
-      const fbx = await loader.loadAsync(url);
-      const clip = fbx.animations && fbx.animations[0];
-      if (!clip) {
-        console.warn(`[zombie-anim] ⚠️ ${file} sem animação`);
-        return null;
+    let lastErr = null;
+    for (const file of candidates) {
+      try {
+        const clip = await loadAnyAnim(file);
+        if (!clip) {
+          console.warn(`[zombie-anim] ⚠️ ${file} sem animação`);
+          continue;
+        }
+        loadedClips[name] = clip;
+        console.log(`[zombie-anim] ✅ ${name} ← ${file} (${clip.tracks.length} tracks, ${clip.duration.toFixed(2)}s)`);
+        return clip;
+      } catch (e) {
+        lastErr = e;
       }
-      loadedClips[name] = clip;
-      console.log(`[zombie-anim] ✅ ${name} ← ${file} (${clip.tracks.length} tracks, ${clip.duration.toFixed(2)}s)`);
-      return clip;
-    } catch (e) {
-      console.warn(`[zombie-anim] ❌ ${file}: ${e.message}`);
-      return null;
     }
+    console.warn(`[zombie-anim] ❌ ${name}: nenhum candidato funcionou`);
+    return null;
   })();
   return loadPromises[name];
 }
 
 export async function preloadZombieAnims() {
   if (preloaded) return;
-  console.log('[zombie-anim] 📦 Carregando animações Mixamo...');
+  console.log('[zombie-anim] 📦 Carregando animações (GLB > FBX)...');
   const entries = Object.entries(ANIM_FILES);
-  await Promise.all(entries.map(([name, file]) => loadAnim(name, file)));
+  await Promise.all(entries.map(([name, files]) => loadAnim(name, files)));
   preloaded = true;
   const loaded = Object.keys(loadedClips).length;
   console.log(`[zombie-anim] 📦 ${loaded}/${entries.length} animações prontas`);
-  if (loaded > 0) {
-    console.table(Object.keys(loadedClips).map(n => ({
-      anim: n, file: ANIM_FILES[n], duration: loadedClips[n].duration.toFixed(2) + 's',
-    })));
-  }
 }
 
 export function hasZombieAnims() {
   return preloaded && Object.keys(loadedClips).length > 0;
 }
 
-// Aplica um mixer numa instância XBot
 export function setupZombieAnimator(z) {
   if (!hasZombieAnims()) return false;
   if (!z.instance) return false;
@@ -89,11 +100,14 @@ export function setupZombieAnimator(z) {
     z.mixerActions[name] = action;
   }
 
-  // Começa com idle
   if (z.mixerActions.idle) {
     z.mixerActions.idle.play();
     z.currentAnim = z.mixerActions.idle;
     z.currentAnimName = 'idle';
+  } else if (z.mixerActions.walk) {
+    z.mixerActions.walk.play();
+    z.currentAnim = z.mixerActions.walk;
+    z.currentAnimName = 'walk';
   }
 
   return true;
