@@ -1,18 +1,19 @@
 // ============================================================
-// boss-ai.js
-// IA completa dos 3 bosses do Zumbi Blocks 2.
-// Cada boss tem estágios + ataques especiais.
+// boss-ai.js — v2
+// IA mais agressiva e diferenciada por boss.
+// Reaper teleporta mais, Queen usa padrões de voo, Riot tem rush.
 // ============================================================
 
 import * as THREE from 'three';
 
-// ════════ DEFINIÇÕES ════════
 const BOSS_DEFS = {
   riot: {
     stages: 3,
     healthStages: [1.0, 0.66, 0.33],
     tint: 0xa0a0ff,
     name: 'RIOT',
+    // 🎯 Comportamento: rush em estágios baixos, shotgun em altos
+    aggression: 1.0,
   },
   queen: {
     stages: 3,
@@ -20,6 +21,8 @@ const BOSS_DEFS = {
     tint: 0xffaaff,
     name: 'QUEEN',
     flight: true,
+    aggression: 1.3,
+    flightHeightBase: 3.5,
   },
   reaper: {
     stages: 4,
@@ -27,6 +30,7 @@ const BOSS_DEFS = {
     tint: 0x6060ff,
     name: 'REAPER',
     teleport: true,
+    aggression: 1.5,
   },
 };
 
@@ -49,14 +53,14 @@ export function initBoss(z, key) {
   z.bossActionCooldown = 0;
   z.bossActionState = 'idle';
   z.bossActionTimer = 0;
-  z.teleportCooldown = 3 + Math.random() * 2;
+  z.teleportCooldown = 2 + Math.random() * 1.5;
   z.ammo = def.stages >= 3 ? 4 : 0;
-  z.flightHeight = 4;
+  z.flightHeight = def.flightHeightBase || 0;
   z.strafeDir = Math.random() < 0.5 ? 1 : -1;
-  z.strafeTimer = 2 + Math.random() * 2;
+  z.strafeTimer = 1.5 + Math.random() * 1.5;
+  z.comboCount = 0;
 }
 
-// ════════ UPDATE PRINCIPAL ════════
 export function updateBossAI(dt, zombies) {
   if (!_scene || !_camera || !_player) return;
   const now = performance.now() / 1000;
@@ -68,7 +72,6 @@ export function updateBossAI(dt, zombies) {
     const def = BOSS_DEFS[z.typeKey] || BOSS_DEFS.riot;
     const hpFrac = z.health / z.maxHealth;
 
-    // Transição de estágio
     let newStage = 1;
     for (let i = 1; i < def.stages; i++) {
       if (hpFrac <= z.bossStageHealthThresholds[i]) newStage = i + 1;
@@ -85,13 +88,15 @@ export function updateBossAI(dt, zombies) {
     if (z.bossActionCooldown > 0) z.bossActionCooldown -= dt;
     if (z.teleportCooldown > 0) z.teleportCooldown -= dt;
 
-    if (z.typeKey === 'riot')   _updateRiot(z, def, dt, now);
+    if (z.typeKey === 'riot')        _updateRiot(z, def, dt, now);
     else if (z.typeKey === 'queen')  _updateQueen(z, def, dt, now);
     else if (z.typeKey === 'reaper') _updateReaper(z, def, dt, now);
   }
 }
 
-// ════════ RIOT ════════
+// ════════════════════════════════════════════════════════════
+// RIOT: rush em estágio baixo, ranges em estágio alto
+// ════════════════════════════════════════════════════════════
 function _updateRiot(z, def, dt, now) {
   if (z.bossActionState === 'transition') {
     z.bossActionTimer -= dt;
@@ -100,27 +105,45 @@ function _updateRiot(z, def, dt, now) {
   }
   const dist = z.mesh.position.distanceTo(_player.position);
 
-  if (z.bossStage === 1) {
-    if (dist < 2) { _slam(z, 30); z.bossActionCooldown = 0.8 + Math.random() * 0.6; }
-    else if (dist < 6 && z.bossActionCooldown <= 0 && Math.random() < 0.5) {
-      _dashTowards(z, 10); z.bossActionCooldown = 1.5;
+  // Estágio 3: rush + triple shot
+  if (z.bossStage === 3) {
+    if (z.comboCount > 0 && z.bossActionCooldown <= 0) {
+      _dashTowards(z, 20);
+      z.bossActionCooldown = 0.3;
+      z.comboCount--;
+      if (z.comboCount === 0) z.bossActionCooldown = 1.5;
+      return;
     }
-  } else if (z.bossStage === 2) {
-    if (dist < 2) { _slam(z, 35); z.bossActionCooldown = 1.0; }
-    else if (dist < 15 && z.bossActionCooldown <= 0) {
-      _riotShotgun(z); z.bossActionCooldown = 0.8 + Math.random() * 0.6;
+    if (dist < 3 && z.bossActionCooldown <= 0) {
+      _slam(z, 50);
+      z.bossActionCooldown = 1.0;
+    } else if (dist < 15 && z.bossActionCooldown <= 0) {
+      z.comboCount = 3;
+      z.bossActionCooldown = 0.05;
+    } else if (dist < 20 && z.bossActionCooldown <= 0) {
+      _riotTripleShot(z);
+      z.bossActionCooldown = 1.2;
+    }
+    return;
+  }
+
+  if (z.bossStage === 2) {
+    if (dist < 2.5 && z.bossActionCooldown <= 0) { _slam(z, 35); z.bossActionCooldown = 0.9; }
+    else if (dist < 18 && z.bossActionCooldown <= 0) { _riotShotgun(z); z.bossActionCooldown = 0.7; }
+    else if (dist < 8 && z.bossActionCooldown <= 0 && Math.random() < 0.5) {
+      _dashTowards(z, 14); z.bossActionCooldown = 1.2;
     }
   } else {
-    if (dist < 2.5 && z.bossActionCooldown <= 0) { _slam(z, 45); z.bossActionCooldown = 1.2; }
-    else if (dist < 8 && z.bossActionCooldown <= 0 && Math.random() < 0.7) {
-      _leapSlam(z); z.bossActionCooldown = 2.0;
-    } else if (dist < 12 && z.bossActionCooldown <= 0) {
-      _riotTripleShot(z); z.bossActionCooldown = 1.2;
+    if (dist < 2.2 && z.bossActionCooldown <= 0) { _slam(z, 30); z.bossActionCooldown = 0.7; }
+    else if (dist < 8 && z.bossActionCooldown <= 0 && Math.random() < 0.6) {
+      _dashTowards(z, 12); z.bossActionCooldown = 1.4;
     }
   }
 }
 
-// ════════ QUEEN ════════
+// ════════════════════════════════════════════════════════════
+// QUEEN: voo + tox + laser
+// ════════════════════════════════════════════════════════════
 function _updateQueen(z, def, dt, now) {
   if (z.bossActionState === 'transition') {
     z.bossActionTimer -= dt;
@@ -128,14 +151,14 @@ function _updateQueen(z, def, dt, now) {
     return;
   }
 
-  // Voo
-  const targetY = 3.5 + Math.sin(now * 1.5) * 0.5;
-  z.mesh.position.y += (targetY - z.mesh.position.y) * Math.min(1, dt * 2);
+  // Voo oscilante
+  const targetY = (def.flightHeightBase || 3.5) + Math.sin(now * 1.5) * 0.6;
+  z.mesh.position.y += (targetY - z.mesh.position.y) * Math.min(1, dt * 2.5);
 
-  // Strafe
+  // Strafe e manutenção de distância
   z.strafeTimer -= dt;
   if (z.strafeTimer <= 0) {
-    z.strafeTimer = 2 + Math.random() * 2.5;
+    z.strafeTimer = 1.5 + Math.random() * 2;
     z.strafeDir *= -1;
   }
   const toPlayer = new THREE.Vector3().subVectors(_player.position, z.mesh.position).setY(0);
@@ -143,16 +166,24 @@ function _updateQueen(z, def, dt, now) {
   if (dist > 0.1) {
     toPlayer.normalize();
     const perp = new THREE.Vector3(-toPlayer.z, 0, toPlayer.x);
-    z.mesh.position.addScaledVector(perp, z.strafeDir * 2.5 * dt);
+    // Manter ~10m de distância
+    const idealDist = 10;
+    const approachDir = dist > idealDist + 2 ? toPlayer : (dist < idealDist - 2 ? toPlayer.clone().negate() : new THREE.Vector3(0,0,0));
+    z.mesh.position.addScaledVector(perp, z.strafeDir * 2.8 * dt);
+    z.mesh.position.addScaledVector(approachDir, 2.0 * dt);
   }
 
   if (z.bossActionCooldown > 0) return;
   const dist3D = z.mesh.position.distanceTo(_player.position);
 
-  if (z.bossStage === 1) {
-    if (dist3D > 10) _shootToxBall(z);
-    else if (dist3D > 6.5) _queenStab(z);
-    else _slam(z, 22);
+  if (z.bossStage === 3) {
+    // Padrão agressivo: multi-tox + laser curvo + dash
+    const r = Math.random();
+    if (r < 0.35) _multiTox(z);
+    else if (r < 0.6) _queenLaser(z);
+    else if (r < 0.8) _queenCurvedLaser(z);
+    else _dashTowards(z, 16);
+    z.bossActionCooldown = 0.35 + Math.random() * 0.35;
   } else if (z.bossStage === 2) {
     const r = Math.random();
     if (dist3D > 10) {
@@ -162,19 +193,18 @@ function _updateQueen(z, def, dt, now) {
     } else if (dist3D > 6.5) _queenStab(z);
     else if (dist3D > 4) _slam(z, 25);
     else _queenTwirl(z);
+    z.bossActionCooldown = 0.9 + Math.random() * 0.6;
   } else {
-    const r = Math.random();
-    if (dist3D > 5) {
-      if (r < 0.3) _multiTox(z);
-      else if (r < 0.6) _queenLaser(z);
-      else if (r < 0.8) _queenCurvedLaser(z);
-      else _dashTowards(z, 16);
-    } else _queenLaser(z);
+    if (dist3D > 10) _shootToxBall(z);
+    else if (dist3D > 6.5) _queenStab(z);
+    else _slam(z, 22);
+    z.bossActionCooldown = 1.1 + Math.random() * 0.7;
   }
-  z.bossActionCooldown = z.bossStage === 3 ? 0.4 + Math.random() * 0.4 : 1.2 + Math.random() * 0.7;
 }
 
-// ════════ REAPER ════════
+// ════════════════════════════════════════════════════════════
+// REAPER: teleporte agressivo + bursts
+// ════════════════════════════════════════════════════════════
 function _updateReaper(z, def, dt, now) {
   if (z.bossActionState === 'transition') {
     z.bossActionTimer -= dt;
@@ -184,50 +214,71 @@ function _updateReaper(z, def, dt, now) {
   const dist = z.mesh.position.distanceTo(_player.position);
 
   const teleportDist = REAPER_TELEPORT_DIST[z.bossStage] || 5;
-  if (dist > teleportDist + 2 && z.teleportCooldown <= 0) {
+
+  // Estágio 4: teleporte constante
+  if (z.bossStage === 4) {
+    if (z.teleportCooldown <= 0 && Math.random() < 0.6) {
+      _teleportBehind(z);
+      z.teleportCooldown = 0.6 + Math.random() * 0.6;
+      return;
+    }
+  } else if (dist > teleportDist + 2 && z.teleportCooldown <= 0) {
     _teleportCloser(z, teleportDist);
-    z.teleportCooldown = 1.5 + Math.random() * 1.5;
+    z.teleportCooldown = 1.2 + Math.random() * 1.2;
     return;
   }
 
   if (z.bossActionCooldown > 0) return;
 
-  if (z.bossStage === 1) {
-    if (dist < 2) { _meleeStrike(z, 40); z.bossActionCooldown = 0.5 + Math.random() * 0.4; }
-    else if (dist < 6 && Math.random() < 0.6) { _dashTowards(z, 16); z.bossActionCooldown = 0.9; }
-    else z.bossActionCooldown = 0.3;
-  } else if (z.bossStage === 2) {
-    if (dist < 4 && Math.random() < 0.6) { _meleeStrike(z, 55); z.bossActionCooldown = 0.6; }
-    else if (dist < 5 && Math.random() < 0.5) { _scytheBlast(z); z.bossActionCooldown = 1.0; }
-    else if (dist < 8 && Math.random() < 0.4) { _dashTowards(z, 18); z.bossActionCooldown = 0.8; }
-    else z.bossActionCooldown = 0.3;
-  } else if (z.bossStage === 3) {
-    if (z.ammo > 0 && dist > 3 && dist < 20) {
-      _gunShortBurst(z);
-      z.ammo--;
-      z.bossActionCooldown = 0.8;
-    } else if (z.ammo <= 0) {
-      z.ammo = 4;
-      z.bossActionCooldown = 1.5;
-    } else if (dist < 3) {
-      _meleeStrike(z, 60);
-      z.bossActionCooldown = 0.6;
-    }
-  } else {
+  if (z.bossStage === 4) {
+    // Combos agressivos
     const r = Math.random();
-    if (dist < 2.5 && r < 0.4) { _meleeStrike(z, 70); z.bossActionCooldown = 0.5; }
-    else if (dist < 4 && r < 0.6) { _scytheBlast(z); z.bossActionCooldown = 0.9; }
-    else if (dist < 12 && z.ammo > 0 && r < 0.85) {
+    if (dist < 3 && r < 0.4) { _meleeStrike(z, 70); z.bossActionCooldown = 0.4; }
+    else if (dist < 5 && r < 0.6) { _scytheBlast(z); z.bossActionCooldown = 0.7; }
+    else if (z.ammo > 0 && r < 0.85) {
       _gunTripleBurst(z);
       z.ammo -= 3;
-      z.bossActionCooldown = 1.0;
-    } else if (dist < 8) { _dashTowards(z, 20); z.bossActionCooldown = 0.7; }
-    else z.bossActionCooldown = 0.25;
-    if (z.ammo <= 0) { z.ammo = 4; z.bossActionCooldown = 1.5; }
+      z.bossActionCooldown = 0.6;
+    } else { _dashTowards(z, 22); z.bossActionCooldown = 0.5; }
+    if (z.ammo <= 0) { z.ammo = 4; z.bossActionCooldown = 1.0; }
+    return;
   }
+
+  if (z.bossStage === 3) {
+    if (z.ammo > 0 && dist > 3 && dist < 22) {
+      _gunShortBurst(z);
+      z.ammo--;
+      z.bossActionCooldown = 0.7;
+    } else if (z.ammo <= 0) {
+      z.ammo = 4;
+      z.bossActionCooldown = 1.3;
+    } else if (dist < 3) {
+      _meleeStrike(z, 60);
+      z.bossActionCooldown = 0.5;
+    } else {
+      _dashTowards(z, 20);
+      z.bossActionCooldown = 0.6;
+    }
+    return;
+  }
+
+  if (z.bossStage === 2) {
+    if (dist < 4 && Math.random() < 0.6) { _meleeStrike(z, 55); z.bossActionCooldown = 0.55; }
+    else if (dist < 5 && Math.random() < 0.5) { _scytheBlast(z); z.bossActionCooldown = 0.9; }
+    else if (dist < 10 && Math.random() < 0.4) { _dashTowards(z, 18); z.bossActionCooldown = 0.7; }
+    else z.bossActionCooldown = 0.25;
+    return;
+  }
+
+  // Estágio 1
+  if (dist < 2) { _meleeStrike(z, 40); z.bossActionCooldown = 0.45 + Math.random() * 0.35; }
+  else if (dist < 8 && Math.random() < 0.6) { _dashTowards(z, 16); z.bossActionCooldown = 0.8; }
+  else z.bossActionCooldown = 0.3;
 }
 
-// ════════ AÇÕES ════════
+// ════════════════════════════════════════════════════════════
+// AÇÕES
+// ════════════════════════════════════════════════════════════
 function _teleportCloser(z, targetDist) {
   _spawnParticles(z.mesh.position, 0x6060ff, 30);
   const forward = new THREE.Vector3();
@@ -241,6 +292,20 @@ function _teleportCloser(z, targetDist) {
   if (z.vx !== undefined) z.vx = 0;
   if (z.vz !== undefined) z.vz = 0;
   _spawnParticles(newPos, 0x6060ff, 30);
+}
+
+function _teleportBehind(z) {
+  const angle = Math.random() * Math.PI * 2;
+  const dist = 3 + Math.random() * 3;
+  const newPos = _player.position.clone();
+  newPos.x += Math.cos(angle) * dist;
+  newPos.z += Math.sin(angle) * dist;
+  newPos.y = z.mesh.position.y;
+  _spawnParticles(z.mesh.position, 0x6060ff, 25);
+  z.mesh.position.copy(newPos);
+  if (z.vx !== undefined) z.vx = 0;
+  if (z.vz !== undefined) z.vz = 0;
+  _spawnParticles(newPos, 0x6060ff, 25);
 }
 
 function _spawnParticles(pos, color, count) {
@@ -275,7 +340,7 @@ function _shootToxBall(z) {
 }
 
 function _multiTox(z) {
-  for (let i = 0; i < 3; i++) setTimeout(() => _shootToxBall(z), i * 200);
+  for (let i = 0; i < 3; i++) setTimeout(() => _shootToxBall(z), i * 150);
 }
 
 function _queenStab(z) {
@@ -352,7 +417,7 @@ function _riotShotgun(z) {
 }
 
 function _riotTripleShot(z) {
-  for (let i = 0; i < 3; i++) setTimeout(() => _riotShotgun(z), i * 220);
+  for (let i = 0; i < 3; i++) setTimeout(() => _riotShotgun(z), i * 180);
 }
 
 function _leapSlam(z) {
@@ -396,7 +461,7 @@ function _gunShortBurst(z) {
 }
 
 function _gunTripleBurst(z) {
-  for (let i = 0; i < 3; i++) setTimeout(() => _gunShortBurst(z), i * 300);
+  for (let i = 0; i < 3; i++) setTimeout(() => _gunShortBurst(z), i * 250);
 }
 
 function _slam(z, dmg) {
