@@ -1,7 +1,12 @@
+// ============================================================
+// game.js — v2
+// Integra: IA especialista, Perks por skin, POIs, Boss AI melhorada.
+// ============================================================
+
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import * as Textures from './textures.js';
-import { buildWorld } from './scenery.js';
+import { buildWorld, POIS } from './scenery.js';
 import * as Sfx from './audio.js';
 import * as bus from './src/core/bus.js';
 import { Ev } from './src/core/events.js';
@@ -36,6 +41,9 @@ import { preloadCharacters, createCharacter } from './character-models.js';
 import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './src/render/weapon-models.js';
 import { preloadZombieAnims, hasZombieAnims, setupZombieAnimator, updateZombieAnim, handleZombieAnimState } from './zombie-anim.js';
 import { preloadZombieModel, isModelReady, createZombieInstance, tintZombie } from './zombie-model.js';
+
+// ════════ NOVOS IMPORTS ════════
+import { applyPerk, getPerk, PERKS, listPerks } from './perks.js';
 
 bus.setAdapter(new LocalAdapter());
 
@@ -203,6 +211,27 @@ const state = {
   vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
   bossSpawned: false,
   mouseDX: 0, mouseDY: 0,
+
+  // ════════ PERKS (novos) ════════
+  reviveSpeedMult: 1,
+  reviveHealBonus: 0,
+  shopDiscount: 1,
+  sellBonus: 1,
+  reloadSpeedMult: 1,
+  reserveAmmoBonus: 0,
+  healMult: 1,
+  autoBandage: false,
+  recoilMult: 1,
+  sprintSpeedBonus: 1,
+  killRefillsStamina: false,
+  killStaminaDuration: 0,
+  brazierDurationMult: 1,
+  brazierFuelBonus: 1,
+  activePerk: null,
+  staminaBoostUntil: 0,
+
+  // ════════ POIs descobertos (novo) ════════
+  discoveredPOIs: new Set(),
 };
 
 // ============================================================
@@ -417,6 +446,18 @@ Daytime.initDaytime(scene, sun, ambientLight);
 Gore.initGore(scene);
 Extraction.initExtraction(scene, player);
 BossAI.initBossSystem(scene, camera, player, spawnBossProjectile);
+
+// 🎯 REGISTRA CALLBACKS DA IA ESPECIALISTA
+ZombieAI.registerAICallbacks({
+  spawnToxProjectile: ({ origin, dir, speed, damage, radius, ownerId }) => {
+    spawnBossProjectile({
+      type: 'tox', origin, dir, speed, damage, radius,
+    });
+  },
+  onBoomerExplode: (z) => {
+    spawnExplosion(z.mesh.position);
+  },
+});
 
 bus.on(Ev.WORLD_BLOOD_MOON, () => {
   try { Sfx.playZombieDeath(); } catch(_) {}
@@ -888,7 +929,6 @@ function proceduralFallback(opts = {}) {
 
 // ============================================================
 // CREATE ZOMBIE MESH
-// 🔧 PATCH 1: só usa XBot se todos os joints essenciais existirem
 // ============================================================
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
@@ -898,7 +938,6 @@ function createZombieMesh(opts = {}) {
   if (isModelReady()) {
     const inst = createZombieInstance();
 
-    // 🎯 Guarda crítica: só usa XBot se TODOS os joints essenciais existirem
     const jointsValid = inst && inst.joints
       && inst.joints.head && inst.joints.pelvis
       && inst.joints.spineLower && inst.joints.spineUpper;
@@ -1052,12 +1091,11 @@ function spawnZombie(forceType) {
   const mesh = createZombieMesh({ type: typeKey });
   mesh.position.set(spawnX, 0, spawnZ);
 
-  // 🎯 Aplica o scale do tipo no mesh (brute fica maior, runner menor)
   if (type.scale && type.scale !== 1) {
     mesh.scale.multiplyScalar(type.scale);
     mesh.updateMatrixWorld(true);
     const _b = new THREE.Box3().setFromObject(mesh);
-    mesh.position.y = -_b.min.y;  // pés no chão depois de escalar
+    mesh.position.y = -_b.min.y;
   }
 
   scene.add(mesh);
@@ -1874,6 +1912,13 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     state.coins += cRew; state.xp += xRew;
     state.kills++; if (isHead) state.headshots++;
     if (state.lifesteal > 0) state.health = Math.min(state.maxHealth, state.health + state.lifesteal);
+
+    // 🎯 PERK: kill refills stamina
+    if (state.killRefillsStamina) {
+      state.staminaBoostUntil = performance.now()/1000 + state.killStaminaDuration;
+      state.stamina = state.staminaMax;
+    }
+
     bus.emit(Ev.DEATH, { id:z.id, killerId:player.id, part });
     bus.emit(Ev.KILL, { killerId:player.id, victimId:z.id, victimType:z.typeKey, headshot:isHead, weaponId:state.inventory[state.currentSlot] });
     if (isHead) bus.emit(Ev.HEADSHOT, { playerId:player.id, victimId:z.id });
@@ -1953,10 +1998,12 @@ function startReload(wid) {
   if (am.mag >= w.magSize || am.reserve <= 0) return;
   state.reload.active = true; state.reload.wid = wid;
   state.reload.startTime = performance.now()/1000;
-  state.reload.duration = w.reloadTime;
-  state.reload.endTime = state.reload.startTime + w.reloadTime;
+  // 🎯 PERK: reload speed
+  const duration = w.reloadTime / state.reloadSpeedMult;
+  state.reload.duration = duration;
+  state.reload.endTime = state.reload.startTime + duration;
   if (state.aiming) { state.aiming = false; updateCrosshair(); }
-  if (weaponView) weaponView.reload(w.reloadTime);
+  if (weaponView) weaponView.reload(duration);
   Sfx.playReload();
 }
 function cancelReload() {
@@ -2006,7 +2053,7 @@ function attack(isRightClick = false) {
   else if (weaponId === 'shotgun') Sfx.playShotgun();
   else if (weaponId === 'launcher') Sfx.playLauncher();
   triggerSwing();
-  if (weapon.type === 'ranged' && weaponView) weaponView.recoil(Math.min(2, weapon.damage / 60));
+  if (weapon.type === 'ranged' && weaponView) weaponView.recoil(Math.min(2, weapon.damage / 60) * state.recoilMult);
   makeNoise(player.position, weapon.noise || 15);
   if (weapon.type === 'ranged') { spawnMuzzleFlash(); addShake(CONFIG.shake.shoot * (weapon.damage/40)); }
 
@@ -2256,7 +2303,7 @@ function checkWaveComplete() {
     const rewardMul = state.brazierBurning ? CONFIG.brazier.rewardMult : 1;
     const coinBonus = Math.round((CONFIG.wave.clearBonusBase + (state.wave - 1) * CONFIG.wave.clearBonusPerWave) * state.coinMult * rewardMul);
     state.coins += coinBonus;
-    const heal = Math.round(state.maxHealth * CONFIG.wave.clearHealFrac);
+    const heal = Math.round(state.maxHealth * CONFIG.wave.clearHealFrac * state.healMult);
     const beforeHP = state.health;
     state.health = Math.min(state.maxHealth, state.health + heal);
     const healed = Math.round(state.health - beforeHP);
@@ -2270,7 +2317,11 @@ function checkWaveComplete() {
       am.reserve = Math.min(w.reserveMax, am.reserve + give);
       ammoGiven += am.reserve - before;
     });
-    state.brazierFuel = Math.min(CONFIG.brazier.maxFuel, state.brazierFuel + CONFIG.brazier.fuelPerWave);
+    // 🎯 PERK: brazier duration + fuel bonus
+    state.brazierFuel = Math.min(
+      CONFIG.brazier.maxFuel * state.brazierDurationMult,
+      state.brazierFuel + CONFIG.brazier.fuelPerWave * state.brazierFuelBonus
+    );
     showWaveBanner(`+${coinBonus}$  +${healed}HP${ammoGiven ? '  +' + ammoGiven + 'AMMO' : ''}  — PROXIMA EM ${CONFIG.wave.breakTime}s`);
     updateHUD();
 
@@ -2333,7 +2384,9 @@ function enterDownedState() {
 function exitDownedState(hpFraction) {
   if (!state.downed) return;
   state.downed = false; state.downedElapsed = 0; state.reviveProgress = 0;
-  state.health = Math.max(20, Math.round(state.maxHealth * (hpFraction || 0.5)));
+  // 🎯 PERK: revive heal bonus
+  const finalFraction = Math.min(1, (hpFraction || 0.5) + state.reviveHealBonus);
+  state.health = Math.max(20, Math.round(state.maxHealth * finalFraction));
   state.invulnUntil = performance.now()/1000 + 2.0;
   document.body.classList.remove('downed');
   document.getElementById('downed-overlay').classList.add('hidden');
@@ -2353,7 +2406,8 @@ function updateDownedState(dt) {
   if (state.downedElapsed >= CONFIG.downed.selfReviveAt && state.revivesLeft > 0) {
     prompt.classList.add('visible');
     if (controls.isDown(Action.Interact, state.keys)) {
-      state.reviveProgress += dt*1000;
+      // 🎯 PERK: revive speed
+      state.reviveProgress += dt*1000 * state.reviveSpeedMult;
       progressWrap.classList.add('visible');
       const pct = Math.min(1, state.reviveProgress / CONFIG.downed.selfReviveHold);
       progressBar.style.width = (pct*100) + '%';
@@ -2447,7 +2501,9 @@ function renderShop() {
   owned.forEach(wid => {
     const w = WEAPONS[wid], am = state.ammo[wid];
     if (!am || !AMMO_PACKS[wid]) return;
-    const pack = AMMO_PACKS[wid], price = AMMO_PRICES[wid];
+    const pack = AMMO_PACKS[wid];
+    // 🎯 PERK: shop discount
+    const price = Math.round(AMMO_PRICES[wid] * state.shopDiscount);
     const canBuy = state.coins >= price && am.reserve < w.reserveMax;
 
     const el = document.createElement('button');
@@ -2786,10 +2842,17 @@ function updatePlayer(dt) {
   let speedMult = state.aiming ? 0.5 : 1;
   if (state.downed) speedMult = 0.25;
 
+  // 🎯 PERK: stamina boost ativo
+  const now = performance.now()/1000;
+  if (now < state.staminaBoostUntil) {
+    state.stamina = state.staminaMax;
+  }
+
   const sprintKeyHeld = controls.isDown(Action.Sprint, state.keys);
   const canSprint = state.isMoving && !state.downed && !state.aiming && state.stamina > 0;
   state.isSprinting = canSprint && sprintKeyHeld;
-  const sprintMult = state.isSprinting ? CONFIG.player.sprintMult : 1;
+  // 🎯 PERK: sprint speed bonus
+  const sprintMult = state.isSprinting ? CONFIG.player.sprintMult * state.sprintSpeedBonus : 1;
 
   const speed = CONFIG.player.speed * state.speedMult * speedMult * sprintMult;
 
@@ -2892,6 +2955,21 @@ function updateZombies(dt) {
     const aiMult = ZombieAI.getAIMultiplier(z);
     const aiDir = ZombieAI.getDesiredDirection(z, player);
 
+    // 🎯 BOOMER: check de explosão
+    if (z.type && z.type.behavior === 'boomer' && z.aiState === 'SUICIDE_RUN') {
+      if (ZombieAI.checkBoomerExplosion(z, player)) {
+        bus.emit(Ev.BOOMER_DETONATE, { id: z.id, pos: { x: z.mesh.position.x, y: 0, z: z.mesh.position.z } });
+        spawnExplosion(z.mesh.position);
+        z.health = 0;
+        z.dying = true;
+        const idxB = zombies.indexOf(z);
+        if (idxB >= 0) zombies.splice(idxB, 1);
+        state.zombiesAlive--;
+        updateHUD();
+        continue;
+      }
+    }
+
     const dxLod = z.mesh.position.x - player.position.x;
     const dzLod = z.mesh.position.z - player.position.z;
     const distLod2 = dxLod*dxLod + dzLod*dzLod;
@@ -2904,7 +2982,6 @@ function updateZombies(dt) {
     const anim = z.anim;
     const alerted = z.alertedUntil > now;
 
-    // 🔧 PATCH 2: só anima se o zumbi tem todos os joints essenciais
     const hasJoints = joints && joints.head && joints.pelvis
                    && joints.spineLower && joints.spineUpper
                    && joints.spineUpper && joints.neck;
@@ -3034,9 +3111,7 @@ function updateZombies(dt) {
     z._prevX = z.mesh.position.x;
     z._prevZ = z.mesh.position.z;
 
-    // ── Animação ──────────────────────────────────────────
     if (!hasJoints) {
-      // Zumbi sem skeleton válido: só atualiza mixer (se houver), ignora o resto
       if (z.mixer) updateZombieAnim(z, dt);
     } else {
       const speedNorm = Math.min(1.5, realSpeed / Math.max(0.01, z.speed));
@@ -3252,7 +3327,11 @@ function updateZombies(dt) {
       continue;
     }
 
-    if (emerge >= 0.5 && !staggering && !z.attackWindupActive && anim.attackPhase === 0
+    // 🎯 Spitter/boomer NÃO causam dano por contato
+    const dealsContactDamage = ZombieAI.shouldDealContactDamage(z);
+
+    if (dealsContactDamage &&
+        emerge >= 0.5 && !staggering && !z.attackWindupActive && anim.attackPhase === 0
         && now - z.lastAttackTime > z.attackCooldown * cooldownCrawl
         && dist < z.attackRange * attackRangeCrawl + 0.3) {
       z.attackWindupActive = true;
@@ -3261,7 +3340,7 @@ function updateZombies(dt) {
       springKick(anim, 'armLXVel', -3);
       springKick(anim, 'armRXVel', -3);
     }
-    if (z.attackWindupActive && now >= z.attackWindupEnd) {
+    if (z.attackWindupActive && now >= z.attackWindupEnd && dealsContactDamage) {
       z.attackWindupActive = false;
       z.lastAttackTime = now;
       anim.attackPhase = 2;
@@ -3283,7 +3362,7 @@ function updateZombies(dt) {
         if (state.health <= 0 && !state.downed && performance.now()/1000 >= state.invulnUntil) enterDownedState();
       }
     }
-    if (staggering && z.attackWindupActive) z.attackWindupActive = false;
+    if (staggering && z.attackWindupActive && dealsContactDamage) z.attackWindupActive = false;
 
     if (anim.attackPhase === 2 && now - anim.attackPhaseT > 0.12) {
       anim.attackPhase = 3;
@@ -3360,6 +3439,7 @@ function spawnWeaponPickup(weaponId, x, z, y = 0.9, isDrop = false) {
   });
 }
 function setupWeaponSpawns() {
+  // 🎯 Spawns baseados nos POIs
   const houses = [
     { x:-14, z:-14 }, { x:14, z:-14 }, { x:-14, z:14 }, { x:14, z:14 },
     { x:-28, z:-8 }, { x:28, z:-8 }, { x:-28, z:8 }, { x:28, z:8 },
@@ -3370,6 +3450,25 @@ function setupWeaponSpawns() {
   const pool = ['pistol', 'pistol', 'smg', 'shotgun', 'revolver', 'rifle', 'launcher'];
   const shuffled = [...pool].sort(() => Math.random() - 0.5);
   houses.slice(5).forEach((h, i) => spawnWeaponPickup(shuffled[i % shuffled.length], h.x - 2, h.z + 0.5, 0.95));
+
+  // 🎯 Weapon spawns especiais por POI
+  // Delegacia: armas de fogo de alta qualidade
+  if (world.pois && world.pois.police) {
+    const p = world.pois.police;
+    spawnWeaponPickup('rifle', p.x, p.z, 0.95);
+    spawnWeaponPickup('shotgun', p.x + 3, p.z, 0.95);
+  }
+  // Hospital: armas de suporte
+  if (world.pois && world.pois.hospital) {
+    const p = world.pois.hospital;
+    spawnWeaponPickup('smg', p.x, p.z, 0.95);
+    spawnWeaponPickup('pistol', p.x + 3, p.z, 0.95);
+  }
+  // Igreja: reaperScythe raro
+  if (world.pois && world.pois.church) {
+    const p = world.pois.church;
+    spawnWeaponPickup('katana', p.x, p.z, 0.95);
+  }
 }
 
 function spawnCorpsesAroundMap() {
@@ -3426,11 +3525,11 @@ function updateWeaponPickups(dt) {
   nearWeapon = closest;
   if (closest && !state.shopOpen) {
     const w = WEAPONS[closest.weaponId];
-    const can = closest.isDrop || state.coins >= w.cost;
+    const can = closest.isDrop || state.coins >= Math.round(w.cost * state.shopDiscount);
     const color = can ? '#ffdd00' : '#ff4444';
     promptEl.classList.remove('hidden');
     if (closest.isDrop) promptText.innerHTML = `Pegar <span style="color:${color}">${w.name}</span> (DROP)`;
-    else promptText.innerHTML = `Comprar <span style="color:${color}">${w.name}</span> — <span style="color:${color}">$${w.cost}</span>`;
+    else promptText.innerHTML = `Comprar <span style="color:${color}">${w.name}</span> — <span style="color:${color}">$${Math.round(w.cost * state.shopDiscount)}</span>`;
     return;
   }
   const dxB = player.position.x - brazierGroup.position.x;
@@ -3457,10 +3556,16 @@ function updateWeaponPickups(dt) {
 function tryBuyWeapon() {
   if (!nearWeapon || nearWeapon.bought) return;
   const w = WEAPONS[nearWeapon.weaponId];
-  if (!nearWeapon.isDrop && state.coins < w.cost) { Sfx.playPlayerHurt(); return; }
-  if (!nearWeapon.isDrop) state.coins -= w.cost;
+  // 🎯 PERK: shop discount
+  const finalCost = Math.round(w.cost * state.shopDiscount);
+  if (!nearWeapon.isDrop && state.coins < finalCost) { Sfx.playPlayerHurt(); return; }
+  if (!nearWeapon.isDrop) state.coins -= finalCost;
   state.inventory[w.slot] = nearWeapon.weaponId;
-  if (w.type === 'ranged') state.ammo[w.id] = { mag:w.magSize, reserve:w.reserveMax };
+  if (w.type === 'ranged') {
+    // 🎯 PERK: reserve ammo bonus
+    const reserveBonus = Math.floor(w.reserveMax * state.reserveAmmoBonus);
+    state.ammo[w.id] = { mag: w.magSize, reserve: Math.min(w.reserveMax * 2, w.reserveMax + reserveBonus) };
+  }
   nearWeapon.bought = true;
 
   if (nearWeapon.spriteHandle) nearWeapon.spriteHandle.dispose();
@@ -3468,7 +3573,7 @@ function tryBuyWeapon() {
   if (state.currentSlot === w.slot) setWeaponViewModel(nearWeapon.weaponId);
   else switchToSlot(w.slot);
   Sfx.playBuy();
-  bus.emit(Ev.WEAPON_BUY, { playerId:player.id, weaponId:w.id, cost:nearWeapon.isDrop ? 0 : w.cost, slot:w.slot });
+  bus.emit(Ev.WEAPON_BUY, { playerId:player.id, weaponId:w.id, cost:nearWeapon.isDrop ? 0 : finalCost, slot:w.slot });
   updateHUD(); updateWeaponSlotsHUD();
 }
 function updateRagdolls(dt) {
@@ -3481,6 +3586,47 @@ function updateFlyingLimbs(dt) {
   for (let i = flyingLimbs.length - 1; i >= 0; i--) {
     const l = flyingLimbs[i];
     if (l.update(dt)) { l.dispose(); flyingLimbs.splice(i, 1); }
+  }
+}
+
+// ============================================================
+// POI DISCOVERY
+// ============================================================
+let poiNotifTimer = null;
+function showPOINotification(name, subtitle) {
+  let el = document.getElementById('poi-notification');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'poi-notification';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `${name}<span class="poi-name">${subtitle || ''}</span>`;
+  el.classList.add('show');
+  clearTimeout(poiNotifTimer);
+  poiNotifTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+function checkPOIDiscovery() {
+  if (!world.pois) return;
+  for (const id in world.pois) {
+    if (state.discoveredPOIs.has(id)) continue;
+    const poi = world.pois[id];
+    const dx = player.position.x - poi.x;
+    const dz = player.position.z - poi.z;
+    if (dx*dx + dz*dz < 12*12) {
+      state.discoveredPOIs.add(id);
+      const names = {
+        police:   ['DELEGACIA', 'Autoridades não respondem mais...'],
+        hospital: ['HOSPITAL',  'Sala de emergência abandonada.'],
+        church:   ['IGREJA',    'Algo sombrio reside aqui.'],
+        market:   ['MERCADO',   'Suprimentos ainda nas prateleiras.'],
+        gas:      ['POSTO',     'Combustível e abrigo.'],
+      };
+      const [title, sub] = names[poi.type] || ['ÁREA', ''];
+      showPOINotification(title, sub);
+      bus.emit(Ev.POI_DISCOVERED, { id, type: poi.type });
+      Sfx.playPing();
+    }
   }
 }
 
@@ -3568,6 +3714,9 @@ function animate() {
     Extraction.updateExtraction(dt);
     updateBossProjectiles(dt);
 
+    // 🎯 POI discovery
+    checkPOIDiscovery();
+
     if (state.downed) {
       weaponView.setVisible(false);
     } else {
@@ -3609,6 +3758,48 @@ function animate() {
   renderer.render(scene, camera);
 }
 animate();
+
+// ============================================================
+// SKIN SELECTOR UI
+// ============================================================
+(function initSkinSelector() {
+  const optionsEl = document.getElementById('skin-options');
+  const previewEl = document.getElementById('skin-perk-preview');
+  if (!optionsEl) return;
+
+  const SKINS = [
+    { id: 'default',       name: 'PADRÃO',    icon: '👤' },
+    { id: 'angel',         name: 'ANJO',      icon: '😇' },
+    { id: 'businessMale',  name: 'EXECUTIVO', icon: '💼' },
+    { id: 'businessFemale',name: 'EXECUTIVA', icon: '🎯' },
+  ];
+
+  let selected = state.playerSkin || 'default';
+
+  function render() {
+    optionsEl.innerHTML = '';
+    SKINS.forEach(skin => {
+      const btn = document.createElement('button');
+      btn.className = 'skin-option' + (skin.id === selected ? ' active' : '');
+      btn.innerHTML = `<div class="skin-icon">${skin.icon}</div><div class="skin-name">${skin.name}</div>`;
+      btn.addEventListener('click', () => {
+        selected = skin.id;
+        try { localStorage.setItem('qb_skin', skin.id); } catch {}
+        state.playerSkin = skin.id;
+        render();
+      });
+      optionsEl.appendChild(btn);
+    });
+
+    const perk = getPerk(selected);
+    previewEl.innerHTML = `
+      <span class="perk-name">${perk.icon} ${perk.name}</span>
+      ${perk.desc}
+    `;
+  }
+
+  render();
+})();
 
 // ============================================================
 // START / GAME OVER
@@ -3671,6 +3862,8 @@ function startGame() {
   state.brazierFuel = 1; state.brazierBurning = false;
   state.vendorVanActive = false;
   state.mouseDX = 0; state.mouseDY = 0;
+  state.staminaBoostUntil = 0;
+  state.discoveredPOIs.clear();
   survival.reset();
   cancelReload();
   state.ammo = {};
@@ -3682,6 +3875,12 @@ function startGame() {
   document.getElementById('pause').classList.add('hidden');
   pings.forEach(p => { scene.remove(p.group); p.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); }); });
   pings.length = 0;
+
+  // 🎯 APLICA PERK DA SKIN ESCOLHIDA
+  const perk = applyPerk(state.playerSkin || 'default', state, player);
+  console.log('[game] 🎯 Perk ativada:', perk.name, '—', perk.desc);
+  bus.emit(Ev.PERK_ACTIVATED, { perkId: perk.id, name: perk.name });
+  showWaveBanner(`${perk.icon} ${perk.name}`);
 
   world.weaponSpots.forEach(s => { if (s.spriteHandle) s.spriteHandle.dispose(); });
   world.weaponSpots = [];
