@@ -39,12 +39,11 @@ import { preloadZombieModel, isModelReady, createZombieInstance, tintZombie } fr
 
 bus.setAdapter(new LocalAdapter());
 
-// Expõe tipos de zumbi pro escopo global (usado em createZombieMesh)
 window.ZOMBIE_TYPES_FROM_MODULE = ZOMBIE_TYPES;
 
 const controls = getControls();
 
-// ════════ PRECACHE DOS ASSETS EXTRAÍDOS ════════
+// ════════ PRECACHE DOS ASSETS ════════
 (async () => {
   console.log('[game] 📦 Carregando assets extraídos...');
   try {
@@ -638,7 +637,7 @@ function pickFromPalette(palette, fallback) {
 }
 
 // ============================================================
-// FALLBACK PROCEDURAL — cria zumbi do zero se XBot não carregar
+// FALLBACK PROCEDURAL
 // ============================================================
 function proceduralFallback(opts = {}) {
   const typeKey = opts.type || 'pt';
@@ -649,7 +648,6 @@ function proceduralFallback(opts = {}) {
 
   const root = new THREE.Group();
 
-  // ── Cores ──────────────────────────────────────────────
   const skinColor  = opts.skin !== undefined
     ? opts.skin
     : pickFromPalette(type.skinPalette, 0x7BC950);
@@ -664,7 +662,6 @@ function proceduralFallback(opts = {}) {
   const shoeMat  = matL(0x1A1A1A);
   const wound    = MAT_WOUND;
 
-  // ── Hierarquia óssea (grupos vazios = "bones") ─────────
   const pelvis = new THREE.Group();
   pelvis.position.y = P_PELVIS_Y;
   root.add(pelvis);
@@ -706,7 +703,6 @@ function proceduralFallback(opts = {}) {
     });
   }
 
-  // ── Braço esquerdo ─────────────────────────────────────
   const shoulderL = new THREE.Group();
   shoulderL.position.set(-0.24, P_SHOULDER_Y, 0);
   spineUpper.add(shoulderL);
@@ -725,7 +721,6 @@ function proceduralFallback(opts = {}) {
   foreArmL.castShadow = true;
   elbowL.add(foreArmL);
 
-  // ── Braço direito ──────────────────────────────────────
   const shoulderR = new THREE.Group();
   shoulderR.position.set(0.24, P_SHOULDER_Y, 0);
   spineUpper.add(shoulderR);
@@ -744,7 +739,6 @@ function proceduralFallback(opts = {}) {
   foreArmR.castShadow = true;
   elbowR.add(foreArmR);
 
-  // ── Perna esquerda ─────────────────────────────────────
   const thighL = new THREE.Group();
   thighL.position.set(-0.11, 0, 0);
   pelvis.add(thighL);
@@ -772,7 +766,6 @@ function proceduralFallback(opts = {}) {
   footMeshL.castShadow = true;
   footL.add(footMeshL);
 
-  // ── Perna direita ──────────────────────────────────────
   const thighR = new THREE.Group();
   thighR.position.set(0.11, 0, 0);
   pelvis.add(thighR);
@@ -800,7 +793,6 @@ function proceduralFallback(opts = {}) {
   footMeshR.castShadow = true;
   footR.add(footMeshR);
 
-  // ── Joints expostos pro sistema de animação ────────────
   const joints = {
     pelvis, spineLower, spineUpper, neck, head,
     shoulderL, elbowL, shoulderR, elbowR,
@@ -809,7 +801,6 @@ function proceduralFallback(opts = {}) {
 
   root.scale.setScalar(scale);
 
-  // ── Bounding boxes locais (pro raycast OBB) ────────────
   const localBoxes = {
     head:  new THREE.Box3(
       new THREE.Vector3(-0.16, -0.20, -0.16),
@@ -837,7 +828,6 @@ function proceduralFallback(opts = {}) {
     ),
   };
 
-  // ── Personalidade aleatória ────────────────────────────
   const headLoll      = (Math.random() - 0.5) * 0.4;
   const headPitchBase = (Math.random() - 0.5) * 0.3;
   const armDroopL     = -0.10 - Math.random() * 0.30;
@@ -875,14 +865,13 @@ function proceduralFallback(opts = {}) {
 }
 
 // ============================================================
-// CREATE ZOMBIE MESH (XBot com fallback seguro)
+// CREATE ZOMBIE MESH
 // ============================================================
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
   const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey]
     || { scale: 1, variant: 'normal' };
 
-  // ── Tenta XBot primeiro ────────────────────────────────
   if (isModelReady()) {
     const inst = createZombieInstance();
     if (inst) {
@@ -893,7 +882,7 @@ function createZombieMesh(opts = {}) {
         ? opts.skin
         : skinPal[Math.floor(Math.random() * skinPal.length)];
 
-      tintZombie(inst, skinColor, 0x1A1A1A);
+      tintZombie(inst, skinColor);
 
       inst.scene.userData = {
         isXBot: true,
@@ -911,8 +900,6 @@ function createZombieMesh(opts = {}) {
         zombieType: typeKey,
         typeKey, type,
         localBoxes: null,
-
-        // defaults seguros — antes ficavam undefined quando XBot carregava
         headLoll:      (Math.random() - 0.5) * 0.4,
         headPitchBase: (Math.random() - 0.5) * 0.3,
         armDroopL:     -0.10 - Math.random() * 0.30,
@@ -926,7 +913,6 @@ function createZombieMesh(opts = {}) {
     }
   }
 
-  // ── Fallback procedural ────────────────────────────────
   return proceduralFallback(opts);
 }
 
@@ -1078,7 +1064,6 @@ function spawnZombie(forceType) {
     _groundTime: 0,
   };
 
-  // Ativa animações Mixamo se disponíveis
   if (mesh.userData.isXBot) {
     z.instance = mesh.userData.instance;
     setupZombieAnimator(z);
@@ -1860,8 +1845,13 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     checkLevelUp();
     randomDismemberOnDeath(z);
 
+    // 🔧 PATCH C: proteção contra torso null
     const torsoWorldPos = new THREE.Vector3();
-    z.mesh.userData.torso.getWorldPosition(torsoWorldPos);
+    if (z.mesh.userData.torso) {
+      z.mesh.userData.torso.getWorldPosition(torsoWorldPos);
+    } else {
+      torsoWorldPos.copy(z.mesh.position).setY(1.0);
+    }
     const overkill = Math.min(2, Math.max(0.7, -z.health/z.maxHealth + 1));
     startRagdoll(z.mesh, hitDir, isCrit ? overkill*1.4 : overkill, z.dismembered);
     if (z.dismembered.head) { torsoWorldPos.y += 0.35; spawnBloodFountain(torsoWorldPos, 3.0); }
@@ -3142,9 +3132,9 @@ function updateZombies(dt) {
       armRXTarget -= hunt * 0.25 * (1 - crawl);
     }
 
+    // 🔧 PATCH B: modo XBot usa SOMENTE o mixer — não toca em bones proceduralmente
     if (z.mixer) {
       updateZombieAnim(z, dt);
-      joints.pelvis.position.y = pelvisYTmp;
       handleZombieAnimState(z, realSpeed);
     } else if (skipVisual) {
       joints.pelvis.position.y = pelvisYTmp + anim.pelvisBob;
