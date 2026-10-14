@@ -1,3 +1,10 @@
+// ============================================================
+// textures.js — v2
+// CHANGELOG v2:
+//   • colorSpace = SRGBColorSpace em todas as texturas
+//     (Three.js r152+; em r150 ou anterior use encoding = sRGBEncoding)
+// ============================================================
+
 import * as THREE from 'three';
 
 function makeCanvas(size = 16) {
@@ -11,6 +18,7 @@ function makeTex(canvas) {
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
+  tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
@@ -100,6 +108,7 @@ export function skyTexture() {
   const tex = new THREE.CanvasTexture(c);
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearFilter;
+  tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
