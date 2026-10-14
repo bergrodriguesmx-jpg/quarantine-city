@@ -949,7 +949,9 @@ const flyingLimbs = [];
 
 function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
   if (mesh.userData.zombieRef && mesh.userData.zombieRef.mixer) {
-    try { mesh.userData.zombieRef.mixer.stopAllAction(); } catch(_) {}
+    // 🎯 PATCH C: log em vez de silenciar
+    try { mesh.userData.zombieRef.mixer.stopAllAction(); }
+    catch (err) { console.warn('[game] mixer.stopAllAction falhou:', err); }
   }
 
   const wrapper = new THREE.Group();
@@ -1046,10 +1048,13 @@ function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
         if (!c.isMesh || !c.material) return;
         const mats = Array.isArray(c.material) ? c.material : [c.material];
         for (const m of mats) {
-          try { m.dispose(); } catch(_) {}
+          // 🎯 PATCH C: log em vez de silenciar
+          try { m.dispose(); }
+          catch (err) { console.warn('[game] dispose() falhou:', err); }
         }
       });
     },
+    
 
     applyImpulse(worldPos, dir, force) {
       const f = Math.min(6, force);
