@@ -1,8 +1,10 @@
 // ============================================================
-// game.js — v8
-// Fix: escala do zumbi agora é aplicada APENAS no
-//      buildCartoonZombie (zombie-procedural.js). game.js não
-//      aplica mais mesh.scale.multiplyScalar() — evita escala dupla.
+// game.js — v9
+// CHANGELOG v9:
+//   • FIX 1: Memory leak — Debris.dispose() e ragdoll.dispose()
+//            agora liberam materiais clonados
+//   • FIX 2: Jitter de colisão — separação suave em hordas densas
+//   • FIX 3: Culling de luzes dinâmicas (brazeiro)
 // ============================================================
 
 import * as THREE from 'three';
@@ -548,7 +550,7 @@ function pickFromPalette(palette, fallback) {
 
 // ============================================================
 // CREATE ZOMBIE MESH
-// 🎯 A escala do tipo é aplicada DENTRO de buildCartoonZombie.
+// 🎯 Escala do tipo é aplicada DENTRO do buildCartoonZombie.
 //    Não aplicar aqui — evita escala dupla.
 // ============================================================
 function createZombieMesh(opts = {}) {
@@ -558,8 +560,6 @@ function createZombieMesh(opts = {}) {
 
   const cartoon = buildCartoonZombie(typeKey, type);
   const root = cartoon.root;
-
-  // ⚠️ NÃO aplicar type.scale aqui — já foi aplicado dentro do builder.
 
   root.userData = {
     isXBot: false,
@@ -682,8 +682,6 @@ function spawnZombie(forceType) {
   const mesh = createZombieMesh({ type: typeKey });
   mesh.position.set(spawnX, 0, spawnZ);
 
-  // 🎯 NÃO aplicar scale aqui — já está aplicado dentro do buildCartoonZombie
-
   scene.add(mesh);
 
   const hpScale = 1 + CONFIG.scaling.hpPerWave * Math.max(0, state.wave - 1);
@@ -728,7 +726,6 @@ function spawnZombie(forceType) {
     _groundTime: 0,
   };
 
-  // Referência pro ragdoll
   mesh.userData.zombieRef = z;
 
   zombies.push(z);
@@ -785,7 +782,12 @@ function updateParticles(dt) {
     if (p.mesh.position.y < 0.05) { p.mesh.position.y = 0.05; p.vel.y = -p.vel.y*0.3; p.vel.x *= 0.7; p.vel.z *= 0.7; }
     p.life -= dt;
     p.mesh.material.opacity = Math.max(0, p.life/p.maxLife);
-    if (p.life <= 0) { scene.remove(p.mesh); bloodPool.push(p); bloodActive.splice(i, 1); }
+    if (p.life <= 0) {
+      scene.remove(p.mesh);
+      // 🎯 FIX 1: Reutiliza mesh via pool — não dispose (é shared)
+      bloodPool.push(p);
+      bloodActive.splice(i, 1);
+    }
   }
 }
 const bloodPools = [];
@@ -833,7 +835,7 @@ function updateBloodFountains(dt) {
 }
 
 // ============================================================
-// DEBRIS
+// DEBRIS — 🎯 FIX 1: dispose rigoroso
 // ============================================================
 class Debris {
   constructor(mesh, size, mass, life = 35) {
@@ -879,11 +881,22 @@ class Debris {
     }
     return false;
   }
-  dispose() { scene.remove(this.mesh); }
+  dispose() {
+    // 🎯 FIX 1: Remove da cena e libera materiais clonados
+    scene.remove(this.mesh);
+    this.mesh.traverse(c => {
+      if (!c.isMesh || !c.material) return;
+      const mats = Array.isArray(c.material) ? c.material : [c.material];
+      for (const m of mats) {
+        try { m.dispose(); } catch(_) {}
+      }
+      // Geometrias são shared (GEO_BOX etc), não dispose
+    });
+  }
 }
 
 // ============================================================
-// RAGDOLL PROCEDURAL
+// RAGDOLL PROCEDURAL — 🎯 FIX 1: dispose rigoroso
 // ============================================================
 const ragdolls = [];
 const _wpTmp = new THREE.Vector3();
@@ -984,7 +997,15 @@ function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
     },
 
     dispose() {
+      // 🎯 FIX 1: Remove e libera materiais clonados
       if (this.wrapper.parent) this.wrapper.parent.remove(this.wrapper);
+      this.wrapper.traverse(c => {
+        if (!c.isMesh || !c.material) return;
+        const mats = Array.isArray(c.material) ? c.material : [c.material];
+        for (const m of mats) {
+          try { m.dispose(); } catch(_) {}
+        }
+      });
     },
 
     applyImpulse(worldPos, dir, force) {
@@ -2184,6 +2205,21 @@ function updateVendorVan() {
   }
 }
 
+// 🎯 FIX 3: Culling de luzes dinâmicas — desativa brazeiro se longe
+function updateDynamicLights() {
+  const flameLight = brazierGroup.getObjectByName('flameLight');
+  if (!flameLight) return;
+  const dxB = player.position.x - brazierGroup.position.x;
+  const dzB = player.position.z - brazierGroup.position.z;
+  const distB2 = dxB*dxB + dzB*dzB;
+  const shouldBeOn = distB2 < 40*40 && state.brazierBurning;
+  if (shouldBeOn) {
+    if (flameLight.intensity < 2.5) flameLight.intensity = 2.5;
+  } else {
+    if (flameLight.intensity > 0) flameLight.intensity = 0;
+  }
+}
+
 // ============================================================
 // PULO
 // ============================================================
@@ -2383,7 +2419,7 @@ function togglePause() {
   if (!state.running) return;
   state.paused = !state.paused;
   if (state.paused) { pauseEl.classList.remove('hidden'); if (document.exitPointerLock) document.exitPointerLock(); }
-  else { pauseEl.classList.add('hidden'); if (!isMobile()) renderer.domElement.requestPointerLock(); }
+  else { pauseEl.classList.remove('hidden'); pauseEl.classList.add('hidden'); if (!isMobile()) renderer.domElement.requestPointerLock(); }
 }
 
 // ============================================================
@@ -2694,7 +2730,7 @@ function updateZombies(dt) {
     if (!hasJoints) continue;
 
     // ════════════════════════════════════════════════════════════
-    // ANIMAÇÃO — fallback spring procedural
+    // ANIMAÇÃO — spring procedural
     // ════════════════════════════════════════════════════════════
     const speedNorm = Math.min(1.5, realSpeed / Math.max(0.01, z.speed));
     const walkStyle = z.walkStyle;
@@ -2964,6 +3000,9 @@ function updateZombies(dt) {
     }
   }
 
+  // ════════════════════════════════════════════════════════════
+  // 🎯 FIX 2: Separação suave entre zumbis (sem jitter)
+  // ════════════════════════════════════════════════════════════
   zCollGrid.clear();
   for (let i = 0; i < zombies.length; i++) {
     const z = zombies[i];
@@ -2989,10 +3028,23 @@ function updateZombies(dt) {
         const pushA = overlap * (massB/totalMass);
         const pushB = overlap * (massA/totalMass);
         const nx = dx/d, nz = dz/d;
-        a.mesh.position.x -= nx*pushA; a.mesh.position.z -= nz*pushA;
-        b.mesh.position.x += nx*pushB; b.mesh.position.z += nz*pushB;
-        a.vx -= nx*pushA*3; a.vz -= nz*pushA*3;
-        b.vx += nx*pushB*3; b.vz += nz*pushB*3;
+
+        // Verifica se estão se aproximando
+        const relVx = a.vx - b.vx;
+        const relVz = a.vz - b.vz;
+        const approaching = (relVx * nx + relVz * nz) > 0;
+
+        // Soft push de posição (sempre)
+        a.mesh.position.x -= nx*pushA*0.5;
+        a.mesh.position.z -= nz*pushA*0.5;
+        b.mesh.position.x += nx*pushB*0.5;
+        b.mesh.position.z += nz*pushB*0.5;
+
+        // Só aplica impulso se estão se aproximando
+        if (approaching) {
+          a.vx -= nx*pushA*1.5; a.vz -= nz*pushA*1.5;
+          b.vx += nx*pushB*1.5; b.vz += nz*pushB*1.5;
+        }
       }
     }
   }
@@ -3282,6 +3334,7 @@ function animate() {
     updateDoors(dt);
     updateWeaponPickups(dt);
     updateVendorVan();
+    updateDynamicLights();   // 🎯 FIX 3
     checkWaveComplete();
     stepPhysics(dt);
     updateRagdolls(dt);
