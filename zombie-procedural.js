@@ -1,7 +1,7 @@
 // ============================================================
-// zombie-procedural.js — v7
-// Anatomia humana + Bones Mixamo exatos + Meshes contínuos
-// Design cartoon preservado. Pronto pra animações FBX.
+// zombie-procedural.js — v8 DEFINITIVO
+// Anatomia correta, meshes contínuos, A-pose via bone rotation,
+// animação spring procedural via game.js.
 // ============================================================
 
 import * as THREE from 'three';
@@ -50,8 +50,8 @@ function pickBuild(typeKey) {
 function buildScale(build) {
   switch (build) {
     case 'slim':  return { torso: 0.88, arms: 0.92, legs: 0.94, head: 1.00 };
-    case 'fat':   return { torso: 1.20, arms: 1.08, legs: 1.04, head: 0.96 };
-    case 'brute': return { torso: 1.32, arms: 1.22, legs: 1.12, head: 1.04 };
+    case 'fat':   return { torso: 1.18, arms: 1.05, legs: 1.02, head: 0.96 };
+    case 'brute': return { torso: 1.30, arms: 1.18, legs: 1.10, head: 1.04 };
     default:      return { torso: 1.00, arms: 1.00, legs: 1.00, head: 1.00 };
   }
 }
@@ -77,38 +77,38 @@ function makeHeadgear(headgear) {
     const col = headgear === 'cap_red' ? 0xE74C3C : headgear === 'cap_brown' ? 0x5D4030 : 0x1A1A1A;
     const mat = toonMat(col);
     const cap = new THREE.Mesh(rb(0.42, 0.14, 0.42, 0.04), mat);
-    cap.position.set(0, 0.24, 0); g.add(cap);
+    cap.position.set(0, 0.25, 0); g.add(cap);
     const brim = new THREE.Mesh(rb(0.40, 0.05, 0.20, 0.01), mat);
-    brim.position.set(0, 0.20, 0.26); g.add(brim);
+    brim.position.set(0, 0.21, 0.26); g.add(brim);
   } else if (headgear === 'helmet_yellow') {
     const mat = toonMat(0xFFCC00);
     const helmet = new THREE.Mesh(rb(0.46, 0.18, 0.46, 0.08), mat);
-    helmet.position.set(0, 0.24, 0); g.add(helmet);
+    helmet.position.set(0, 0.25, 0); g.add(helmet);
     const stripe = new THREE.Mesh(rb(0.48, 0.04, 0.10, 0.01), toonMat(0x1A1A1A));
-    stripe.position.set(0, 0.28, 0); g.add(stripe);
+    stripe.position.set(0, 0.29, 0); g.add(stripe);
     const lamp = new THREE.Mesh(rb(0.10, 0.10, 0.06, 0.02), toonMat(0xFFFF88));
-    lamp.position.set(0, 0.24, 0.26); g.add(lamp);
+    lamp.position.set(0, 0.25, 0.26); g.add(lamp);
   } else if (headgear === 'balaclava') {
     const mat = toonMat(0x0A0A0A);
     const mask = new THREE.Mesh(rb(0.42, 0.34, 0.42, 0.05), mat);
-    mask.position.set(0, 0.10, 0); g.add(mask);
+    mask.position.set(0, 0.12, 0); g.add(mask);
     for (const s of [-1, 1]) {
       const hole = new THREE.Mesh(rb(0.10, 0.06, 0.02, 0.005), toonMat(0xFF2020));
-      hole.position.set(s * 0.10, 0.16, 0.22); g.add(hole);
+      hole.position.set(s * 0.10, 0.17, 0.22); g.add(hole);
     }
   } else if (headgear === 'hood') {
     const mat = toonMat(0x0A0A0A);
     const hood = new THREE.Mesh(rb(0.52, 0.52, 0.50, 0.12), mat);
-    hood.position.set(0, 0.14, -0.04); g.add(hood);
+    hood.position.set(0, 0.16, -0.04); g.add(hood);
     const shadow = new THREE.Mesh(rb(0.32, 0.32, 0.06, 0.05), toonMat(0x000000));
-    shadow.position.set(0, 0.14, 0.22); g.add(shadow);
+    shadow.position.set(0, 0.16, 0.22); g.add(shadow);
   } else if (headgear === 'crown') {
     const mat = toonMat(0xFFD700);
     const crown = new THREE.Mesh(rb(0.44, 0.12, 0.44, 0.03), mat);
-    crown.position.set(0, 0.32, 0); g.add(crown);
+    crown.position.set(0, 0.34, 0); g.add(crown);
     for (let i = 0; i < 4; i++) {
       const spike = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.10, 4), mat);
-      spike.position.set(-0.14 + i * 0.09, 0.42, 0); g.add(spike);
+      spike.position.set(-0.14 + i * 0.09, 0.44, 0); g.add(spike);
     }
   }
   return g;
@@ -127,11 +127,9 @@ function buildHeadVisual(c, variant, opts) {
   const toothMat = toonMat(c.tooth);
   const hairMat = toonMat(c.hair);
 
-  // Crânio (grande, cartoon)
   const skull = new THREE.Mesh(rb(0.36, 0.40, 0.36, 0.08), skinMat);
   g.add(skull);
 
-  // Sobrancelha
   const brow = new THREE.Mesh(rb(0.28, 0.05, 0.03, 0.005), hairMat);
   brow.position.set(0, 0.14, 0.19);
   brow.rotation.z = 0.10;
@@ -156,7 +154,6 @@ function buildHeadVisual(c, variant, opts) {
   }
 
   if (variant !== 'donkey') {
-    // Olhos
     for (const s of [-1, 1]) {
       const eye = new THREE.Mesh(rb(0.12, 0.14, 0.04, 0.02), eyeMat);
       eye.position.set(s * 0.09, 0.04, 0.19); g.add(eye);
@@ -169,7 +166,6 @@ function buildHeadVisual(c, variant, opts) {
       const sock = new THREE.Mesh(rb(0.13, 0.05, 0.02, 0.005), toonMat(0x2A1A1A));
       sock.position.set(s * 0.09, -0.02, 0.20); g.add(sock);
     }
-    // Boca
     const mouth = new THREE.Mesh(rb(0.22, 0.10, 0.02, 0.01), mouthMat);
     mouth.position.set(0, -0.11, 0.20); g.add(mouth);
     const gum = new THREE.Mesh(rb(0.20, 0.03, 0.03, 0.005), toonMat(0x8B0000));
@@ -211,22 +207,26 @@ function buildHeadVisual(c, variant, opts) {
 }
 
 // ════════════════════════════════════════════════════════════
-// HAND — palma + dedos, direção +X
+// HAND — direção +X (continuação natural do braço)
 // ════════════════════════════════════════════════════════════
 function buildHandVisual(skinMat) {
   const g = new THREE.Group();
+
   const palm = new THREE.Mesh(rb(0.14, 0.13, 0.06, 0.02), skinMat);
   palm.position.set(0.06, 0, 0);
   g.add(palm);
+
   for (let i = 0; i < 4; i++) {
     const finger = new THREE.Mesh(rb(0.10, 0.026, 0.05, 0.008), skinMat);
     finger.position.set(0.17, -0.045 + i * 0.03, 0);
     g.add(finger);
   }
+
   const thumb = new THREE.Mesh(rb(0.06, 0.032, 0.032, 0.008), skinMat);
   thumb.position.set(0.10, -0.055, 0.035);
   thumb.rotation.z = 0.5;
   g.add(thumb);
+
   return g;
 }
 
@@ -242,7 +242,7 @@ function buildFootVisual(shoeMat, accentMat) {
 }
 
 // ════════════════════════════════════════════════════════════
-// BUILDER PRINCIPAL
+// BUILDER
 // ════════════════════════════════════════════════════════════
 export function buildCartoonZombie(typeKey = 'pt', type = {}) {
   const build = pickBuild(typeKey);
@@ -274,11 +274,11 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
   const buttonMat = toonMat(c.button);
 
   // ═══════════════════════════════════════════════════════════
-  // BONES — nomes EXATAMENTE como Mixamo
+  // BONES (Mixamo-compatíveis)
   // ═══════════════════════════════════════════════════════════
 
   const Hips = new THREE.Bone();  Hips.name = 'Hips';
-  Hips.position.set(0, 0, 0); // posição real aplicada no root
+  Hips.position.set(0, 0, 0);
 
   const Spine = new THREE.Bone();  Spine.name = 'Spine';
   Spine.position.set(0, 0.10, 0);
@@ -300,41 +300,44 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
   Head.position.set(0, 0.07, 0);
   Neck.add(Head);
 
-  // Braço esquerdo
+  // Braços em A-pose (rotation.z)
   const LeftShoulder = new THREE.Bone();  LeftShoulder.name = 'LeftShoulder';
   LeftShoulder.position.set(0.07, 0.07, 0);
   Spine2.add(LeftShoulder);
 
   const LeftArm = new THREE.Bone();  LeftArm.name = 'LeftArm';
   LeftArm.position.set(0.07, 0, 0);
+  LeftArm.rotation.z = -0.85;
   LeftShoulder.add(LeftArm);
 
   const LeftForeArm = new THREE.Bone();  LeftForeArm.name = 'LeftForeArm';
   LeftForeArm.position.set(0.26, 0, 0);
+  LeftForeArm.rotation.z = -0.12;
   LeftArm.add(LeftForeArm);
 
   const LeftHand = new THREE.Bone();  LeftHand.name = 'LeftHand';
   LeftHand.position.set(0.24, 0, 0);
   LeftForeArm.add(LeftHand);
 
-  // Braço direito
   const RightShoulder = new THREE.Bone();  RightShoulder.name = 'RightShoulder';
   RightShoulder.position.set(-0.07, 0.07, 0);
   Spine2.add(RightShoulder);
 
   const RightArm = new THREE.Bone();  RightArm.name = 'RightArm';
   RightArm.position.set(-0.07, 0, 0);
+  RightArm.rotation.z = 0.85;
   RightShoulder.add(RightArm);
 
   const RightForeArm = new THREE.Bone();  RightForeArm.name = 'RightForeArm';
   RightForeArm.position.set(-0.26, 0, 0);
+  RightForeArm.rotation.z = 0.12;
   RightArm.add(RightForeArm);
 
   const RightHand = new THREE.Bone();  RightHand.name = 'RightHand';
   RightHand.position.set(-0.24, 0, 0);
   RightForeArm.add(RightHand);
 
-  // Perna esquerda
+  // Pernas
   const LeftUpLeg = new THREE.Bone();  LeftUpLeg.name = 'LeftUpLeg';
   LeftUpLeg.position.set(0.10, -0.04, 0);
   Hips.add(LeftUpLeg);
@@ -351,7 +354,6 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
   LeftToeBase.position.set(0, -0.05, 0.14);
   LeftFoot.add(LeftToeBase);
 
-  // Perna direita
   const RightUpLeg = new THREE.Bone();  RightUpLeg.name = 'RightUpLeg';
   RightUpLeg.position.set(-0.10, -0.04, 0);
   Hips.add(RightUpLeg);
@@ -369,10 +371,10 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
   RightFoot.add(RightToeBase);
 
   // ═══════════════════════════════════════════════════════════
-  // MESHES — preenchem cada segmento (span bone até bone filho)
+  // MESHES — cada mesh preenche o segmento bone→filho
   // ═══════════════════════════════════════════════════════════
 
-  // HIPS — cobre -0.08 a +0.08 do bone
+  // HIPS
   {
     const pelvis = new THREE.Mesh(rb(0.42 * bs.torso, 0.22, 0.28 * bs.torso, 0.05), pantsMat);
     pelvis.position.set(0, -0.02, 0);
@@ -387,52 +389,47 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     Hips.add(buckle);
   }
 
-  // SPINE — cobre -0.02 a +0.10
+  // SPINE
   {
     const torso = new THREE.Mesh(rb(0.40 * bs.torso, 0.20, 0.26 * bs.torso, 0.05), shirtMat);
     torso.position.set(0, 0.04, 0);
     Spine.add(torso);
   }
 
-  // SPINE1 — cobre -0.02 a +0.10
+  // SPINE1
   {
     const torso = new THREE.Mesh(rb(0.42 * bs.torso, 0.20, 0.28 * bs.torso, 0.05), shirtMat);
     torso.position.set(0, 0.04, 0);
     Spine1.add(torso);
   }
 
-  // SPINE2 — cobre -0.02 a +0.10 + ombros
+  // SPINE2 — peito
   {
     const chest = new THREE.Mesh(rb(0.48 * bs.torso, 0.24, 0.30 * bs.torso, 0.06), shirtMat);
     chest.position.set(0, 0.04, 0);
     Spine2.add(chest);
 
-    // Colarinho
     const collar = new THREE.Mesh(rb(0.32 * bs.torso, 0.06, 0.28 * bs.torso, 0.02), accentMat);
     collar.position.set(0, 0.17, 0);
     Spine2.add(collar);
 
-    // Mancha de sangue
     const wound = new THREE.Mesh(rb(0.14, 0.12, 0.03, 0.02), toonMat(c.blood));
     wound.position.set(-0.09 * bs.torso, 0.03, 0.16 * bs.torso);
     Spine2.add(wound);
   }
 
-  // NECK — cobre -0.03 a +0.07
+  // NECK — preenche o gap entre Spine2 e Head
   {
-    const neck = new THREE.Mesh(rb(0.14, 0.14, 0.14, 0.03), skinMat);
+    const neck = new THREE.Mesh(rb(0.14, 0.16, 0.14, 0.03), skinMat);
     neck.position.set(0, 0.02, 0);
     Neck.add(neck);
   }
 
-  // HEAD — cobre a cabeça inteira (center no topo do pescoço)
+  // HEAD — centro do mesh em Y+0.04 do bone Head
   {
     const headVisual = buildHeadVisual(c, variant, {
       skinMat, headgear: type.headgear,
     });
-    // Head bone está em +0.07 do Neck. O mesh da cabeça tem centro Y=0.
-    // Bottom do crânio em Y-0.20. Então bottom fica em -0.20 do bone Head = -0.13 do Neck.
-    // Isso dá overlap suficiente com o neck mesh (que vai de -0.03 a +0.07).
     headVisual.position.set(0, 0.04, 0);
     Head.add(headVisual);
   }
@@ -444,14 +441,14 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     LeftShoulder.add(shoulder);
   }
 
-  // LEFT ARM — cobre de 0 a 0.26 (+ overlap até 0.28)
+  // LEFT ARM — preenche 0 → 0.26 (bone filho)
   {
     const upperArm = new THREE.Mesh(rb(0.30, 0.15, 0.15, 0.04), shirtMat);
     upperArm.position.set(0.13, 0, 0);
     LeftArm.add(upperArm);
   }
 
-  // LEFT FOREARM — cobre de 0 a 0.24 (+ overlap até 0.26)
+  // LEFT FOREARM — preenche 0 → 0.24
   {
     const foreArm = new THREE.Mesh(rb(0.28, 0.13, 0.13, 0.03), skinMat);
     foreArm.position.set(0.12, 0, 0);
@@ -464,7 +461,7 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     LeftHand.add(hand);
   }
 
-  // RIGHT SHOULDER — espelhado
+  // RIGHT SHOULDER
   {
     const shoulder = new THREE.Mesh(rb(0.16, 0.18, 0.20, 0.04), shirtMat);
     shoulder.position.set(-0.03, 0.04, 0);
@@ -485,7 +482,7 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     RightForeArm.add(foreArm);
   }
 
-  // RIGHT HAND — espelhada
+  // RIGHT HAND
   {
     const hand = buildHandVisual(skinMat);
     hand.scale.x = -1;
@@ -522,22 +519,19 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     RightFoot.add(buildFootVisual(shoeMat, accentMat));
   }
 
-  // ═══════════════════════════════════════════════════════════
   // ROOT
-  // ═══════════════════════════════════════════════════════════
   const root = new THREE.Group();
   root.add(Hips);
 
-  // Posiciona hips na altura correta
   Hips.position.y = 0.92;
   root.updateMatrixWorld(true);
 
-  // Ajusta para pés tocarem o chão
+  // Ajusta pés ao chão
   const bbox = new THREE.Box3().setFromObject(root);
   Hips.position.y -= bbox.min.y;
   root.updateMatrixWorld(true);
 
-  // Local boxes para raycast (OBB)
+  // Local boxes para raycast
   const localBoxes = {
     head:  new THREE.Box3(
       new THREE.Vector3(-0.24, -0.24, -0.24),
@@ -597,8 +591,8 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     isRigged: true,
     headLoll:      (Math.random() - 0.5) * 0.3,
     headPitchBase: (Math.random() - 0.5) * 0.2,
-    armDroopL:     -0.05 - Math.random() * 0.10,
-    armDroopR:     -0.05 - Math.random() * 0.10,
+    armDroopL:     0,
+    armDroopR:     0,
     limpAmount:    Math.random(),
     limpSide:      Math.random() < 0.5 ? -1 : 1,
     walkStyle:     Math.random(),
