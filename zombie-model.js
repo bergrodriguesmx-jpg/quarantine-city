@@ -1,7 +1,14 @@
 // ============================================================
-// zombie-model.js — v7
-// CORRIGIDO: FBXLoader retorna THREE.Group diretamente, não { scene }
-// Testa bone E SkinnedMesh (cobre mais variações de export)
+// zombie-model.js — v8
+// ⚠️ CÓDIGO MORTO no estado atual: game.js v10 não importa este arquivo.
+//    Ele usa zombie-procedural.js (100% procedural).
+//    Mantido como referência caso volte a usar FBX/GLB riggado.
+//
+// CHANGELOG v8:
+//   • tintZombie() agora clona materiais por instância
+//     (antes mutava materiais compartilhados entre clones)
+//   • Documentado que canonicalBoneName quebra encaixe de AnimationClips
+//     do Mixamo (o retargeting renomeia bones mas não tracks)
 // ============================================================
 
 import * as THREE from 'three';
@@ -20,7 +27,7 @@ const MODEL_CANDIDATES = [
   'XBot.fbx',
   'zombie-walk.fbx',
   'zombie-attack.fbx',
-  'zombie-idle.glb',    // GLB que carrega no zombie-anim
+  'zombie-idle.glb',
 ];
 
 let baseScene = null;
@@ -47,6 +54,11 @@ const BONE_CANDIDATES = {
   footR:      ['RightFoot'],
 };
 
+// ⚠️ AVISO: canonicalBoneName renomeia os bones. Se você aplicar
+// AnimationClips depois, os track.name ainda apontarão para os nomes
+// Mixamo originais (ex: 'mixamorig:Hips.position') e as animações
+// NÃO tocarão. Se for reativar animações, remova a renomeação abaixo
+// ou aplique canonicalBoneName também em cada track.name das clipes.
 export function canonicalBoneName(name) {
   if (!name) return name;
   let n = String(name);
@@ -71,9 +83,6 @@ function findBone(bonesMap, candidates) {
   return null;
 }
 
-// ══════════════════════════════════════════════
-// 🔑 CORREÇÃO: FBXLoader retorna THREE.Group direto
-// ══════════════════════════════════════════════
 async function loadAnyModel(filename) {
   const url = BASE + encodeURIComponent(filename).replace(/%2F/g, '/');
   console.log(`[zombie-model] 🌐 Baixando ${url}`);
@@ -84,14 +93,10 @@ async function loadAnyModel(filename) {
   }
 
   const fbx = await fbxLoader.loadAsync(url);
-  // 🎯 Aqui estava o bug: fbx NÃO tem .scene
   // FBXLoader retorna o Group diretamente. Animations fica em fbx.animations.
   return { scene: fbx, animations: fbx.animations || [] };
 }
 
-// ══════════════════════════════════════════════
-// Detecção robusta de skeleton
-// ══════════════════════════════════════════════
 function countSkeleton(root) {
   let boneCount = 0;
   let skinnedMeshCount = 0;
@@ -99,7 +104,6 @@ function countSkeleton(root) {
     if (o.isBone) boneCount++;
     if (o.isSkinnedMesh && o.skeleton && o.skeleton.bones) {
       skinnedMeshCount++;
-      // Também soma bones do skeleton (pode haver bones não marcados como isBone)
       for (const b of o.skeleton.bones) {
         if (!b.isBone) boneCount++;
       }
@@ -108,9 +112,6 @@ function countSkeleton(root) {
   return { boneCount, skinnedMeshCount };
 }
 
-// ══════════════════════════════════════════════
-// PRELOAD
-// ══════════════════════════════════════════════
 export async function preloadZombieModel() {
   if (loaded) return baseScene;
 
@@ -138,10 +139,8 @@ export async function preloadZombieModel() {
         continue;
       }
 
-      // Aceito!
       baseScene = candidate;
 
-      // Renomeia bones
       const renamed = [];
       baseScene.traverse(o => {
         if (!o.isBone) return;
@@ -153,7 +152,6 @@ export async function preloadZombieModel() {
         console.log(`[zombie-model] 🏷️ ${renamed.length} bones renomeados`);
       }
 
-      // Sombras + materiais
       baseScene.traverse(o => {
         if (o.isMesh) {
           o.castShadow = true;
@@ -169,7 +167,6 @@ export async function preloadZombieModel() {
         }
       });
 
-      // Verifica mapeamento dos bones
       const bonesMap = {};
       baseScene.traverse(o => { if (o.isBone) bonesMap[o.name] = o; });
       const missing = [];
@@ -199,9 +196,6 @@ export async function preloadZombieModel() {
 
 export function isModelReady() { return loaded; }
 
-// ══════════════════════════════════════════════
-// INSTÂNCIA
-// ══════════════════════════════════════════════
 export function createZombieInstance() {
   if (!baseScene) return null;
 
@@ -228,15 +222,21 @@ export function createZombieInstance() {
   return { scene: clone, bones: bonesMap, joints, scale };
 }
 
-// ══════════════════════════════════════════════
-// TINT
-// ══════════════════════════════════════════════
+// 🎯 FIX: clona materiais por instância antes de tingir.
+//    skeletonClone compartilha materiais entre clones por padrão,
+//    então tingir um zumbi tingia todos.
 export function tintZombie(instance, skinColor) {
   const scene = instance.scene;
   scene.traverse(o => {
     if (!o.isMesh || !o.material) return;
-    const mats = Array.isArray(o.material) ? o.material : [o.material];
-    for (const m of mats) {
+
+    const isArr = Array.isArray(o.material);
+    const mats = isArr ? o.material : [o.material];
+    const cloned = mats.map(m => m.clone());
+    o.material = isArr ? cloned : cloned[0];
+
+    const finalMats = isArr ? cloned : [cloned[0]];
+    for (const m of finalMats) {
       if (m.color) {
         m.color.setHex(skinColor);
         const c = m.color;
