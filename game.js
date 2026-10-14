@@ -931,8 +931,9 @@ class Debris {
     this.mesh.traverse(c => {
       if (!c.isMesh || !c.material) return;
       const mats = Array.isArray(c.material) ? c.material : [c.material];
-      for (const m of mats) {
-        try { m.dispose(); } catch(_) {}
+            for (const m of mats) {
+        try { m.dispose(); }
+        catch (err) { console.warn('[game] dispose() falhou:', err); }
       }
     });
   }
