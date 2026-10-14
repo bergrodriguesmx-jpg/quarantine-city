@@ -1,16 +1,21 @@
 // ============================================================
-// game.js — v9
-// CHANGELOG v9:
-//   • FIX 1: Memory leak — Debris.dispose() e ragdoll.dispose()
-//            agora liberam materiais clonados
-//   • FIX 2: Jitter de colisão — separação suave em hordas densas
-//   • FIX 3: Culling de luzes dinâmicas (brazeiro)
+// game.js — v10
+// CHANGELOG v10 (auditoria aplicada):
+//   • FIX A: Imports não usados removidos (POIS, geoTorus,
+//            computePartLocalBoxes, hasGib, getWeaponStatus,
+//            PERKS, listPerks)
+//   • FIX B: togglePause() com lógica limpa
+//   • FIX C: Scratch vectors em raycastZombie/spawnExplosion/
+//            damageZombie (elimina GC em combate)
+//   • FIX D: updateReload baseado em dt (respeita pausa)
+//   • FIX E: HUD cacheado (15+ getElementById por frame → 0)
+//   • FIX F: Blood moon sem som de morte
 // ============================================================
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import * as Textures from './textures.js';
-import { buildWorld, POIS } from './scenery.js';
+import { buildWorld } from './scenery.js';
 import * as Sfx from './audio.js';
 import * as bus from './src/core/bus.js';
 import { Ev } from './src/core/events.js';
@@ -18,8 +23,7 @@ import { nextId } from './src/core/ids.js';
 import { LocalAdapter } from './src/net/adapter.js';
 import { springStep, springKick } from './src/core/spring.js';
 import { SpatialGrid } from './src/core/spatial-grid.js';
-import { geoBox, geoSphere, geoCyl, geoTorus, matL, matB, zMat } from './src/core/geo-cache.js';
-import { computePartLocalBoxes } from './src/core/part-box.js';
+import { geoBox, geoSphere, geoCyl, matL, matB, zMat } from './src/core/geo-cache.js';
 import { enrichWeapons, MELEE_TYPES, ZOMBIE_LORE, formatWeaponTooltip } from './src/core/lore.js';
 import { initPhysics, stepPhysics, addStaticBox, clearPhysics } from './src/core/ragdoll-physics.js';
 
@@ -39,12 +43,12 @@ import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pic
 import { getWeaponIconURL, getAmmoIconURL } from './src/render/weapon-icon-renderer.js';
 import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 
-import { preloadGibs, createGib, hasGib } from './gib-models.js';
+import { preloadGibs, createGib } from './gib-models.js';
 import { preloadGibGLBs, createLimb, hasLimb, createCorpse, listCorpseTypes } from './gib-glb.js';
 import { preloadCharacters, createCharacter } from './character-models.js';
-import { precacheAllWeaponGLBs, getStatus as getWeaponStatus } from './src/render/weapon-models.js';
+import { precacheAllWeaponGLBs } from './src/render/weapon-models.js';
 
-import { applyPerk, getPerk, PERKS, listPerks } from './perks-system.js';
+import { applyPerk, getPerk } from './perks-system.js';
 import { buildCartoonZombie } from './zombie-procedural.js';
 
 bus.setAdapter(new LocalAdapter());
@@ -187,7 +191,8 @@ const state = {
   levelUpActive:false, pendingLevelUps:0,
   inventory:{ 1:'knife', 2:null, 3:null, 4:null }, currentSlot:1,
   mouseDown:false, aiming:false, shake:0,
-  ammo:{}, reload:{ active:false, wid:null, startTime:0, endTime:0, duration:0 },
+  // FIX D: reload agora usa .elapsed (respeita pausa) em vez de .startTime
+  ammo:{}, reload:{ active:false, wid:null, elapsed:0, duration:0, startTime:0, endTime:0 },
   shopOpen:false,
   downed:false, downedElapsed:0, downedHP:0, downedMaxHP:CONFIG.downed.maxHP,
   reviveProgress:0, revivesLeft:CONFIG.downed.maxRevives, invulnUntil:0,
@@ -222,6 +227,26 @@ const state = {
   staminaBoostUntil: 0,
 
   discoveredPOIs: new Set(),
+};
+
+// ============================================================
+// 🎯 FIX E: HUD cache — resolve os IDs uma vez só
+// ============================================================
+const HUD = {
+  hpFill:        document.getElementById('hp-fill'),
+  hpText:        document.getElementById('hp-text'),
+  xpFill:        document.getElementById('xp-fill'),
+  coins:         document.getElementById('coins'),
+  wave:          document.getElementById('wave'),
+  level:         document.getElementById('level'),
+  zombies:       document.getElementById('zombies'),
+  revives:       document.getElementById('revives'),
+  weaponName:    document.getElementById('weapon-name'),
+  weaponClass:   document.getElementById('weapon-class'),
+  weaponTooltip: document.getElementById('weapon-tooltip'),
+  ammoCurrent:   document.getElementById('ammo-current'),
+  ammoReserve:   document.getElementById('ammo-reserve'),
+  timer:         document.getElementById('timer'),
 };
 
 // ============================================================
@@ -441,8 +466,8 @@ ZombieAI.registerAICallbacks({
   },
 });
 
+// 🎯 FIX F: Blood moon sem som de morte (era Sfx.playZombieDeath)
 bus.on(Ev.WORLD_BLOOD_MOON, () => {
-  try { Sfx.playZombieDeath(); } catch(_) {}
   addShake(0.5);
   showWaveBanner('LUA DE SANGUE!');
 });
@@ -542,6 +567,11 @@ function resolveWallCollisions(pos, radius) {
 // ZOMBIES
 // ============================================================
 const zombies = [];
+
+// 🎯 FIX C: Scratch vectors reutilizáveis (elimina GC em combate)
+const _torsoWorldPosScratch     = new THREE.Vector3();
+const _explosionDirScratch      = new THREE.Vector3();
+const _raycastBestPointScratch  = new THREE.Vector3();
 
 function pickFromPalette(palette, fallback) {
   if (!palette || palette.length === 0) return fallback;
@@ -784,7 +814,6 @@ function updateParticles(dt) {
     p.mesh.material.opacity = Math.max(0, p.life/p.maxLife);
     if (p.life <= 0) {
       scene.remove(p.mesh);
-      // 🎯 FIX 1: Reutiliza mesh via pool — não dispose (é shared)
       bloodPool.push(p);
       bloodActive.splice(i, 1);
     }
@@ -835,7 +864,7 @@ function updateBloodFountains(dt) {
 }
 
 // ============================================================
-// DEBRIS — 🎯 FIX 1: dispose rigoroso
+// DEBRIS — dispose rigoroso
 // ============================================================
 class Debris {
   constructor(mesh, size, mass, life = 35) {
@@ -882,7 +911,6 @@ class Debris {
     return false;
   }
   dispose() {
-    // 🎯 FIX 1: Remove da cena e libera materiais clonados
     scene.remove(this.mesh);
     this.mesh.traverse(c => {
       if (!c.isMesh || !c.material) return;
@@ -890,13 +918,12 @@ class Debris {
       for (const m of mats) {
         try { m.dispose(); } catch(_) {}
       }
-      // Geometrias são shared (GEO_BOX etc), não dispose
     });
   }
 }
 
 // ============================================================
-// RAGDOLL PROCEDURAL — 🎯 FIX 1: dispose rigoroso
+// RAGDOLL PROCEDURAL
 // ============================================================
 const ragdolls = [];
 const _wpTmp = new THREE.Vector3();
@@ -997,7 +1024,6 @@ function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
     },
 
     dispose() {
-      // 🎯 FIX 1: Remove e libera materiais clonados
       if (this.wrapper.parent) this.wrapper.parent.remove(this.wrapper);
       this.wrapper.traverse(c => {
         if (!c.isMesh || !c.material) return;
@@ -1268,10 +1294,12 @@ function collectRaycastCandidates(origin, forward, maxDist) {
 
 const _hitPointScratch = new THREE.Vector3();
 
+// 🎯 FIX C: usa scratch vector em vez de alocar Vector3 por chamada
 function raycastZombie(origin, dir, maxDist, candidates) {
   const list = candidates || zombies;
   let bestZ = null, bestDist = Infinity, bestPart = null;
-  const bestPoint = new THREE.Vector3();
+  const bestPoint = _raycastBestPointScratch;
+  bestPoint.set(0, 0, 0);
 
   for (let i = 0; i < list.length; i++) {
     const z = list[i];
@@ -1401,6 +1429,8 @@ function reactToExplosion(pos, radius) {
     z.alertedUntil = now + CONFIG.aggro.alertDuration;
   }
 }
+
+// 🎯 FIX C: usa scratch vector no loop (elimina 1 Vector3 por zumbi afetado)
 function spawnExplosion(pos) {
   explosionLight.position.copy(pos); explosionLight.position.y += 1;
   explosionLight.intensity = 6;
@@ -1419,7 +1449,7 @@ function spawnExplosion(pos) {
     if (d > radius) continue;
     const falloff = 1 - Math.min(1, d/radius);
     const dmg = baseDamage * Math.max(0.25, falloff);
-    const dir = new THREE.Vector3(dx/Math.max(d,0.01), 0, dz/Math.max(d,0.01));
+    const dir = _explosionDirScratch.set(dx/Math.max(d,0.01), 0, dz/Math.max(d,0.01));
     const nearFactor = 1 - Math.min(1, d / (radius * 0.7));
     if (nearFactor > 0.4) {
       const candidates = [];
@@ -1483,6 +1513,7 @@ function updateNoiseRipples(dt) {
   }
 }
 
+// 🎯 FIX C: usa scratch em vez de alocar torsoWorldPos a cada morte
 function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   if (z.dying) return;
   z.health -= damage;
@@ -1572,7 +1603,8 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     checkLevelUp();
     randomDismemberOnDeath(z);
 
-    const torsoWorldPos = new THREE.Vector3();
+    // 🎯 FIX C: reusa scratch
+    const torsoWorldPos = _torsoWorldPosScratch;
     if (z.mesh.userData.torso) {
       z.mesh.userData.torso.getWorldPosition(torsoWorldPos);
     } else {
@@ -1632,28 +1664,33 @@ function makeNoise(position, radius) {
 
 function rollCrit() { return Math.random() < state.critChance; }
 
+// 🎯 FIX D: startReload agora usa .elapsed
 function startReload(wid) {
   if (state.reload.active) return;
   const w = WEAPONS[wid], am = state.ammo[wid];
   if (!w || !am) return;
   if (am.mag >= w.magSize || am.reserve <= 0) return;
   state.reload.active = true; state.reload.wid = wid;
-  state.reload.startTime = performance.now()/1000;
+  state.reload.elapsed = 0;
   const duration = w.reloadTime / state.reloadSpeedMult;
   state.reload.duration = duration;
-  state.reload.endTime = state.reload.startTime + duration;
+  state.reload.startTime = performance.now()/1000; // legacy
+  state.reload.endTime = duration;
   if (state.aiming) { state.aiming = false; updateCrosshair(); }
   if (weaponView) weaponView.reload(duration);
   Sfx.playReload();
 }
 function cancelReload() {
   state.reload.active = false; state.reload.wid = null;
-  state.reload.startTime = 0; state.reload.endTime = 0; state.reload.duration = 0;
+  state.reload.elapsed = 0; state.reload.duration = 0;
+  state.reload.startTime = 0; state.reload.endTime = 0;
   if (weaponView) weaponView.cancelReload();
 }
-function updateReload(now) {
+// 🎯 FIX D: recebe dt em vez de "now"
+function updateReload(dt) {
   if (!state.reload.active) return;
-  if (now >= state.reload.endTime) {
+  state.reload.elapsed += dt;
+  if (state.reload.elapsed >= state.reload.duration) {
     const wid = state.reload.wid, w = WEAPONS[wid], am = state.ammo[wid];
     if (am && w) {
       const need = w.magSize - am.mag;
@@ -2205,7 +2242,6 @@ function updateVendorVan() {
   }
 }
 
-// 🎯 FIX 3: Culling de luzes dinâmicas — desativa brazeiro se longe
 function updateDynamicLights() {
   const flameLight = brazierGroup.getObjectByName('flameLight');
   if (!flameLight) return;
@@ -2415,11 +2451,17 @@ function setupMobile() {
 setupMobile();
 
 const pauseEl = document.getElementById('pause');
+// 🎯 FIX B: togglePause limpo (sem remove/add redundante)
 function togglePause() {
   if (!state.running) return;
   state.paused = !state.paused;
-  if (state.paused) { pauseEl.classList.remove('hidden'); if (document.exitPointerLock) document.exitPointerLock(); }
-  else { pauseEl.classList.remove('hidden'); pauseEl.classList.add('hidden'); if (!isMobile()) renderer.domElement.requestPointerLock(); }
+  if (state.paused) {
+    pauseEl.classList.remove('hidden');
+    if (document.exitPointerLock) document.exitPointerLock();
+  } else {
+    pauseEl.classList.add('hidden');
+    if (!isMobile()) renderer.domElement.requestPointerLock();
+  }
 }
 
 // ============================================================
@@ -3000,9 +3042,7 @@ function updateZombies(dt) {
     }
   }
 
-  // ════════════════════════════════════════════════════════════
-  // 🎯 FIX 2: Separação suave entre zumbis (sem jitter)
-  // ════════════════════════════════════════════════════════════
+  // Separação suave entre zumbis (sem jitter)
   zCollGrid.clear();
   for (let i = 0; i < zombies.length; i++) {
     const z = zombies[i];
@@ -3029,18 +3069,15 @@ function updateZombies(dt) {
         const pushB = overlap * (massA/totalMass);
         const nx = dx/d, nz = dz/d;
 
-        // Verifica se estão se aproximando
         const relVx = a.vx - b.vx;
         const relVz = a.vz - b.vz;
         const approaching = (relVx * nx + relVz * nz) > 0;
 
-        // Soft push de posição (sempre)
         a.mesh.position.x -= nx*pushA*0.5;
         a.mesh.position.z -= nz*pushA*0.5;
         b.mesh.position.x += nx*pushB*0.5;
         b.mesh.position.z += nz*pushB*0.5;
 
-        // Só aplica impulso se estão se aproximando
         if (approaching) {
           a.vx -= nx*pushA*1.5; a.vz -= nz*pushA*1.5;
           b.vx += nx*pushB*1.5; b.vz += nz*pushB*1.5;
@@ -3267,41 +3304,41 @@ function checkPOIDiscovery() {
 }
 
 // ============================================================
-// HUD
+// HUD — 🎯 FIX E: usa HUD cache (sem getElementById por frame)
 // ============================================================
 function updateHUD() {
   const hp = Math.max(0, state.health);
-  document.getElementById('hp-fill').style.width = `${(hp/state.maxHealth)*100}%`;
-  document.getElementById('hp-text').textContent = `${Math.ceil(hp)} / ${state.maxHealth}`;
-  document.getElementById('xp-fill').style.width = `${(state.xp/state.xpToNextLevel)*100}%`;
-  document.getElementById('coins').textContent = state.coins;
-  document.getElementById('wave').textContent = state.wave;
-  document.getElementById('level').textContent = state.level;
-  document.getElementById('zombies').textContent = state.zombiesAlive;
-  document.getElementById('revives').textContent = state.revivesLeft;
+  HUD.hpFill.style.width = `${(hp/state.maxHealth)*100}%`;
+  HUD.hpText.textContent = `${Math.ceil(hp)} / ${state.maxHealth}`;
+  HUD.xpFill.style.width = `${(state.xp/state.xpToNextLevel)*100}%`;
+  HUD.coins.textContent = state.coins;
+  HUD.wave.textContent = state.wave;
+  HUD.level.textContent = state.level;
+  HUD.zombies.textContent = state.zombiesAlive;
+  HUD.revives.textContent = state.revivesLeft;
   const w = WEAPONS[state.inventory[state.currentSlot] || 'knife'];
-  document.getElementById('weapon-name').textContent = w.name;
-  const classEl = document.getElementById('weapon-class');
-  if (classEl) {
-    if (w.type === 'ranged') classEl.textContent = w.className || '';
-    else classEl.textContent = w.meleeTypeName || '';
+  HUD.weaponName.textContent = w.name;
+  if (HUD.weaponClass) {
+    if (w.type === 'ranged') HUD.weaponClass.textContent = w.className || '';
+    else HUD.weaponClass.textContent = w.meleeTypeName || '';
   }
-  const ttEl = document.getElementById('weapon-tooltip');
-  if (ttEl) ttEl.innerHTML = formatWeaponTooltip(w);
-  const ammoEl = document.getElementById('ammo-current');
-  const reserveEl = document.getElementById('ammo-reserve');
-  if (w.type === 'melee') { ammoEl.textContent = '∞'; reserveEl.textContent = ''; }
-  else {
+  if (HUD.weaponTooltip) HUD.weaponTooltip.innerHTML = formatWeaponTooltip(w);
+  if (w.type === 'melee') {
+    HUD.ammoCurrent.textContent = '∞';
+    HUD.ammoReserve.textContent = '';
+  } else {
     const am = state.ammo[w.id];
     if (am) {
       if (state.reload.active && state.reload.wid === w.id) {
-        const pct = Math.floor(Math.min(1, (performance.now()/1000 - state.reload.startTime) / state.reload.duration) * 100);
-        ammoEl.textContent = 'RECARREGANDO ' + pct + '%'; ammoEl.style.color = '#ffdd00';
+        // 🎯 FIX D: usa reload.elapsed em vez de performance.now - startTime
+        const pct = Math.floor(Math.min(1, state.reload.elapsed / state.reload.duration) * 100);
+        HUD.ammoCurrent.textContent = 'RECARREGANDO ' + pct + '%';
+        HUD.ammoCurrent.style.color = '#ffdd00';
       } else {
-        ammoEl.textContent = am.mag + ' / ' + w.magSize;
-        ammoEl.style.color = am.mag <= 0 ? '#ff4444' : '#fff';
+        HUD.ammoCurrent.textContent = am.mag + ' / ' + w.magSize;
+        HUD.ammoCurrent.style.color = am.mag <= 0 ? '#ff4444' : '#fff';
       }
-      reserveEl.textContent = 'RESERVA ' + am.reserve;
+      HUD.ammoReserve.textContent = 'RESERVA ' + am.reserve;
     }
   }
 }
@@ -3321,7 +3358,8 @@ function animate() {
     else muzzleLight.intensity = 3 * (remain/0.08);
   }
   if (state.running && !state.levelUpActive && !state.paused && !state.shopOpen) {
-    updateReload(now);
+    // 🎯 FIX D: passa dt em vez de now
+    updateReload(dt);
     updatePlayer(dt);
     resolvePlayerZombieCollision();
     updateZombies(dt);
@@ -3334,7 +3372,7 @@ function animate() {
     updateDoors(dt);
     updateWeaponPickups(dt);
     updateVendorVan();
-    updateDynamicLights();   // 🎯 FIX 3
+    updateDynamicLights();
     checkWaveComplete();
     stepPhysics(dt);
     updateRagdolls(dt);
@@ -3382,7 +3420,7 @@ function animate() {
     const m = Math.floor(elapsed/60);
     const s = (elapsed % 60).toString().padStart(2, '0');
     const t = `${m}:${s}`;
-    if (t !== lastTimeText) { document.getElementById('timer').textContent = t; lastTimeText = t; }
+    if (t !== lastTimeText) { HUD.timer.textContent = t; lastTimeText = t; }
     const revBtn = document.getElementById('btn-revive');
     if (revBtn) revBtn.classList.toggle('visible', state.downed);
   } else if (!state.running) {
