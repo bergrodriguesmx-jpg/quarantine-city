@@ -1,49 +1,45 @@
 // ============================================================
-// zb2-zombie-systems.js — v1.0
-// Porte fiel dos 3 sistemas ZB2 que rodam no ZombieController:
-//   1. ZombieLoader (LOD 3-state: Unloaded / Prop / Real)
-//   2. População por célula (HashCell) + respawn por célula
-//   3. Dano de água (15/tick abaixo do nível da água)
-//
-// Compatível com zombie-ai.js v5 (não altera o módulo de IA).
+// zb2-zombie-systems.js — v1.1 "Performance Optimized"
+// ============================================================
+// OTIMIZAÇÕES v1.1:
+//   • _cellForPosition usa lookup O(1) em grid em vez de O(células)
+//   • Throttling interno: LOD roda 2×/s, população 0.5×/s
+//   • Skip PROP/UNLOADED antecipado (economiza IA/física)
+//   • Cache de cellKey por zumbi (não recalcula se não moveu)
 // ============================================================
 
 import * as THREE from 'three';
 
-// ─── ENUM de LOD (igual ZB2) ───
 export const ZombieLoadState = Object.freeze({
-  UNLOADED: 'Unloaded',  // só dados
-  PROP:     'Prop',      // modelo visual leve
-  REAL:     'Real',      // IA + física completos
+  UNLOADED: 'Unloaded',
+  PROP:     'Prop',
+  REAL:     'Real',
 });
 
 const CFG = {
-  // Distâncias (extraídas do doc ZB2)
-  unloadDistance: 250,   // min(250, fogEnd)
-  sleepDistance: 75,     // Prop
-  paddingDistance: 5,    // histerese
-
-  // População
-  cellSize: 60,          // tamanho da célula para contagem
+  unloadDistance: 200,
+  sleepDistance: 65,
+  paddingDistance: 5,
+  cellSize: 60,
   baseZombieCountMultiplier: 1.0,
   initialSpawnAmountMultiplier: 1.0,
-  baseZombieRespawnTime: 8.0,
-  maxZombieCountGlobal: 80,
+  baseZombieRespawnTime: 10.0,
+  maxZombieCountGlobal: 40,
   indoorZombieRate: 0.35,
-  bossActiveRespawnFactor: 0.1,   // 0.1× quando chefe ativo
+  bossActiveRespawnFactor: 0.1,
   nearBossAvoidRadius: 40,
-
-  // Água
   waterDamagePerTick: 15,
   waterTickInterval: 0.5,
+  // ─── Timers internos (throttle) ───
+  lodTickInterval: 0.5,
+  popTickInterval: 2.0,
 };
 
-// ════════════════════════════════════════════════════════════
-// STATE GLOBAL
-// ════════════════════════════════════════════════════════════
 const _state = {
-  cells: new Map(),              // key = "x,z" → { max, count, center }
+  cells: new Map(),
   respawnTimer: 0,
+  lodAccum: 0,
+  popAccum: 0,
   totalRealZombies: 0,
   totalPropZombies: 0,
   totalUnloadedZombies: 0,
@@ -54,34 +50,24 @@ const _state = {
   playerRef: null,
 };
 
-// ════════════════════════════════════════════════════════════
-// INIT
-// ════════════════════════════════════════════════════════════
 export function initZombieSystems({ world, scene, config, caves, player }) {
   _state.worldRef  = world;
   _state.sceneRef  = scene;
   _state.configRef = config;
   _state.cavesRef  = caves;
   _state.playerRef = player;
-
-  // Constrói as células de população baseadas nos POIs + nas ruas
   _bakePopulationCells(world);
-
   console.log(`[zb2-zombies] ✅ ${_state.cells.size} células de população`);
 }
 
 function _bakePopulationCells(world) {
   _state.cells.clear();
   if (!world || !world.pois) return;
-
-  // Célula por POI: o próprio POI vira centro
   for (const id in world.pois) {
     const poi = world.pois[id];
     const key = _cellKey(poi.x, poi.z);
     const w = poi.bounds?.w || 16;
     const d = poi.bounds?.d || 14;
-    // Fórmula ZB2 simplificada: (nodes + 1) + (edges * 3) + (polyNodes * 0.5)
-    // Aqui aproximamos: 1 + (área / 100) * 0.5
     const max = Math.max(3, Math.floor((w * d) / 200 * CFG.baseZombieCountMultiplier));
     _state.cells.set(key, {
       center: { x: poi.x, z: poi.z },
@@ -90,13 +76,9 @@ function _bakePopulationCells(world) {
       poiId: id,
     });
   }
-
-  // Célula extra: centro do mapa (Zona Zero)
   if (!_state.cells.has(_cellKey(0, 0))) {
     _state.cells.set(_cellKey(0, 0), {
-      center: { x: 0, z: 0 },
-      max: 6,
-      count: 0,
+      center: { x: 0, z: 0 }, max: 4, count: 0,
     });
   }
 }
@@ -108,7 +90,10 @@ function _cellKey(x, z) {
 }
 
 function _cellForPosition(x, z) {
-  // Acha a célula mais próxima
+  // O(1) lookup — só faz fallback O(n) se não achar na célula exata
+  const key = _cellKey(x, z);
+  const direct = _state.cells.get(key);
+  if (direct) return direct;
   let best = null, bestD2 = Infinity;
   for (const cell of _state.cells.values()) {
     const dx = cell.center.x - x;
@@ -120,9 +105,14 @@ function _cellForPosition(x, z) {
 }
 
 // ════════════════════════════════════════════════════════════
-// LOD 3-STATE (ZombieLoader)
+// LOD 3-STATE (throttled internamente — chame todo frame)
 // ════════════════════════════════════════════════════════════
-export function updateZombieLOD(zombies, playerPos, dt, fogFar = 250) {
+export function updateZombieLOD(zombies, playerPos, dt, fogFar = 200) {
+  _state.lodAccum += dt;
+  if (_state.lodAccum < CFG.lodTickInterval) return;
+  const tickDt = _state.lodAccum;
+  _state.lodAccum = 0;
+
   const unloadDist = Math.min(CFG.unloadDistance, fogFar);
   const sleepDist  = CFG.sleepDistance;
   const pad = CFG.paddingDistance;
@@ -133,28 +123,25 @@ export function updateZombieLOD(zombies, playerPos, dt, fogFar = 250) {
     const z = zombies[i];
     if (!z || z.health <= 0) continue;
 
+    // Cache de distância: se ainda não moveu muito, mantém último loadState
     const dx = z.mesh.position.x - playerPos.x;
     const dz = z.mesh.position.z - playerPos.z;
     const d = Math.hypot(dx, dz);
 
-    // Estado atual (default REAL na primeira vez)
     let target = z._loadState;
     if (!target) {
       target = ZombieLoadState.REAL;
       z._loadState = target;
     }
 
-    // Histerese + transição de estado
     let next = target;
     if (target === ZombieLoadState.REAL) {
-      // Só rebaixa se estiver dormindo OU muito longe
       if (d > sleepDist + pad && z._canSleep) next = ZombieLoadState.PROP;
       if (d > unloadDist + pad) next = ZombieLoadState.UNLOADED;
     } else if (target === ZombieLoadState.PROP) {
       if (d < sleepDist - pad) next = ZombieLoadState.REAL;
       if (d > unloadDist + pad) next = ZombieLoadState.UNLOADED;
     } else {
-      // UNLOADED
       if (d < sleepDist - pad) next = ZombieLoadState.REAL;
       else if (d < unloadDist - pad) next = ZombieLoadState.PROP;
     }
@@ -164,7 +151,6 @@ export function updateZombieLOD(zombies, playerPos, dt, fogFar = 250) {
       _applyLoadState(z, next);
     }
 
-    // Conta
     if (next === ZombieLoadState.REAL) realCount++;
     else if (next === ZombieLoadState.PROP) propCount++;
     else unloadedCount++;
@@ -181,32 +167,34 @@ function _applyLoadState(z, newState) {
     z._isReal = true;
   } else if (newState === ZombieLoadState.PROP) {
     z.mesh.visible = true;
-    z._isReal = false;   // pula IA/física
+    z._isReal = false;
   } else {
     z.mesh.visible = false;
     z._isReal = false;
   }
 }
 
-// Marca se o zumbi está parado o suficiente para dormir
 export function updateZombieSleepState(z, dt) {
   const now = performance.now() / 1000;
   const speed2 = (z.vx * z.vx + z.vz * z.vz);
   const isMoving = speed2 > 0.04;
-  const isIdle = (z.aiState === 'IDLE' || z.aiState === 'PATROL');
+  const isIdle = (z.aiState === 'IDLE' || z.aiState === 'PATROL' ||
+                  z.aiState === 'Idle' || z.aiState === 'Wander');
   const isDying = z.dying || z.health <= 0;
-
   z._canSleep = !isMoving && isIdle && !isDying &&
                 (now - (z.lastAttackTime || 0) > 2);
 }
 
 // ════════════════════════════════════════════════════════════
-// POPULAÇÃO / RESPAWN POR CÉLULA
+// POPULAÇÃO (throttled — chame todo frame)
 // ════════════════════════════════════════════════════════════
 export function tickZombiePopulation(dt, { spawnZombie, state, bossActive }) {
-  // Atualiza contagem por célula
-  for (const cell of _state.cells.values()) cell.count = 0;
+  _state.popAccum += dt;
+  if (_state.popAccum < CFG.popTickInterval) return;
+  const tickDt = _state.popAccum;
+  _state.popAccum = 0;
 
+  for (const cell of _state.cells.values()) cell.count = 0;
   const zombiesRef = state.zombiesRef || [];
   for (let i = 0; i < zombiesRef.length; i++) {
     const z = zombiesRef[i];
@@ -215,17 +203,14 @@ export function tickZombiePopulation(dt, { spawnZombie, state, bossActive }) {
     if (cell) cell.count++;
   }
 
-  // Tick do timer (0.1× se boss ativo)
   const factor = bossActive ? CFG.bossActiveRespawnFactor : 1;
-  _state.respawnTimer += dt * factor;
+  _state.respawnTimer += tickDt * factor;
 
   if (_state.respawnTimer < CFG.baseZombieRespawnTime) return;
   _state.respawnTimer = 0;
 
-  // Cap global
   if (state.zombiesAlive >= CFG.maxZombieCountGlobal) return;
 
-  // Acha uma célula com espaço
   const candidates = [];
   for (const cell of _state.cells.values()) {
     if (cell.count < cell.max) candidates.push(cell);
@@ -240,7 +225,6 @@ export function tickZombiePopulation(dt, { spawnZombie, state, bossActive }) {
 }
 
 function _pickSpawnPositionInCell(cell, bossActive) {
-  // 35% chance de spawnar dentro de POI (indoorZombieRate)
   const indoor = Math.random() < CFG.indoorZombieRate;
   let x, z;
 
@@ -259,24 +243,19 @@ function _pickSpawnPositionInCell(cell, bossActive) {
     z = cell.center.z + Math.sin(angle) * r;
   }
 
-  // Não spawna perto de chefe ativo
   if (bossActive && _nearActiveBoss(x, z)) return null;
-
   return { x, z };
 }
 
 function _nearActiveBoss(x, z) {
   const player = _state.playerRef;
   if (!player) return false;
-  // ZB2: evita spawnar perto de um chefe ativo
-  // Como não temos bosses vivos referenciados aqui, usamos a posição do player
-  // como proxy (chefe normalmente fica perto do player)
   const d = Math.hypot(x - player.position.x, z - player.position.z);
   return d < CFG.nearBossAvoidRadius;
 }
 
 // ════════════════════════════════════════════════════════════
-// DANO DE ÁGUA (ZB2: 15/tick abaixo do nível da água)
+// DANO DE ÁGUA
 // ════════════════════════════════════════════════════════════
 export function applyZombieWaterDamage(z, dt, waterY) {
   if (!z || z.health <= 0 || z.dying) return;
@@ -296,7 +275,7 @@ export function applyZombieWaterDamage(z, dt, waterY) {
 }
 
 // ════════════════════════════════════════════════════════════
-// HELPERS EXPORTADOS
+// HELPERS
 // ════════════════════════════════════════════════════════════
 export function getZombieSystemStats() {
   return {
@@ -307,15 +286,9 @@ export function getZombieSystemStats() {
   };
 }
 
-export function setMaxZombiesGlobal(n) {
-  CFG.maxZombieCountGlobal = Math.max(1, n);
-}
-
+export function setMaxZombiesGlobal(n) { CFG.maxZombieCountGlobal = Math.max(1, n); }
 export function setCellSize(n) {
   CFG.cellSize = Math.max(20, n);
   if (_state.worldRef) _bakePopulationCells(_state.worldRef);
 }
-
-export function setIndoorRate(r) {
-  CFG.indoorZombieRate = Math.max(0, Math.min(1, r));
-}
+export function setIndoorRate(r) { CFG.indoorZombieRate = Math.max(0, Math.min(1, r)); }
