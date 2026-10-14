@@ -1,16 +1,22 @@
 // ============================================================
-// game.js — v11
-// CHANGELOG v11 (auditoria aplicada):
-//   • PATCH A: paredes invisíveis agora chamam addStaticBox (física ragdoll)
-//   • PATCH B: validateHUD() roda no boot e avisa se faltar ID
-//   • PATCH C: 3 catches silenciosos agora logam erro
-//   • PATCH D: comentário sobre listeners no topo
+// game.js — v12
+// CHANGELOG v12 (melhorias visuais):
+//   • Iluminação: HemisphereLight + ambient reduzido (0.4) + sol 1.15
+//   • Sombra 1024x1024 com normalBias, câmera ±60
+//   • Sol segue o jogador (mantém sombra nítida em todo o mapa)
+//   • Shadow frame 20 → 15 (atualiza sombra mais rápido em movimento)
+//
+// CHANGELOG v11 (mantido):
+//   • PATCH A: paredes invisíveis chamam addStaticBox
+//   • PATCH B: validateHUD() no boot
+//   • PATCH C: catches silenciosos agora logam
+//   • PATCH D: comentário sobre listeners
 //
 // CHANGELOG v10 (mantido):
 //   • Imports não usados removidos
 //   • togglePause() limpo
 //   • Scratch vectors em raycastZombie/spawnExplosion/damageZombie
-//   • updateReload baseado em dt (respeita pausa)
+//   • updateReload baseado em dt
 //   • HUD cacheado
 //   • Blood moon sem som de morte
 // ============================================================
@@ -54,11 +60,7 @@ import { precacheAllWeaponGLBs } from './src/render/weapon-models.js';
 import { applyPerk, getPerk } from './perks-system.js';
 import { buildCartoonZombie } from './zombie-procedural.js';
 
-// 🎯 PATCH D: Listeners registrados uma vez no topo do módulo. game.js é
-// avaliado uma única vez por página (módulo ES), então não há duplicação
-// ao reiniciar a partida. Se isso virar SPA (mount/unmount), converter
-// em binds removíveis com removeEventListener.
-
+// 🎯 PATCH D: Listeners registrados uma vez no topo do módulo.
 bus.setAdapter(new LocalAdapter());
 
 window.ZOMBIE_TYPES_FROM_MODULE = ZOMBIE_TYPES;
@@ -237,7 +239,7 @@ const state = {
 };
 
 // ============================================================
-// 🎯 PATCH B: HUD null-check — valida todos os IDs no boot
+// 🎯 PATCH B: HUD null-check
 // ============================================================
 (function validateHUD() {
   const expected = [
@@ -287,17 +289,30 @@ renderer.shadowMap.type = THREE.BasicShadowMap;
 renderer.shadowMap.autoUpdate = false;
 container.appendChild(renderer.domElement);
 
-scene.add(new THREE.Mesh(new THREE.SphereGeometry(180, 16, 8), new THREE.MeshBasicMaterial({ map:Textures.skyTexture(), side:THREE.BackSide, fog:false })));
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
+// ─── ILUMINAÇÃO v12 ───────────────────────────────────────
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
 scene.add(ambientLight);
-const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+
+const hemiLight = new THREE.HemisphereLight(0x8ecae6, 0x5a7a3a, 0.65);
+hemiLight.position.set(0, 50, 0);
+scene.add(hemiLight);
+
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.15);
 sun.position.set(50, 80, 40);
 sun.castShadow = true;
-sun.shadow.mapSize.set(512, 512);
-sun.shadow.camera.left = -40; sun.shadow.camera.right = 40;
-sun.shadow.camera.top = 40; sun.shadow.camera.bottom = -40;
-sun.shadow.camera.far = 130; sun.shadow.bias = -0.002;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = -60;
+sun.shadow.camera.right = 60;
+sun.shadow.camera.top = 60;
+sun.shadow.camera.bottom = -60;
+sun.shadow.camera.far = 160;
+sun.shadow.bias = -0.001;
+sun.shadow.normalBias = 0.02;
+sun.target.position.set(0, 0, 0);
 scene.add(sun);
+scene.add(sun.target);
+
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(180, 16, 8), new THREE.MeshBasicMaterial({ map:Textures.skyTexture(), side:THREE.BackSide, fog:false })));
 
 {
   const size = CONFIG.arena.size;
@@ -356,7 +371,7 @@ function createCave(x, z, rotationY) {
 const limit = CONFIG.arena.size/2 - 1;
 const invisible = new THREE.MeshBasicMaterial({ visible:false });
 
-// 🎯 PATCH A: paredes invisíveis agora também entram na física do ragdoll
+// 🎯 PATCH A: paredes invisíveis na física do ragdoll
 [
   { w:1, h:10, d:CONFIG.arena.size, x:-limit, z:0 },
   { w:1, h:10, d:CONFIG.arena.size, x:limit, z:0 },
@@ -932,7 +947,6 @@ class Debris {
       if (!c.isMesh || !c.material) return;
       const mats = Array.isArray(c.material) ? c.material : [c.material];
       for (const m of mats) {
-        // 🎯 PATCH C: log em vez de silenciar
         try { m.dispose(); }
         catch (err) { console.warn('[game] dispose() falhou:', err); }
       }
@@ -950,7 +964,6 @@ const flyingLimbs = [];
 
 function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
   if (mesh.userData.zombieRef && mesh.userData.zombieRef.mixer) {
-    // 🎯 PATCH C: log em vez de silenciar
     try { mesh.userData.zombieRef.mixer.stopAllAction(); }
     catch (err) { console.warn('[game] mixer.stopAllAction falhou:', err); }
   }
@@ -1049,7 +1062,6 @@ function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
         if (!c.isMesh || !c.material) return;
         const mats = Array.isArray(c.material) ? c.material : [c.material];
         for (const m of mats) {
-          // 🎯 PATCH C: log em vez de silenciar
           try { m.dispose(); }
           catch (err) { console.warn('[game] dispose() falhou:', err); }
         }
@@ -2584,6 +2596,15 @@ function updatePlayer(dt) {
       if (state.health <= 0) enterDownedState();
     }
   }
+
+  // ─── v12: Sol segue o jogador (mantém sombra nítida) ───
+  sun.position.set(
+    player.position.x + 50,
+    80,
+    player.position.z + 40
+  );
+  sun.target.position.set(player.position.x, 0, player.position.z);
+  sun.target.updateMatrixWorld();
 }
 
 function resolvePlayerZombieCollision() {
@@ -3424,7 +3445,7 @@ function animate() {
     camera.fov += (targetFov - camera.fov) * Math.min(1, dt*15);
     camera.updateProjectionMatrix();
     shadowFrame++;
-    if (shadowFrame >= 20) { renderer.shadowMap.needsUpdate = true; shadowFrame = 0; }
+    if (shadowFrame >= 15) { renderer.shadowMap.needsUpdate = true; shadowFrame = 0; }
     const elapsed = Math.floor((performance.now() - state.startTime)/1000);
     const m = Math.floor(elapsed/60);
     const s = (elapsed % 60).toString().padStart(2, '0');
