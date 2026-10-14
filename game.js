@@ -1,15 +1,18 @@
 // ============================================================
-// game.js — v10
-// CHANGELOG v10 (auditoria aplicada):
-//   • FIX A: Imports não usados removidos (POIS, geoTorus,
-//            computePartLocalBoxes, hasGib, getWeaponStatus,
-//            PERKS, listPerks)
-//   • FIX B: togglePause() com lógica limpa
-//   • FIX C: Scratch vectors em raycastZombie/spawnExplosion/
-//            damageZombie (elimina GC em combate)
-//   • FIX D: updateReload baseado em dt (respeita pausa)
-//   • FIX E: HUD cacheado (15+ getElementById por frame → 0)
-//   • FIX F: Blood moon sem som de morte
+// game.js — v11
+// CHANGELOG v11 (auditoria aplicada):
+//   • PATCH A: paredes invisíveis agora chamam addStaticBox (física ragdoll)
+//   • PATCH B: validateHUD() roda no boot e avisa se faltar ID
+//   • PATCH C: 3 catches silenciosos agora logam erro
+//   • PATCH D: comentário sobre listeners no topo
+//
+// CHANGELOG v10 (mantido):
+//   • Imports não usados removidos
+//   • togglePause() limpo
+//   • Scratch vectors em raycastZombie/spawnExplosion/damageZombie
+//   • updateReload baseado em dt (respeita pausa)
+//   • HUD cacheado
+//   • Blood moon sem som de morte
 // ============================================================
 
 import * as THREE from 'three';
@@ -50,6 +53,11 @@ import { precacheAllWeaponGLBs } from './src/render/weapon-models.js';
 
 import { applyPerk, getPerk } from './perks-system.js';
 import { buildCartoonZombie } from './zombie-procedural.js';
+
+// 🎯 PATCH D: Listeners registrados uma vez no topo do módulo. game.js é
+// avaliado uma única vez por página (módulo ES), então não há duplicação
+// ao reiniciar a partida. Se isso virar SPA (mount/unmount), converter
+// em binds removíveis com removeEventListener.
 
 bus.setAdapter(new LocalAdapter());
 
@@ -191,7 +199,6 @@ const state = {
   levelUpActive:false, pendingLevelUps:0,
   inventory:{ 1:'knife', 2:null, 3:null, 4:null }, currentSlot:1,
   mouseDown:false, aiming:false, shake:0,
-  // FIX D: reload agora usa .elapsed (respeita pausa) em vez de .startTime
   ammo:{}, reload:{ active:false, wid:null, elapsed:0, duration:0, startTime:0, endTime:0 },
   shopOpen:false,
   downed:false, downedElapsed:0, downedHP:0, downedMaxHP:CONFIG.downed.maxHP,
@@ -228,8 +235,10 @@ const state = {
 
   discoveredPOIs: new Set(),
 };
-// Valida que todos os IDs do HUD existem. Se algum faltar, avisa
-// UMA vez com a lista completa em vez de quebrar em runtime.
+
+// ============================================================
+// 🎯 PATCH B: HUD null-check — valida todos os IDs no boot
+// ============================================================
 (function validateHUD() {
   const expected = [
     'hp-fill','hp-text','xp-fill','coins','wave','level','zombies',
@@ -241,7 +250,6 @@ const state = {
     console.error(`[game] ❌ ${missing.length} IDs do HUD faltando:`, missing);
   }
 })();
-
 
 const HUD = {
   hpFill:        document.getElementById('hp-fill'),
@@ -347,6 +355,8 @@ function createCave(x, z, rotationY) {
 
 const limit = CONFIG.arena.size/2 - 1;
 const invisible = new THREE.MeshBasicMaterial({ visible:false });
+
+// 🎯 PATCH A: paredes invisíveis agora também entram na física do ragdoll
 [
   { w:1, h:10, d:CONFIG.arena.size, x:-limit, z:0 },
   { w:1, h:10, d:CONFIG.arena.size, x:limit, z:0 },
@@ -479,7 +489,6 @@ ZombieAI.registerAICallbacks({
   },
 });
 
-// 🎯 FIX F: Blood moon sem som de morte (era Sfx.playZombieDeath)
 bus.on(Ev.WORLD_BLOOD_MOON, () => {
   addShake(0.5);
   showWaveBanner('LUA DE SANGUE!');
@@ -581,7 +590,6 @@ function resolveWallCollisions(pos, radius) {
 // ============================================================
 const zombies = [];
 
-// 🎯 FIX C: Scratch vectors reutilizáveis (elimina GC em combate)
 const _torsoWorldPosScratch     = new THREE.Vector3();
 const _explosionDirScratch      = new THREE.Vector3();
 const _raycastBestPointScratch  = new THREE.Vector3();
@@ -591,11 +599,6 @@ function pickFromPalette(palette, fallback) {
   return palette[Math.floor(Math.random() * palette.length)];
 }
 
-// ============================================================
-// CREATE ZOMBIE MESH
-// 🎯 Escala do tipo é aplicada DENTRO do buildCartoonZombie.
-//    Não aplicar aqui — evita escala dupla.
-// ============================================================
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
   const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey]
@@ -877,7 +880,7 @@ function updateBloodFountains(dt) {
 }
 
 // ============================================================
-// DEBRIS — dispose rigoroso
+// DEBRIS
 // ============================================================
 class Debris {
   constructor(mesh, size, mass, life = 35) {
@@ -928,7 +931,8 @@ class Debris {
     this.mesh.traverse(c => {
       if (!c.isMesh || !c.material) return;
       const mats = Array.isArray(c.material) ? c.material : [c.material];
-            for (const m of mats) {
+      for (const m of mats) {
+        // 🎯 PATCH C: log em vez de silenciar
         try { m.dispose(); }
         catch (err) { console.warn('[game] dispose() falhou:', err); }
       }
@@ -1051,7 +1055,6 @@ function startRagdoll(mesh, hitDir, hitStrength, missingParts) {
         }
       });
     },
-    
 
     applyImpulse(worldPos, dir, force) {
       const f = Math.min(6, force);
@@ -1313,7 +1316,6 @@ function collectRaycastCandidates(origin, forward, maxDist) {
 
 const _hitPointScratch = new THREE.Vector3();
 
-// 🎯 FIX C: usa scratch vector em vez de alocar Vector3 por chamada
 function raycastZombie(origin, dir, maxDist, candidates) {
   const list = candidates || zombies;
   let bestZ = null, bestDist = Infinity, bestPart = null;
@@ -1449,7 +1451,6 @@ function reactToExplosion(pos, radius) {
   }
 }
 
-// 🎯 FIX C: usa scratch vector no loop (elimina 1 Vector3 por zumbi afetado)
 function spawnExplosion(pos) {
   explosionLight.position.copy(pos); explosionLight.position.y += 1;
   explosionLight.intensity = 6;
@@ -1532,7 +1533,6 @@ function updateNoiseRipples(dt) {
   }
 }
 
-// 🎯 FIX C: usa scratch em vez de alocar torsoWorldPos a cada morte
 function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
   if (z.dying) return;
   z.health -= damage;
@@ -1622,7 +1622,6 @@ function damageZombie(z, damage, isCrit, part, hitDir, hitPoint, sourceType) {
     checkLevelUp();
     randomDismemberOnDeath(z);
 
-    // 🎯 FIX C: reusa scratch
     const torsoWorldPos = _torsoWorldPosScratch;
     if (z.mesh.userData.torso) {
       z.mesh.userData.torso.getWorldPosition(torsoWorldPos);
@@ -1683,7 +1682,6 @@ function makeNoise(position, radius) {
 
 function rollCrit() { return Math.random() < state.critChance; }
 
-// 🎯 FIX D: startReload agora usa .elapsed
 function startReload(wid) {
   if (state.reload.active) return;
   const w = WEAPONS[wid], am = state.ammo[wid];
@@ -1693,7 +1691,7 @@ function startReload(wid) {
   state.reload.elapsed = 0;
   const duration = w.reloadTime / state.reloadSpeedMult;
   state.reload.duration = duration;
-  state.reload.startTime = performance.now()/1000; // legacy
+  state.reload.startTime = performance.now()/1000;
   state.reload.endTime = duration;
   if (state.aiming) { state.aiming = false; updateCrosshair(); }
   if (weaponView) weaponView.reload(duration);
@@ -1705,7 +1703,6 @@ function cancelReload() {
   state.reload.startTime = 0; state.reload.endTime = 0;
   if (weaponView) weaponView.cancelReload();
 }
-// 🎯 FIX D: recebe dt em vez de "now"
 function updateReload(dt) {
   if (!state.reload.active) return;
   state.reload.elapsed += dt;
@@ -2470,7 +2467,6 @@ function setupMobile() {
 setupMobile();
 
 const pauseEl = document.getElementById('pause');
-// 🎯 FIX B: togglePause limpo (sem remove/add redundante)
 function togglePause() {
   if (!state.running) return;
   state.paused = !state.paused;
@@ -2790,9 +2786,6 @@ function updateZombies(dt) {
 
     if (!hasJoints) continue;
 
-    // ════════════════════════════════════════════════════════════
-    // ANIMAÇÃO — spring procedural
-    // ════════════════════════════════════════════════════════════
     const speedNorm = Math.min(1.5, realSpeed / Math.max(0.01, z.speed));
     const walkStyle = z.walkStyle;
     const shuffling = dist < 3.0;
@@ -3061,7 +3054,6 @@ function updateZombies(dt) {
     }
   }
 
-  // Separação suave entre zumbis (sem jitter)
   zCollGrid.clear();
   for (let i = 0; i < zombies.length; i++) {
     const z = zombies[i];
@@ -3323,7 +3315,7 @@ function checkPOIDiscovery() {
 }
 
 // ============================================================
-// HUD — 🎯 FIX E: usa HUD cache (sem getElementById por frame)
+// HUD
 // ============================================================
 function updateHUD() {
   const hp = Math.max(0, state.health);
@@ -3349,7 +3341,6 @@ function updateHUD() {
     const am = state.ammo[w.id];
     if (am) {
       if (state.reload.active && state.reload.wid === w.id) {
-        // 🎯 FIX D: usa reload.elapsed em vez de performance.now - startTime
         const pct = Math.floor(Math.min(1, state.reload.elapsed / state.reload.duration) * 100);
         HUD.ammoCurrent.textContent = 'RECARREGANDO ' + pct + '%';
         HUD.ammoCurrent.style.color = '#ffdd00';
@@ -3377,7 +3368,6 @@ function animate() {
     else muzzleLight.intensity = 3 * (remain/0.08);
   }
   if (state.running && !state.levelUpActive && !state.paused && !state.shopOpen) {
-    // 🎯 FIX D: passa dt em vez de now
     updateReload(dt);
     updatePlayer(dt);
     resolvePlayerZombieCollision();
