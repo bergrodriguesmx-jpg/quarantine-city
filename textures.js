@@ -1,8 +1,10 @@
 // ============================================================
-// textures.js — v2
-// CHANGELOG v2:
+// textures.js — v3
+// CHANGELOG v3:
+//   • grassTexture2(): variação com manchas de terra
+//   • concreteTexture(): calçada/meio-fio
+//   • dirtTexture(): manchas de terra para patches no chão
 //   • colorSpace = SRGBColorSpace em todas as texturas
-//     (Three.js r152+; em r150 ou anterior use encoding = sRGBEncoding)
 // ============================================================
 
 import * as THREE from 'three';
@@ -34,6 +36,52 @@ export function grassTexture() {
   ctx.fillStyle = '#8DD65A';
   ctx.fillRect(12, 3, 2, 2);
   ctx.fillRect(7, 6, 2, 2);
+  return makeTex(c);
+}
+
+// NOVO: variação mais escura, com manchas de terra
+export function grassTexture2() {
+  const c = makeCanvas(16);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#6BB840';
+  ctx.fillRect(0, 0, 16, 16);
+  ctx.fillStyle = '#5A9E35';
+  ctx.fillRect(2, 2, 4, 4);
+  ctx.fillRect(10, 10, 3, 3);
+  ctx.fillStyle = '#8DD65A';
+  ctx.fillRect(6, 4, 2, 2);
+  ctx.fillRect(12, 6, 2, 2);
+  ctx.fillStyle = '#7D5A3C';
+  ctx.fillRect(11, 2, 4, 3);
+  return makeTex(c);
+}
+
+// NOVO: manchas de terra isoladas (patches no chão)
+export function dirtTexture() {
+  const c = makeCanvas(16);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#7D5A3C';
+  ctx.fillRect(0, 0, 16, 16);
+  ctx.fillStyle = '#5D4030';
+  ctx.fillRect(2, 4, 4, 3);
+  ctx.fillRect(9, 9, 3, 3);
+  ctx.fillStyle = '#8B6A48';
+  ctx.fillRect(6, 2, 2, 2);
+  return makeTex(c);
+}
+
+// NOVO: calçada / concreto
+export function concreteTexture() {
+  const c = makeCanvas(16);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#9A9A9A';
+  ctx.fillRect(0, 0, 16, 16);
+  ctx.fillStyle = '#8A8A8A';
+  ctx.fillRect(0, 7, 16, 1);
+  ctx.fillRect(7, 0, 1, 16);
+  ctx.fillStyle = '#B0B0B0';
+  ctx.fillRect(2, 2, 3, 3);
+  ctx.fillRect(10, 11, 3, 2);
   return makeTex(c);
 }
 
