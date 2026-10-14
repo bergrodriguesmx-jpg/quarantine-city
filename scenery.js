@@ -1,21 +1,9 @@
 // ============================================================
-// scenery.js — v11 "ZB2 Island"
+// scenery.js — v11.1 "ZB2 Island" (COMPLETO)
 // ============================================================
-// NOVO em v11:
-//   • Ilha com silhueta procedural (polígono irregular)
-//   • Anel de praia (areia + wet sand) ao redor da cidade
-//   • Plano de água com material azul translúcido
-//   • VaultSpots registry (barrier / window / van / roof / stair)
-//   • LootSpots com roomType (compatível com RoomLootID ZB2)
-//   • difficultyRegions agora 4 tiers (easy/medium/hard/veryhard)
-//   • Cidade continua grade 6×6 mas cercada pela ilha
-//
-// MANTIDO de v10:
-//   • Builders detalhados (casa, delegacia, hospital, igreja,
-//     mercado, posto, base militar, armazém, prefeitura)
-//   • Furniture DB + templates
-//   • addBoxMesh com correção de rotação 45°
-//   • InstancedMesh para tudo repetitivo
+// FIX v11.1:
+//   • createRoad declarado APENAS UMA VEZ (linha ~510)
+//   • createTree mantido no final (sem duplicação)
 // ============================================================
 
 import * as THREE from 'three';
@@ -30,13 +18,12 @@ const CITY_CONFIG = {
   roadWidth: 16,
   sidewalkWidth: 3,
   buildingsPerBlock: 3,
-  // Ilha
-  islandInnerRadius: 280,   // raio médio da cidade
-  islandBeachWidth: 22,     // largura da praia
-  islandWaterRadius: 600,   // raio da água
-  islandWaterY: -2.5,       // altura da água
-  islandSilhouetteAmp: 0.12, // variação da silhueta (12%)
-  islandBeachY: 0.08,       // altura da praia (levemente acima do chão)
+  islandInnerRadius: 280,
+  islandBeachWidth: 22,
+  islandWaterRadius: 600,
+  islandWaterY: -2.5,
+  islandSilhouetteAmp: 0.12,
+  islandBeachY: 0.08,
 };
 
 const GRID_HALF  = (CITY_CONFIG.gridSize * CITY_CONFIG.blockSize) / 2;
@@ -50,7 +37,6 @@ const COMMON_BUILDINGS = [
   { type: 'gas',    size: 'small',  weight: 0.07 },
 ];
 
-// POIS especiais (compatível com layout ZB2 - polígono)
 export const SPECIAL_POIS = [
   { id: 'government', type: 'government', x:    0, z:    0, rot: 0,              size: 'large'  },
   { id: 'military',   type: 'military',   x:  140, z:  140, rot: 0,              size: 'large'  },
@@ -62,7 +48,7 @@ export const SPECIAL_POIS = [
 export const POIS = SPECIAL_POIS;
 
 // ────────────────────────────────────────────────────────────
-// CACHE DE GEOMETRIAS
+// CACHE
 // ────────────────────────────────────────────────────────────
 const _geoCache = new Map();
 function _cacheGeo(key, factory) {
@@ -163,7 +149,6 @@ const MATS = {
   leafA: new THREE.MeshLambertMaterial({ color: 0x2E8B3E, flatShading: true }),
   leafB: new THREE.MeshLambertMaterial({ color: 0x3AA850, flatShading: true }),
   leafC: new THREE.MeshLambertMaterial({ color: 0x4F8B2E, flatShading: true }),
-  // Ilha
   sand: (() => {
     const t = Textures.sandTexture(); t.repeat.set(20, 20);
     return new THREE.MeshLambertMaterial({ map: t });
@@ -182,7 +167,7 @@ const MATS = {
 };
 
 // ────────────────────────────────────────────────────────────
-// FURNITURE DB + TEMPLATES (ZB2)
+// FURNITURE DB + TEMPLATES
 // ────────────────────────────────────────────────────────────
 const FURNITURE_DB = {
   table:         { w: 1.4, h: 0.75, d: 0.8,  mat: 'wood' },
@@ -279,7 +264,6 @@ function addBoxMesh(w, h, d, x, y, z, mat, parent, colliderArray, rotY = 0) {
   if (!colliderArray) return m;
 
   const parentRy = parent.rotation.y || 0;
-  const totalRy = parentRy + rotY;
   const gx = parent.position.x || 0;
   const gz = parent.position.z || 0;
   const context = (parent.userData && parent.userData.context) || 'solid';
@@ -355,9 +339,6 @@ function registerRooftop(world, poiId, x, z, height, hasAccess = false) {
   world.rooftops.push({ poiId, x, z, height, hasAccess });
 }
 
-// ────────────────────────────────────────────────────────────
-// VAULT SPOTS (ZB2 VaultHash simplified)
-// ────────────────────────────────────────────────────────────
 function registerVaultSpot(world, type, shape, p1, p2, perms = {}) {
   world.vaultSpots.push({
     id: type,
@@ -395,15 +376,12 @@ function scatterInstanced(scene, opts) {
     baseY = 0, scaleMin = 1, scaleMax = 1,
     rotRandom = true, name = 'prop',
   } = opts;
-
   const mesh = new THREE.InstancedMesh(geo, mat, count);
   mesh.castShadow = true; mesh.receiveShadow = true;
   mesh.name = name;
-
   const dummy = new THREE.Object3D();
   let placed = 0, attempts = 0;
   const maxAttempts = count * 30;
-
   while (placed < count && attempts < maxAttempts) {
     attempts++;
     const angle = Math.random() * Math.PI * 2;
@@ -414,7 +392,6 @@ function scatterInstanced(scene, opts) {
     if (Math.hypot(x, z) > CITY_CONFIG.islandInnerRadius - 5) continue;
     if (!isFreeSpot(x, z, minPOIDist)) continue;
     if (isOnRoad(x, z)) continue;
-
     dummy.position.set(x, baseY, z);
     if (rotRandom) dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
     else dummy.rotation.set(0, 0, 0);
@@ -431,10 +408,9 @@ function scatterInstanced(scene, opts) {
 }
 
 // ════════════════════════════════════════════════════════════
-// ISLAND SILHOUETTE
+// ILHA
 // ════════════════════════════════════════════════════════════
 function generateIslandSilhouette(baseRadius, segments = 64) {
-  // Perlin-like irregular radius
   const points = [];
   const seed1 = Math.random() * Math.PI * 2;
   const seed2 = Math.random() * Math.PI * 2;
@@ -451,20 +427,16 @@ function generateIslandSilhouette(baseRadius, segments = 64) {
 }
 
 function buildIslandTerrain(scene, silhouette) {
-  // Constrói o chão da ilha a partir da silhueta via ShapeGeometry
   const shape = new THREE.Shape();
   shape.moveTo(silhouette[0].x, -silhouette[0].z);
   for (let i = 1; i < silhouette.length; i++) {
     shape.lineTo(silhouette[i].x, -silhouette[i].z);
   }
   shape.closePath();
-
   const geo = new THREE.ShapeGeometry(shape, 12);
   geo.rotateX(-Math.PI / 2);
-
   const tex = Textures.grassTexture();
   tex.repeat.set(1 / 4, 1 / 4);
-
   const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }));
   mesh.position.y = 0;
   mesh.receiveShadow = true;
@@ -474,31 +446,24 @@ function buildIslandTerrain(scene, silhouette) {
 }
 
 function buildBeachRing(scene, silhouette, innerR, beachW) {
-  // Anel de areia externo (do raio interno ao externo)
   const shape = new THREE.Shape();
-  // Perímetro externo (silhueta expandida)
   const outer = silhouette.map(p => {
-    const len = Math.hypot(p.x, p.z);
+    const len = Math.hypot(p.x, p.z) || 1;
     const k = (len + beachW) / len;
     return { x: p.x * k, z: p.z * k };
   });
   shape.moveTo(outer[0].x, -outer[0].z);
   for (let i = 1; i < outer.length; i++) shape.lineTo(outer[i].x, -outer[i].z);
   shape.closePath();
-
-  // Furo interno (silhueta original)
   const hole = new THREE.Path();
   hole.moveTo(silhouette[0].x, -silhouette[0].z);
   for (let i = 1; i < silhouette.length; i++) hole.lineTo(silhouette[i].x, -silhouette[i].z);
   hole.closePath();
   shape.holes.push(hole);
-
   const geo = new THREE.ShapeGeometry(shape, 12);
   geo.rotateX(-Math.PI / 2);
-
   const tex = Textures.sandTexture();
   tex.repeat.set(1 / 6, 1 / 6);
-
   const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }));
   mesh.position.y = CITY_CONFIG.islandBeachY;
   mesh.receiveShadow = true;
@@ -511,7 +476,6 @@ function buildWaterPlane(scene) {
   const size = CITY_CONFIG.islandWaterRadius * 2;
   const tex = Textures.waterTexture();
   tex.repeat.set(1 / 12, 1 / 12);
-
   const geo = new THREE.PlaneGeometry(size, size, 1, 1);
   const mesh = new THREE.Mesh(geo, MATS.water);
   mesh.rotation.x = -Math.PI / 2;
@@ -523,12 +487,10 @@ function buildWaterPlane(scene) {
 }
 
 function buildIslandRockBorder(scene, silhouette) {
-  // Rochas ao longo da silhueta, escondendo a transição ilha→água
   const count = 180;
   const mesh = new THREE.InstancedMesh(getUnitIco(), MATS.rock, count);
   mesh.castShadow = true; mesh.receiveShadow = true;
   mesh.name = 'rockBorder';
-
   const dummy = new THREE.Object3D();
   for (let i = 0; i < count; i++) {
     const t = (i / count) * silhouette.length;
@@ -537,11 +499,10 @@ function buildIslandRockBorder(scene, silhouette) {
     const frac = t - Math.floor(t);
     const px = silhouette[idx].x * (1 - frac) + silhouette[nextIdx].x * frac;
     const pz = silhouette[idx].z * (1 - frac) + silhouette[nextIdx].z * frac;
-    const dirLen = Math.hypot(px, pz);
+    const dirLen = Math.hypot(px, pz) || 1;
     const outward = 1 + (0.02 + Math.random() * 0.04);
     const rx = (px / dirLen) * dirLen * outward;
     const rz = (pz / dirLen) * dirLen * outward;
-
     dummy.position.set(rx, 0.5 + Math.random() * 0.8, rz);
     dummy.rotation.set(
       Math.random() * 0.35,
@@ -561,7 +522,7 @@ function buildIslandRockBorder(scene, silhouette) {
 }
 
 // ════════════════════════════════════════════════════════════
-// GRADE URBANA
+// createRoad — DECLARADO UMA ÚNICA VEZ (aqui!)
 // ════════════════════════════════════════════════════════════
 const _roadCache = new Map();
 export function createRoad(x, z, width, length, horizontal = true, yOffset = 0.02) {
@@ -612,8 +573,6 @@ function buildRoadGrid(scene) {
     road.name = `roadH_${i}`;
     scene.add(road);
   }
-
-  // Calçadas
   const swW = CITY_CONFIG.sidewalkWidth;
   for (let i = 0; i <= gridSize; i++) {
     const x = i * blockSize - GRID_HALF;
@@ -641,8 +600,6 @@ function buildRoadGrid(scene) {
       scene.add(sw);
     }
   }
-
-  // Meio-fio
   const curbH = 0.15;
   const curbMat = new THREE.MeshLambertMaterial({ color: 0x7A7A7A });
   const curbGeo = getUnitBox();
@@ -756,18 +713,15 @@ function buildStreetLights(scene) {
       }
     }
   }
-
   const count = positions.length;
   const poleGeo = new THREE.CylinderGeometry(0.12, 0.15, 5, 6);
   const poleMesh = new THREE.InstancedMesh(poleGeo, MATS.pole, count);
   const armMesh  = new THREE.InstancedMesh(getUnitBox(), MATS.poleTop, count);
   const lampMesh = new THREE.InstancedMesh(getUnitBox(), MATS.lampOn, count);
   poleMesh.castShadow = true; armMesh.castShadow = true;
-
   const dummy = new THREE.Object3D();
   const tmpV = new THREE.Vector3();
   const upY = new THREE.Vector3(0, 1, 0);
-
   for (let i = 0; i < count; i++) {
     const p = positions[i];
     dummy.position.set(p.x, 2.5, p.z);
@@ -800,7 +754,7 @@ function buildStreetLights(scene) {
 }
 
 // ════════════════════════════════════════════════════════════
-// POI BUILDERS (compactado; mesmos do v10)
+// POI BUILDERS
 // ════════════════════════════════════════════════════════════
 function prepPoi(group, poi, context = 'indoor') {
   group.userData.context = context;
@@ -811,7 +765,6 @@ function buildHouse(scene, poi, world) {
   const sizes = { small: [6, 5], medium: [8, 6], large: [11, 8] };
   const [W, D] = sizes[poi.size] || sizes.medium;
   const H = 3.5, T = 0.24, DOOR_W = 1.4, DOOR_H = 2.3;
-
   const g = new THREE.Group();
   g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z);
   prepPoi(g, poi, 'indoor');
@@ -834,7 +787,6 @@ function buildHouse(scene, poi, world) {
   addBoxMesh(segW, H, T,  W / 2 - segW / 2, H / 2, frontZ, wallMat, g, world.wallColliders);
   if (H - DOOR_H > 0.1) addBoxMesh(DOOR_W, H - DOOR_H, T, 0, H - (H - DOOR_H) / 2, frontZ, wallMat, g, null);
 
-  // Janelas
   const winW = 0.9, winH = 1.0, winY = 1.9;
   for (const wp of [
     { x: -W / 2 + T / 2 - 0.03, y: winY, z: -D / 4, rotY: -Math.PI / 2 },
@@ -843,7 +795,6 @@ function buildHouse(scene, poi, world) {
     addBoxMesh(winW, winH, 0.05, wp.x, wp.y, wp.z, MATS.window, g, null).rotation.y = wp.rotY;
   }
 
-  // Porta pivotada
   const doorX = -DOOR_W / 2;
   const doorPivot = new THREE.Group();
   doorPivot.position.set(doorX, 0, frontZ);
@@ -858,7 +809,6 @@ function buildHouse(scene, poi, world) {
   g.localToWorld(doorWorldPos);
   world.doors.push({ group: doorPivot, currentAngle: 0, worldX: doorWorldPos.x, worldZ: doorWorldPos.z });
 
-  // VAULT SPOT: porta
   registerVaultSpot(world, 'stair', 'barrier',
     [doorWorldPos.x - 0.8, 0, doorWorldPos.z],
     [doorWorldPos.x + 0.8, 0, doorWorldPos.z],
@@ -880,140 +830,111 @@ function buildHouse(scene, poi, world) {
   }
 
   registerRooftop(world, poi.id, poi.x, poi.z, H + 1.6);
-
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'house' };
 }
 
-// ─── DELEGACIA ───
 function buildPoliceStation(scene, poi, world) {
   const W = 14, D = 11, H = 4.2, T = 0.28;
   const g = new THREE.Group();
   g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z);
   prepPoi(g, poi, 'indoor');
   scene.add(g);
-
   const floor = new THREE.Mesh(getPlaneGeo(W - T * 2, D - T * 2), MATS.floorTile);
   floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true;
   g.add(floor);
-
   addBoxMesh(W, H, T, 0, H / 2, -D / 2 + T / 2, MATS.wallGray, g, world.wallColliders);
   addBoxMesh(T, H, D, -W / 2 + T / 2, H / 2, 0, MATS.wallGray, g, world.wallColliders);
   addBoxMesh(T, H, D,  W / 2 - T / 2, H / 2, 0, MATS.wallGray, g, world.wallColliders);
-
   const frontZ = D / 2 - T / 2;
   const doorW = 2.8, segW = (W - doorW) / 2;
   addBoxMesh(segW, H, T, -W / 2 + segW / 2, H / 2, frontZ, MATS.wallGray, g, world.wallColliders);
   addBoxMesh(segW, H, T,  W / 2 - segW / 2, H / 2, frontZ, MATS.wallGray, g, world.wallColliders);
-
   const sign = new THREE.Mesh(getBoxGeo(W * 0.5, 0.5, 0.1),
     new THREE.MeshBasicMaterial({ color: 0x2196F3 }));
   sign.position.set(0, H - 0.5, frontZ + 0.06); g.add(sign);
-
-  // Celas
   for (let i = 0; i < 2; i++) {
     const cellX = -W / 2 + 3 + i * 4.5;
     addBoxMesh(0.15, 2.5, 3, cellX - 1.4, 1.25, -D / 2 + 2.2, MATS.darkMetal, g, world.wallColliders);
     addBoxMesh(0.15, 2.5, 3, cellX + 1.4, 1.25, -D / 2 + 2.2, MATS.darkMetal, g, world.wallColliders);
   }
   populateInterior(g, world, 'police_office');
-
   const doorPivot = new THREE.Group();
   doorPivot.position.set(-doorW / 2, 0, frontZ);
   const doorMesh = new THREE.Mesh(getBoxGeo(doorW - 0.1, H - 0.5, 0.1), MATS.darkMetal);
   doorMesh.position.set((doorW - 0.1) / 2, (H - 0.5) / 2, 0);
   doorPivot.add(doorMesh); g.add(doorPivot);
-
   g.updateMatrixWorld(true);
   const doorWorldPos = new THREE.Vector3(-doorW / 2, 0, frontZ);
   g.localToWorld(doorWorldPos);
   world.doors.push({ group: doorPivot, currentAngle: 0, worldX: doorWorldPos.x, worldZ: doorWorldPos.z });
-
   const roof = new THREE.Mesh(getBoxGeo(W + 0.5, 0.4, D + 0.5), MATS.roofBlack);
   roof.position.y = H + 0.2; roof.castShadow = true; g.add(roof);
-
   registerLootSpot(world, poi.x - 3, poi.z - 2, 0.3, 'ammo', 2, 'police_armory');
   registerLootSpot(world, poi.x + 3, poi.z + 1, 0.3, 'cash', 2, 'police_cells');
   registerRooftop(world, poi.id, poi.x, poi.z, H + 0.4);
-
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'police' };
 }
 
-// ─── HOSPITAL ───
 function buildHospital(scene, poi, world) {
   const W = 18, D = 14, H = 5.0, T = 0.28;
   const g = new THREE.Group();
   g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z);
   prepPoi(g, poi, 'indoor');
   scene.add(g);
-
   const floor = new THREE.Mesh(getPlaneGeo(W - T * 2, D - T * 2), MATS.floorWhite);
   floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true;
   g.add(floor);
-
   addBoxMesh(W, H, T, 0, H / 2, -D / 2 + T / 2, MATS.wallWhite, g, world.wallColliders);
   addBoxMesh(T, H, D, -W / 2 + T / 2, H / 2, 0, MATS.wallWhite, g, world.wallColliders);
   addBoxMesh(T, H, D,  W / 2 - T / 2, H / 2, 0, MATS.wallWhite, g, world.wallColliders);
-
   const frontZ = D / 2 - T / 2;
   const doorW = 2.8, segW = (W - doorW) / 2;
   addBoxMesh(segW, H, T, -W / 2 + segW / 2, H / 2, frontZ, MATS.wallWhite, g, world.wallColliders);
   addBoxMesh(segW, H, T,  W / 2 - segW / 2, H / 2, frontZ, MATS.wallWhite, g, world.wallColliders);
-
   const crossH = new THREE.Mesh(getBoxGeo(1.2, 0.4, 0.1), MATS.cross);
   crossH.position.set(0, H - 0.9, frontZ + 0.06); g.add(crossH);
   const crossV = new THREE.Mesh(getBoxGeo(0.4, 1.2, 0.1), MATS.cross);
   crossV.position.set(0, H - 0.9, frontZ + 0.06); g.add(crossV);
-
   addBoxMesh(T, H, D * 0.5, -3, H / 2, -D / 4, MATS.wallWhite, g, world.wallColliders);
   addBoxMesh(T, H, D * 0.5,  3, H / 2, -D / 4, MATS.wallWhite, g, world.wallColliders);
   populateInterior(g, world, 'hospital_room');
-
   const doorPivot = new THREE.Group();
   doorPivot.position.set(-doorW / 2, 0, frontZ);
   const doorMesh = new THREE.Mesh(getBoxGeo(doorW - 0.08, H - 0.4, 0.08), MATS.window);
   doorMesh.position.set((doorW - 0.08) / 2, (H - 0.4) / 2, 0);
   doorPivot.add(doorMesh); g.add(doorPivot);
-
   g.updateMatrixWorld(true);
   const doorWorldPos = new THREE.Vector3(-doorW / 2, 0, frontZ);
   g.localToWorld(doorWorldPos);
   world.doors.push({ group: doorPivot, currentAngle: 0, worldX: doorWorldPos.x, worldZ: doorWorldPos.z });
-
   const roofL = new THREE.Mesh(getBoxGeo(W + 0.5, 0.3, D * 0.55), MATS.roofRed);
   roofL.position.set(0, H + 0.5, -D * 0.22); roofL.rotation.x = -0.25; roofL.castShadow = true;
   g.add(roofL);
   const roofR = new THREE.Mesh(getBoxGeo(W + 0.5, 0.3, D * 0.55), MATS.roofRed);
   roofR.position.set(0, H + 0.5, D * 0.22); roofR.rotation.x = 0.25; roofR.castShadow = true;
   g.add(roofR);
-
   registerLootSpot(world, poi.x,     poi.z, 0.3, 'medkit', 3, 'healing_items');
   registerLootSpot(world, poi.x - 4, poi.z, 0.3, 'medkit', 2, 'healing_items');
   registerRooftop(world, poi.id, poi.x, poi.z, H + 0.9);
-
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'hospital' };
 }
 
-// ─── IGREJA ───
 function buildChurch(scene, poi, world) {
   const W = 14, D = 22, H = 7.0, T = 0.3;
   const g = new THREE.Group();
   g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z);
   prepPoi(g, poi, 'indoor');
   scene.add(g);
-
   const floor = new THREE.Mesh(getPlaneGeo(W - T * 2, D - T * 2), MATS.floorTile);
   floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true;
   g.add(floor);
-
   addBoxMesh(W, H, T, 0, H / 2, -D / 2 + T / 2, MATS.wallStone, g, world.wallColliders);
   addBoxMesh(T, H, D, -W / 2 + T / 2, H / 2, 0, MATS.wallStone, g, world.wallColliders);
   addBoxMesh(T, H, D,  W / 2 - T / 2, H / 2, 0, MATS.wallStone, g, world.wallColliders);
-
   const frontZ = D / 2 - T / 2;
   const doorW = 2.6, segW = (W - doorW) / 2;
   addBoxMesh(segW, H, T, -W / 2 + segW / 2, H / 2, frontZ, MATS.wallStone, g, world.wallColliders);
   addBoxMesh(segW, H, T,  W / 2 - segW / 2, H / 2, frontZ, MATS.wallStone, g, world.wallColliders);
-
   for (const side of [-1, 1]) {
     const towerX = side * (W / 2 - 1.2);
     addBoxMesh(2.8, 11, 2.8, towerX, 5.5, -D / 2 + 1.4, MATS.wallStone, g, world.wallColliders);
@@ -1022,12 +943,10 @@ function buildChurch(scene, poi, world) {
     spire.rotation.y = Math.PI / 4; spire.castShadow = true;
     g.add(spire);
   }
-
   const crossH = new THREE.Mesh(getBoxGeo(1.4, 0.25, 0.25), MATS.cross);
   crossH.position.set(0, H + 1.6, frontZ); g.add(crossH);
   const crossV = new THREE.Mesh(getBoxGeo(0.25, 2.2, 0.25), MATS.cross);
   crossV.position.set(0, H + 1.1, frontZ); g.add(crossV);
-
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 4; col++) {
       const bx = -W / 2 + 2.4 + col * 2.9;
@@ -1036,87 +955,69 @@ function buildChurch(scene, poi, world) {
     }
   }
   populateInterior(g, world, 'church_interior');
-
   const doorPivot = new THREE.Group();
   doorPivot.position.set(-doorW / 2, 0, frontZ);
   const doorMesh = new THREE.Mesh(getBoxGeo(doorW - 0.08, H - 0.6, 0.1), MATS.darkWood);
   doorMesh.position.set((doorW - 0.08) / 2, (H - 0.6) / 2, 0);
   doorPivot.add(doorMesh); g.add(doorPivot);
-
   g.updateMatrixWorld(true);
   const doorWorldPos = new THREE.Vector3(-doorW / 2, 0, frontZ);
   g.localToWorld(doorWorldPos);
   world.doors.push({ group: doorPivot, currentAngle: 0, worldX: doorWorldPos.x, worldZ: doorWorldPos.z });
-
   const roof = new THREE.Mesh(new THREE.ConeGeometry(W * 0.75, 3.4, 4), MATS.roofDarkRed);
   roof.position.y = H + 1.7; roof.rotation.y = Math.PI / 4; roof.castShadow = true;
   g.add(roof);
-
   registerLootSpot(world, poi.x, poi.z - D / 2 + 3, 0.9, 'cash', 2, 'church_supplies');
   registerRooftop(world, poi.id, poi.x, poi.z, H + 3.4);
-
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'church' };
 }
 
-// ─── MERCADO ───
 function buildMarket(scene, poi, world) {
   const W = 14, D = 10, H = 3.8, T = 0.24;
   const g = new THREE.Group();
   g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z);
   prepPoi(g, poi, 'indoor');
   scene.add(g);
-
   const floor = new THREE.Mesh(getPlaneGeo(W - T * 2, D - T * 2), MATS.floorTile);
   floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true;
   g.add(floor);
-
   addBoxMesh(W, H, T, 0, H / 2, -D / 2 + T / 2, MATS.wallCream, g, world.wallColliders);
   addBoxMesh(T, H, D, -W / 2 + T / 2, H / 2, 0, MATS.wallCream, g, world.wallColliders);
   addBoxMesh(T, H, D,  W / 2 - T / 2, H / 2, 0, MATS.wallCream, g, world.wallColliders);
-
   const frontZ = D / 2 - T / 2;
   const doorW = 2.2, segW = (W - doorW) / 2;
   addBoxMesh(segW, H, T, -W / 2 + segW / 2, H / 2, frontZ, MATS.wallCream, g, world.wallColliders);
   addBoxMesh(segW, H, T,  W / 2 - segW / 2, H / 2, frontZ, MATS.wallCream, g, world.wallColliders);
-
   for (let i = 0; i < 4; i++) {
     const sx = -W / 2 + 2 + i * 3;
     addBoxMesh(0.8, 2.4, D - 3, sx, 1.2, 0, MATS.metal, g, world.furnitureColliders);
   }
   populateInterior(g, world, 'market_front');
-
   const doorPivot = new THREE.Group();
   doorPivot.position.set(-doorW / 2, 0, frontZ);
   const doorMesh = new THREE.Mesh(getBoxGeo(doorW - 0.08, H - 0.3, 0.08), MATS.window);
   doorMesh.position.set((doorW - 0.08) / 2, (H - 0.3) / 2, 0);
   doorPivot.add(doorMesh); g.add(doorPivot);
-
   g.updateMatrixWorld(true);
   const doorWorldPos = new THREE.Vector3(-doorW / 2, 0, frontZ);
   g.localToWorld(doorWorldPos);
   world.doors.push({ group: doorPivot, currentAngle: 0, worldX: doorWorldPos.x, worldZ: doorWorldPos.z });
-
   const roof = new THREE.Mesh(getBoxGeo(W + 0.5, 0.4, D + 0.5), MATS.roofGray);
   roof.position.y = H + 0.2; roof.castShadow = true; g.add(roof);
-
   registerLootSpot(world, poi.x - 3, poi.z, 0.3, 'food', 2, 'food');
   registerLootSpot(world, poi.x + 3, poi.z, 0.3, 'food', 2, 'food');
-
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'market' };
 }
 
-// ─── POSTO ───
 function buildGasStation(scene, poi, world) {
   const W = 12, D = 10;
   const g = new THREE.Group();
   g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z);
   prepPoi(g, poi, 'indoor');
   scene.add(g);
-
   const floor = new THREE.Mesh(getPlaneGeo(W, D), MATS.floorTile);
   floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true;
   g.add(floor);
-
   for (let i = 0; i < 4; i++) {
     const px = (i % 2 === 0 ? -W / 3 : W / 3);
     const pz = (i < 2 ? -D / 3 : D / 3);
@@ -1125,41 +1026,32 @@ function buildGasStation(scene, poi, world) {
       [poi.x + px - 1, 0, poi.z + pz], [poi.x + px + 1, 0, poi.z + pz]);
   }
   addBoxMesh(W * 0.9, 0.3, D * 0.9, 0, 3.6, 0, MATS.darkMetal, g, null);
-
   for (const side of [-1, 1]) {
     addBoxMesh(0.7, 1.3, 0.5, side * 2, 0.65, 0, MATS.wallGray, g, world.furnitureColliders);
     const display = new THREE.Mesh(getBoxGeo(0.5, 0.25, 0.1), MATS.lampOn);
     display.position.set(side * 2, 1.05, 0.28); g.add(display);
   }
-
   addBoxMesh(4, 3, 4, -W / 2 + 2, 1.5, -D / 2 + 2, MATS.wallCream, g, world.wallColliders);
-
   registerLootSpot(world, poi.x, poi.z, 0.3, 'ammo', 1, 'gas_station');
-
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'gas' };
 }
 
-// ─── BASE MILITAR ───
 function buildMilitaryBase(scene, poi, world) {
   const W = 22, D = 16, T = 0.3;
   const g = new THREE.Group();
   g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z);
   prepPoi(g, poi, 'indoor');
   scene.add(g);
-
   const floor = new THREE.Mesh(getPlaneGeo(W, D), MATS.floorMilitary);
   floor.rotation.x = -Math.PI / 2; floor.position.y = 0.04; floor.receiveShadow = true;
   g.add(floor);
-
   const BW = 14, BD = 9, BH = 3.6;
   addBoxMesh(BW, BH, T, 0, BH / 2, -BD / 2 + T / 2, MATS.wallMilitary, g, world.wallColliders);
   addBoxMesh(BW, BH, T, 0, BH / 2,  BD / 2 - T / 2, MATS.wallMilitary, g, world.wallColliders);
   addBoxMesh(T, BH, BD, -BW / 2 + T / 2, BH / 2, 0, MATS.wallMilitary, g, world.wallColliders);
   addBoxMesh(T, BH, BD,  BW / 2 - T / 2, BH / 2, 0, MATS.wallMilitary, g, world.wallColliders);
-
   const roof = new THREE.Mesh(getBoxGeo(BW + 0.5, 0.3, BD + 0.5), MATS.roofMetal);
   roof.position.y = BH + 0.15; roof.castShadow = true; g.add(roof);
-
   const towers = [
     { x: -11, z: -8 }, { x: 11, z: -8 }, { x: -11, z: 8 }, { x: 11, z: 8 },
   ];
@@ -1173,48 +1065,37 @@ function buildMilitaryBase(scene, poi, world) {
       addBoxMesh(0.1, 2.2, 0.1, t.x + dx, 6.55, t.z + dz, MATS.darkWood, g, null);
     }
   }
-
   for (let i = 0; i < 8; i++) {
     const cx = -4 + (i % 4) * 2;
     const cz = -3 + Math.floor(i / 4) * 1.2;
     addBoxMesh(1, 0.8, 0.8, cx, 0.4, cz, MATS.crateMetal, g, world.furnitureColliders);
   }
   populateInterior(g, world, 'military_barracks');
-
   for (let i = 0; i < 4; i++) {
     addBoxMesh(0.9, 0.9, 0.9, 6 + i * 0.75, 0.45, 5, MATS.barrelMetal, g, world.furnitureColliders);
   }
   addBoxMesh(0.2, 9, 0.2, 8, 4.5, -6, MATS.metal, g, null);
-
   registerLootSpot(world, poi.x - 3, poi.z, 0.3, 'ammo', 3, 'military');
   registerLootSpot(world, poi.x + 3, poi.z, 0.3, 'ammo', 3, 'military');
   registerLootSpot(world, poi.x,     poi.z + 3, 0.3, 'medkit', 2, 'military');
-
   registerRooftop(world, poi.id, poi.x, poi.z, BH + 0.3);
-
-  // Vault spots nas sacos de areia externos
   registerVaultSpot(world, 'barrier', 'barrier',
     [poi.x - 15, 0, poi.z], [poi.x + 15, 0, poi.z]);
-
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'military' };
 }
 
-// ─── ARMAZÉM ───
 function buildWarehouse(scene, poi, world) {
   const W = 20, D = 14, H = 6.5, T = 0.32;
   const g = new THREE.Group();
   g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z);
   prepPoi(g, poi, 'indoor');
   scene.add(g);
-
   const floor = new THREE.Mesh(getPlaneGeo(W - T * 2, D - T * 2), MATS.floorWarehouse);
   floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true;
   g.add(floor);
-
   addBoxMesh(W, H, T, 0, H / 2, -D / 2 + T / 2, MATS.wallWarehouse, g, world.wallColliders);
   addBoxMesh(T, H, D, -W / 2 + T / 2, H / 2, 0, MATS.wallWarehouse, g, world.wallColliders);
   addBoxMesh(T, H, D,  W / 2 - T / 2, H / 2, 0, MATS.wallWarehouse, g, world.wallColliders);
-
   const frontZ = D / 2 - T / 2;
   const gateW = 3.4, gateH = 4.5, gateSpacing = 0.8;
   const totalGateW = gateW * 3 + gateSpacing * 2;
@@ -1226,12 +1107,10 @@ function buildWarehouse(scene, poi, world) {
     addBoxMesh(0.4, H, T, cx, H / 2, frontZ, MATS.wallWarehouse, g, world.wallColliders);
   }
   addBoxMesh(totalGateW, H - gateH, T, 0, H - (H - gateH) / 2, frontZ, MATS.wallWarehouse, g, null);
-
   for (let i = 0; i < 3; i++) {
     const gx = -totalGateW / 2 + gateW / 2 + i * (gateW + gateSpacing);
     addBoxMesh(gateW, gateH, 0.1, gx, gateH / 2, frontZ + 0.02, MATS.gate, g, null);
   }
-
   const roofW = W + 0.6, roofD = D + 0.6;
   const roofL = new THREE.Mesh(getBoxGeo(roofW, 0.3, roofD * 0.55), MATS.roofMetal);
   roofL.position.set(0, H + 1.1, -roofD * 0.22); roofL.rotation.x = -0.22; roofL.castShadow = true;
@@ -1239,7 +1118,6 @@ function buildWarehouse(scene, poi, world) {
   const roofR = new THREE.Mesh(getBoxGeo(roofW, 0.3, roofD * 0.55), MATS.roofMetal);
   roofR.position.set(0, H + 1.1, roofD * 0.22); roofR.rotation.x = 0.22; roofR.castShadow = true;
   g.add(roofR);
-
   for (let row = 0; row < 2; row++) {
     for (let col = 0; col < 4; col++) {
       const cx = -W / 2 + 2.5 + col * 3.5;
@@ -1250,40 +1128,32 @@ function buildWarehouse(scene, poi, world) {
   }
   addBoxMesh(4, 3, 3, -W / 2 + 3, 1.5 + H * 0.35, -D / 2 + 2, MATS.darkMetal, g, world.wallColliders);
   populateInterior(g, world, 'warehouse_office');
-
   registerLootSpot(world, poi.x - 4, poi.z, 0.3, 'ammo', 2, 'factory_loot');
   registerLootSpot(world, poi.x + 4, poi.z, 0.3, 'ammo', 2, 'factory_loot');
   registerLootSpot(world, poi.x,     poi.z + 3, 0.3, 'component', 3, 'factory_gun_closet');
-
   registerRooftop(world, poi.id, poi.x, poi.z, H + 2.2);
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'warehouse' };
 }
 
-// ─── PREFEITURA ───
 function buildGovernment(scene, poi, world) {
   const W = 18, D = 12, floorH = 3.4, numFloors = 4, H = floorH * numFloors, T = 0.32;
   const g = new THREE.Group();
   g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z);
   prepPoi(g, poi, 'indoor');
   scene.add(g);
-
   const stepsH = 0.6;
   addBoxMesh(W + 3, stepsH, D + 3, 0, stepsH / 2, 0, MATS.marble, g, world.wallColliders);
-
   const floor = new THREE.Mesh(getPlaneGeo(W - T * 2, D - T * 2), MATS.floorGov);
   floor.rotation.x = -Math.PI / 2; floor.position.y = stepsH + 0.02; floor.receiveShadow = true;
   g.add(floor);
-
   const yBase = stepsH;
   addBoxMesh(W, H, T, 0, yBase + H / 2, -D / 2 + T / 2, MATS.wallGov, g, world.wallColliders);
   addBoxMesh(T, H, D, -W / 2 + T / 2, yBase + H / 2, 0, MATS.wallGov, g, world.wallColliders);
   addBoxMesh(T, H, D,  W / 2 - T / 2, yBase + H / 2, 0, MATS.wallGov, g, world.wallColliders);
   addBoxMesh(W, H, T, 0, yBase + H / 2,  D / 2 - T / 2, MATS.wallGov, g, world.wallColliders);
-
   for (let f = 1; f < numFloors; f++) {
     addBoxMesh(W + 0.2, 0.25, D + 0.2, 0, yBase + f * floorH, 0, MATS.marble, g, null);
   }
-
   const winW = 1.0, winH = 1.6;
   for (let f = 0; f < numFloors; f++) {
     const cy = yBase + f * floorH + floorH / 2;
@@ -1294,7 +1164,6 @@ function buildGovernment(scene, poi, world) {
       addBoxMesh(winW, winH, 0.05, cx, cy, D / 2 + 0.04, MATS.window, g, null);
     }
   }
-
   const doorW = 2.2, doorH = 2.8;
   const doorX = -doorW / 2, doorZ = D / 2 - T / 2;
   const doorPivot = new THREE.Group();
@@ -1302,12 +1171,10 @@ function buildGovernment(scene, poi, world) {
   const doorMesh = new THREE.Mesh(getBoxGeo(doorW - 0.08, doorH - 0.08, 0.1), MATS.darkWood);
   doorMesh.position.set((doorW - 0.08) / 2, doorH / 2, 0);
   doorPivot.add(doorMesh); g.add(doorPivot);
-
   g.updateMatrixWorld(true);
   const doorWorldPos = new THREE.Vector3(doorX, 0, doorZ);
   g.localToWorld(doorWorldPos);
   world.doors.push({ group: doorPivot, currentAngle: 0, worldX: doorWorldPos.x, worldZ: doorWorldPos.z });
-
   const colRadius = 0.35, colHeight = H - 1.0;
   const colGeo = new THREE.CylinderGeometry(colRadius, colRadius * 1.1, colHeight, 8);
   for (let i = 0; i < 6; i++) {
@@ -1318,20 +1185,15 @@ function buildGovernment(scene, poi, world) {
     col.castShadow = true; col.receiveShadow = true;
     g.add(col);
   }
-
   addBoxMesh(W + 0.6, 0.4, D + 0.6, 0, yBase + H + 0.2, 0, MATS.marble, g, null);
   addBoxMesh(W + 0.4, 0.3, D + 0.4, 0, yBase + H + 0.5, 0, MATS.roofGray, g, null);
-
   addBoxMesh(0.15, 4, 0.15, 0, yBase + H + 2.5, 0, MATS.metal, g, null);
   const flag = new THREE.Mesh(getBoxGeo(1.4, 0.9, 0.05), MATS.flagGreen);
   flag.position.set(0.75, yBase + H + 4.0, 0); g.add(flag);
-
   populateInterior(g, world, 'gov_office');
-
   registerLootSpot(world, poi.x - 4, poi.z, 0.3, 'cash', 3, 'gov_office');
   registerLootSpot(world, poi.x + 4, poi.z, 0.3, 'cash', 3, 'gov_office');
   registerRooftop(world, poi.id, poi.x, poi.z, yBase + H + 0.8);
-
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'government' };
 }
 
@@ -1356,23 +1218,18 @@ function generateCityBlocks(scene, world) {
     for (let gz = 0; gz < gridSize; gz++) {
       const blockCenterX = gx * blockSize - GRID_HALF + blockSize / 2;
       const blockCenterZ = gz * blockSize - GRID_HALF + blockSize / 2;
-      if (isFreeSpot(blockCenterX, blockCenterZ, blockSize / 2)) {
-        // prossegue
-      } else continue;
-
+      if (!isFreeSpot(blockCenterX, blockCenterZ, blockSize / 2)) continue;
       const usable = blockSize - roadWidth - sidewalkWidth * 2;
       for (let b = 0; b < buildingsPerBlock; b++) {
         const bType = pickWeightedBuilding();
         const bx = blockCenterX + (Math.random() - 0.5) * (usable - 10);
         const bz = blockCenterZ + (Math.random() - 0.5) * (usable - 10);
         const rot = Math.floor(Math.random() * 4) * Math.PI / 2;
-
         let tooClose = false;
         for (const p of _proceduralBuildings) {
           if (Math.hypot(bx - p.x, bz - p.z) < 8) { tooClose = true; break; }
         }
         if (tooClose) continue;
-
         const fakeId = `proc_${gx}_${gz}_${b}`;
         const fakePoi = { id: fakeId, type: bType.type, x: bx, z: bz, rot, size: bType.size };
         let bounds;
@@ -1418,22 +1275,17 @@ function buildTrees(scene) {
   }
   const N = positions.length;
   if (N === 0) return;
-
   const spherical = positions.filter(p => !p.isConical);
   const conical   = positions.filter(p => p.isConical);
-
   const trunkGeo = new THREE.CylinderGeometry(0.35, 0.45, 2.5, 6);
   const crownGeo = new THREE.IcosahedronGeometry(1.9, 0);
   const coneGeo  = new THREE.ConeGeometry(1.6, 3.2, 6);
-
   const trunkMesh = new THREE.InstancedMesh(trunkGeo, MATS.bark, N);
   trunkMesh.castShadow = true; trunkMesh.name = 'treeTrunks';
-
   const crownMesh = spherical.length > 0
     ? new THREE.InstancedMesh(crownGeo, MATS.leafA, spherical.length) : null;
   const coneMesh  = conical.length > 0
     ? new THREE.InstancedMesh(coneGeo, MATS.leafA, conical.length) : null;
-
   if (crownMesh) {
     crownMesh.castShadow = true;
     crownMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(spherical.length * 3), 3);
@@ -1442,13 +1294,11 @@ function buildTrees(scene) {
     coneMesh.castShadow = true;
     coneMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(conical.length * 3), 3);
   }
-
   const dummy = new THREE.Object3D();
   const tmpQ = new THREE.Quaternion();
   const upY = new THREE.Vector3(0, 1, 0);
   const color = new THREE.Color();
   const palette = [0x2E8B3E, 0x3AA850, 0x4F8B2E];
-
   let tIdx = 0;
   for (const p of positions) {
     dummy.position.set(p.x, 1.25 * p.scale, p.z);
@@ -1460,7 +1310,6 @@ function buildTrees(scene) {
   }
   trunkMesh.instanceMatrix.needsUpdate = true;
   scene.add(trunkMesh);
-
   if (crownMesh) {
     let i = 0;
     for (const p of spherical) {
@@ -1531,7 +1380,6 @@ function buildAbandonedCars(scene) {
     const isTruck = Math.random() < 0.15;
     scene.add(createCar(x, z, rot, carColors[i % carColors.length], isTruck, flipped));
   }
-  // Caminhões militares
   for (const t of [
     { x: 130, z: 150, rot: 0.2 }, { x: 150, z: 130, rot: -0.15 },
   ]) {
@@ -1544,7 +1392,6 @@ function createCar(x, z, rot, bodyMat, isTruck, flipped = false) {
   g.position.set(x, flipped ? 1.85 : 0, z);
   g.rotation.y = rot;
   if (flipped) g.rotation.x = Math.PI;
-
   if (isTruck) {
     const body = new THREE.Mesh(getUnitBox(), bodyMat);
     body.scale.set(2.2, 1.4, 5.0); body.position.y = 1.2;
@@ -1588,7 +1435,6 @@ export function buildWorld(scene, arenaSize) {
     weaponSpots: [],
     pois: {},
     lootSpots: [],
-    // 4-tier difficulty (ZB2)
     difficultyRegions: [
       { centerX: 0, centerZ: 0, innerRadius: 0,   outerRadius: 60,  tier: 0, name: 'easy'     },
       { centerX: 0, centerZ: 0, innerRadius: 60,  outerRadius: 120, tier: 1, name: 'medium'   },
@@ -1597,7 +1443,6 @@ export function buildWorld(scene, arenaSize) {
     ],
     rooftops: [],
     vaultSpots: [],
-    // Ilha
     island: {
       silhouette: null,
       innerRadius: CITY_CONFIG.islandInnerRadius,
@@ -1608,7 +1453,6 @@ export function buildWorld(scene, arenaSize) {
 
   console.log(`[scenery] 🏝️  Construindo ilha ZB2 (~${CITY_CONFIG.islandInnerRadius}m raio)...`);
 
-  // 1. Ilha
   const silhouette = generateIslandSilhouette(CITY_CONFIG.islandInnerRadius);
   world.island.silhouette = silhouette;
   buildIslandTerrain(scene, silhouette);
@@ -1616,16 +1460,13 @@ export function buildWorld(scene, arenaSize) {
   buildWaterPlane(scene);
   buildIslandRockBorder(scene, silhouette);
 
-  // 2. Grade urbana
   buildRoadGrid(scene);
   buildRoadLines(scene);
   buildCrosswalks(scene);
   buildStreetLights(scene);
 
-  // 3. Blocos procedurais
   generateCityBlocks(scene, world);
 
-  // 4. POIs
   for (const poi of SPECIAL_POIS) {
     let bounds;
     switch (poi.type) {
@@ -1640,7 +1481,6 @@ export function buildWorld(scene, arenaSize) {
     world.pois[poi.id] = { x: poi.x, z: poi.z, type: poi.type, bounds };
   }
 
-  // 5. Natureza + props + carros
   buildTrees(scene);
   buildProps(scene);
   buildAbandonedCars(scene);
@@ -1657,6 +1497,9 @@ export function buildWorld(scene, arenaSize) {
   return world;
 }
 
+// ════════════════════════════════════════════════════════════
+// API LEGADA — createTree SOMENTE (createRoad já está acima!)
+// ════════════════════════════════════════════════════════════
 export function createTree(x, z) {
   const g = new THREE.Group();
   const trunkGeo = new THREE.CylinderGeometry(0.35, 0.45, 2.5, 6);
@@ -1669,8 +1512,4 @@ export function createTree(x, z) {
   g.rotation.y = Math.random() * Math.PI * 2;
   g.scale.setScalar(0.7 + Math.random() * 0.9);
   return g;
-}
-
-export function createRoad(x, z, width, length, horizontal = true, yOffset = 0.02) {
-  return createRoad(x, z, width, length, horizontal, yOffset);
 }
