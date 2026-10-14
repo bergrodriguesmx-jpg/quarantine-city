@@ -242,10 +242,7 @@ const state = {
   }
 })();
 
-const HUD = { /* ... */ };
-// ============================================================
-// 🎯 FIX E: HUD cache — resolve os IDs uma vez só
-// ============================================================
+
 const HUD = {
   hpFill:        document.getElementById('hp-fill'),
   hpText:        document.getElementById('hp-text'),
