@@ -228,7 +228,21 @@ const state = {
 
   discoveredPOIs: new Set(),
 };
+// Valida que todos os IDs do HUD existem. Se algum faltar, avisa
+// UMA vez com a lista completa em vez de quebrar em runtime.
+(function validateHUD() {
+  const expected = [
+    'hp-fill','hp-text','xp-fill','coins','wave','level','zombies',
+    'revives','weapon-name','weapon-class','weapon-tooltip',
+    'ammo-current','ammo-reserve','timer',
+  ];
+  const missing = expected.filter(id => !document.getElementById(id));
+  if (missing.length > 0) {
+    console.error(`[game] ❌ ${missing.length} IDs do HUD faltando:`, missing);
+  }
+})();
 
+const HUD = { /* ... */ };
 // ============================================================
 // 🎯 FIX E: HUD cache — resolve os IDs uma vez só
 // ============================================================
