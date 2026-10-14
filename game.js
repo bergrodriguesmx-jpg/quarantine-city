@@ -345,7 +345,9 @@ const invisible = new THREE.MeshBasicMaterial({ visible:false });
   const wall = new THREE.Mesh(geoBox(w, h, d, 1), invisible);
   wall.position.set(x, h/2, z);
   scene.add(wall);
-  world.wallColliders.push({ minX:x-w/2, maxX:x+w/2, minZ:z-d/2, maxZ:z+d/2 });
+  const c = { minX:x-w/2, maxX:x+w/2, minZ:z-d/2, maxZ:z+d/2 };
+  world.wallColliders.push(c);
+  addStaticBox(c.minX, c.maxX, c.minZ, c.maxZ, h);
 });
 
 const brazierGroup = new THREE.Group();
