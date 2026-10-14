@@ -1,38 +1,40 @@
 // ============================================================
-// scenery.js — v5
-// CHANGELOG v5:
-//   • FIX CRÍTICO: addBoxMesh — rotação Y corrigida
-//     (wx = gx + cos*lx + sin*lz;  wz = gz - sin*lx + cos*lz)
-//   • Terreno estendido (2.5x arena) + morros instanciados ao redor
-//   • Texturas aplicadas em paredes (houseWallTexture) e telhados (roofTexture)
-//   • Janelas, molduras de porta, rodapé e beiral em construções
-//   • Props instanciados: barris, caixas, arbustos, pedras, postes, carros
-//   • Ruas com yOffset variável (anti z-fighting) + faixas + calçada
-//   • Árvores variadas (escala + tipo cônico/esférico)
-//   • Mantém API buildWorld(scene, arenaSize) e formato { minX, maxX, minZ, maxZ }
-//
-// ⚠️ NOTA: Os props (barris, caixas, arbustos, pedras, postes, carros) são
-//    DECORATIVOS — NÃO têm collider (para manter a física barata). Apenas
-//    paredes, móveis e as paredes invisíveis da arena entram em colliders.
+// scenery.js — v6 (ULTIMATE EXPANDED EDITION)
+// • Cidade muito maior, expansiva e detalhada com múltiplos distritos
+// • Prédios com telhados volumétricos, varandas e letreiros
+// • Zona industrial, comercial e residencial interligadas
+// • Barricadas militares, contentores, frotas de carros e detritos
+// • Otimização extrema com InstancedMesh e cache de geometrias
 // ============================================================
 
 import * as THREE from 'three';
 import * as Textures from './textures.js';
 
 export const POIS = [
-  { id: 'police',    type: 'police',    x: -28, z: -28, rot: Math.PI * 0.25,   size: 'large'  },
-  { id: 'hospital',  type: 'hospital',  x:  28, z: -28, rot: -Math.PI * 0.25,  size: 'large'  },
-  { id: 'church',    type: 'church',    x:   0, z:  35, rot: Math.PI,          size: 'medium' },
-  { id: 'market',    type: 'market',    x: -35, z:  15, rot: 0,                size: 'medium' },
-  { id: 'gasStation',type: 'gas',       x:  35, z:  15, rot: 0,                size: 'small'  },
-  { id: 'house1',    type: 'house',     x: -14, z: -14, rot: 0,                size: 'medium' },
-  { id: 'house2',    type: 'house',     x:  14, z: -14, rot: 0,                size: 'small'  },
-  { id: 'house3',    type: 'house',     x: -14, z:  14, rot: 0,                size: 'large'  },
-  { id: 'house4',    type: 'house',     x:  14, z:  14, rot: 0,                size: 'medium' },
+  // Distrito Policial / Militar
+  { id: 'police',      type: 'police',    x: -32, z: -32, rot: Math.PI * 0.25,   size: 'large'  },
+  { id: 'militaryOutpost', type: 'military', x:  32, z: -32, rot: -Math.PI * 0.25, size: 'large'  },
+  // Setor Hospitalar
+  { id: 'hospital',    type: 'hospital',  x:  32, z:  32, rot: -Math.PI * 0.75,  size: 'large'  },
+  { id: 'pharmacy',    type: 'market',    x: -32, z:  32, rot: Math.PI * 0.75,   size: 'medium' },
+  // Centro Religioso / Cívico
+  { id: 'church',      type: 'church',    x:   0, z:  42, rot: Math.PI,          size: 'medium' },
+  { id: 'townHall',    type: 'police',    x:   0, z: -42, rot: 0,                size: 'large'  },
+  // Zona Comercial
+  { id: 'market',      type: 'market',    x: -42, z:   0, rot: Math.PI * 0.5,    size: 'medium' },
+  { id: 'gasStation',  type: 'gas',       x:  42, z:   0, rot: -Math.PI * 0.5,   size: 'small'  },
+  { id: 'warehouse',   type: 'market',    x: -42, z: -20, rot: Math.PI * 0.5,    size: 'large'  },
+  // Bairro Residencial
+  { id: 'house1',      type: 'house',     x: -16, z: -16, rot: 0,                size: 'medium' },
+  { id: 'house2',      type: 'house',     x:  16, z: -16, rot: Math.PI * 0.5,    size: 'small'  },
+  { id: 'house3',      type: 'house',     x: -16, z:  16, rot: -Math.PI * 0.5,   size: 'large'  },
+  { id: 'house4',      type: 'house',     x:  16, z:  16, rot: Math.PI,          size: 'medium' },
+  { id: 'house5',      type: 'house',     x: -25, z:   0, rot: 0,                size: 'small'  },
+  { id: 'house6',      type: 'house',     x:  25, z:   0, rot: Math.PI,          size: 'medium' },
 ];
 
 // ════════════════════════════════════════════════════════════
-// CACHE DE GEOMETRIAS (evita duplicatas)
+// CACHE DE GEOMETRIAS
 // ════════════════════════════════════════════════════════════
 const _geoCache = new Map();
 function getBoxGeo(w, h, d) {
@@ -46,21 +48,9 @@ function getUnitBox() {
   if (!g) { g = new THREE.BoxGeometry(1, 1, 1); _geoCache.set('unitBox', g); }
   return g;
 }
-function getUnitCyl(segments = 8) {
-  const k = `cyl:${segments}`;
-  let g = _geoCache.get(k);
-  if (!g) { g = new THREE.CylinderGeometry(0.5, 0.5, 1, segments); _geoCache.set(k, g); }
-  return g;
-}
 function getUnitIco() {
   let g = _geoCache.get('unitIco');
   if (!g) { g = new THREE.IcosahedronGeometry(0.5, 0); _geoCache.set('unitIco', g); }
-  return g;
-}
-function getUnitCone(segments = 4) {
-  const k = `cone:${segments}`;
-  let g = _geoCache.get(k);
-  if (!g) { g = new THREE.ConeGeometry(0.5, 1, segments); _geoCache.set(k, g); }
   return g;
 }
 
@@ -84,6 +74,7 @@ const MATS = {
   wallWhite:   makeWallMat('#F5F5F5'),
   wallGray:    makeWallMat('#7F8C8D'),
   wallStone:   makeWallMat('#5D6D7E'),
+  wallRust:    makeWallMat('#544A40'),
   roofRed:     makeRoofMat('#C0392B'),
   roofGray:    makeRoofMat('#7F8C8D'),
   roofDarkRed: makeRoofMat('#7B241C'),
@@ -95,8 +86,8 @@ const MATS = {
   floorCarpet: new THREE.MeshLambertMaterial({ color: 0x6B4423 }),
   metal:       new THREE.MeshLambertMaterial({ color: 0x95A5A6 }),
   darkMetal:   new THREE.MeshLambertMaterial({ color: 0x34495E }),
+  militaryGreen: new THREE.MeshLambertMaterial({ color: 0x4B5320 }),
   cross:       new THREE.MeshLambertMaterial({ color: 0xC0392B }),
-  // Props
   window:      new THREE.MeshLambertMaterial({ color: 0x1C2833 }),
   windowLit:   new THREE.MeshLambertMaterial({ color: 0xFFCC66, emissive: 0x664400 }),
   trim:        new THREE.MeshLambertMaterial({ color: 0x4A3527 }),
@@ -105,30 +96,20 @@ const MATS = {
   bush:        new THREE.MeshLambertMaterial({ color: 0x2E8B3E, flatShading: true }),
   bushDry:     new THREE.MeshLambertMaterial({ color: 0x6E8B3E, flatShading: true }),
   barrel:      new THREE.MeshLambertMaterial({ color: 0x8B4513, flatShading: true }),
-  barrelTop:   new THREE.MeshLambertMaterial({ color: 0x4A3527 }),
   crate:       new THREE.MeshLambertMaterial({ color: 0xA0724A, flatShading: true }),
   carBody1:    new THREE.MeshLambertMaterial({ color: 0x8B1E1E }),
   carBody2:    new THREE.MeshLambertMaterial({ color: 0x2C3E50 }),
   carBody3:    new THREE.MeshLambertMaterial({ color: 0x4A4A4A }),
+  militaryTruck: new THREE.MeshLambertMaterial({ color: 0x3A4424 }),
   tire:        new THREE.MeshLambertMaterial({ color: 0x1A1A1A }),
   pole:        new THREE.MeshLambertMaterial({ color: 0x2A2A2A }),
-  roadLine:    new THREE.MeshBasicMaterial({ color: 0xDDDDDD }),
+  roadLine:    new THREE.MeshBasicMaterial({ color: 0xF1C40F }),
+  sandbag:     new THREE.MeshLambertMaterial({ color: 0x8c7b5d }),
 };
 
 // ════════════════════════════════════════════════════════════
-// HELPERS
+// HELPERS DE COLISÃO E POSICIONAMENTO
 // ════════════════════════════════════════════════════════════
-
-/**
- * Cria mesh e, se colliderArray for passado, registra collider(es) em world space.
- *
- * FIX v5: conversão local→mundo com rotação Y correta (right-handed, Y-up):
- *   wx = gx + cos*lx + sin*lz
- *   wz = gz - sin*lx + cos*lz
- *
- * Paredes finas rotacionadas são subdivididas em AABBs pequenos (~0.5m),
- * evitando um único AABB gigante que selava o interior dos prédios a 45°.
- */
 function addBoxMesh(w, h, d, x, y, z, mat, parent, colliderArray) {
   const m = new THREE.Mesh(getBoxGeo(w, h, d), mat);
   m.position.set(x, y, z);
@@ -146,7 +127,6 @@ function addBoxMesh(w, h, d, x, y, z, mat, parent, colliderArray) {
   const absSin = Math.abs(sin);
   const absCos = Math.abs(cos);
 
-  // Sem rotação real (0, π ou múltiplos): 1 AABB basta.
   if (absSin < 0.001) {
     const wx = gx + cos * x + sin * z;
     const wz = gz - sin * x + cos * z;
@@ -157,7 +137,6 @@ function addBoxMesh(w, h, d, x, y, z, mat, parent, colliderArray) {
     return m;
   }
 
-  // Rotação arbitrária: subdivide o eixo longo em segmentos de ~0.5m.
   const L = Math.max(w, d);
   const N = Math.max(2, Math.ceil(L / 0.5));
   const segL = L / N;
@@ -185,7 +164,6 @@ function addBoxMesh(w, h, d, x, y, z, mat, parent, colliderArray) {
   return m;
 }
 
-// Verifica se um ponto está livre de POIs e do centro
 function isFreeSpot(x, z, minPOIDist = 10, minCenterDist = 6, extraPOIs = POIS) {
   if (Math.hypot(x, z) < minCenterDist) return false;
   for (const poi of extraPOIs) {
@@ -194,7 +172,6 @@ function isFreeSpot(x, z, minPOIDist = 10, minCenterDist = 6, extraPOIs = POIS) 
   return true;
 }
 
-// Scatter genérico com InstancedMesh
 function scatterInstanced(scene, opts) {
   const {
     count, geo, mat, arenaSize,
@@ -242,7 +219,7 @@ function scatterInstanced(scene, opts) {
 }
 
 // ════════════════════════════════════════════════════════════
-// BUILD WORLD
+// BUILD WORLD PRINCIPAL
 // ════════════════════════════════════════════════════════════
 export function buildWorld(scene, arenaSize) {
   const world = {
@@ -253,349 +230,242 @@ export function buildWorld(scene, arenaSize) {
     pois: {},
   };
 
-  // ── 1. TERRENO ESTENDIDO (esconde a borda do mundo) ─────
+  // 1. Terreno expansivo e morros de borda
   buildExtendedGround(scene, arenaSize);
-
-  // ── 2. MORROS AO REDOR (InstancedMesh) ──────────────────
   buildRockBorder(scene, arenaSize);
 
-  // ── 3. RUAS ─────────────────────────────────────────────
-  // yOffsets ligeiramente distintos em cada eixo para evitar z-fighting
-  scene.add(createRoad(0, 0, 8, arenaSize, true,  0.020));
-  scene.add(createRoad(0, 0, 8, arenaSize, false, 0.021));
-  scene.add(createRoad(0, -20, 5, arenaSize, true,  0.022));
-  scene.add(createRoad(0,  20, 5, arenaSize, true,  0.023));
-  scene.add(createRoad(-20, 0, 5, arenaSize, false, 0.024));
-  scene.add(createRoad( 20, 0, 5, arenaSize, false, 0.025));
+  // 2. Malha Urbana de Ruas Avenues & Boulevards
+  buildUrbanGrid(scene, arenaSize);
 
-  // Faixas centrais (linhas amarelas/brancas)
-  buildRoadLines(scene, arenaSize);
-
-  // Calçadas nas bordas de cada rua
-  buildSidewalks(scene, arenaSize);
-
-  // ── 4. POIs ─────────────────────────────────────────────
+  // 3. Construção de todos os POIs detalhados
   for (const poi of POIS) {
     let bounds;
     switch (poi.type) {
-      case 'police':   bounds = buildPoliceStation(scene, poi, world); break;
-      case 'hospital': bounds = buildHospital(scene, poi, world); break;
-      case 'church':   bounds = buildChurch(scene, poi, world); break;
-      case 'market':   bounds = buildMarket(scene, poi, world); break;
-      case 'gas':      bounds = buildGasStation(scene, poi, world); break;
-      default:         bounds = buildHouse(scene, poi, world);
+      case 'police':    bounds = buildPoliceStation(scene, poi, world); break;
+      case 'military':  bounds = buildMilitaryOutpost(scene, poi, world); break;
+      case 'hospital':  bounds = buildHospital(scene, poi, world); break;
+      case 'church':    bounds = buildChurch(scene, poi, world); break;
+      case 'market':    bounds = buildMarket(scene, poi, world); break;
+      case 'gas':       bounds = buildGasStation(scene, poi, world); break;
+      default:          bounds = buildHouse(scene, poi, world);
     }
     world.pois[poi.id] = { x: poi.x, z: poi.z, type: poi.type, bounds };
   }
 
-  // ── 5. ÁRVORES VARIADAS ─────────────────────────────────
-  const treePositions = [];
-  for (let i = 0; i < 40; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const dist = 22 + Math.random() * (arenaSize * 0.32);
-    const x = Math.cos(angle) * dist;
-    const z = Math.sin(angle) * dist;
-    let tooClose = false;
-    for (const poi of POIS) {
-      if (Math.hypot(x - poi.x, z - poi.z) < 12) { tooClose = true; break; }
-    }
-    if (Math.hypot(x, z) < 8) tooClose = true;
-    if (!tooClose) treePositions.push([x, z]);
-  }
-  treePositions.forEach(([x, z]) => {
-    if (Math.abs(x) < arenaSize / 2 - 2 && Math.abs(z) < arenaSize / 2 - 2) {
-      scene.add(createTree(x, z));
-    }
-  });
+  // 4. Floresta urbana e vegetação dispersa
+  buildForest(scene, arenaSize);
 
-  // ── 6. PROPS DECORATIVOS (InstancedMesh, sem collider) ──
-  buildProps(scene, arenaSize);
+  // 5. Props de rua (Barricadas militares, cones, caixas, postes, lixeiras)
+  buildUrbanProps(scene, arenaSize);
 
-  // ── 7. CARROS ABANDONADOS ───────────────────────────────
-  buildAbandonedCars(scene, arenaSize);
+  // 6. Frotas de veículos civis e caminhões militares abandonados
+  buildAbandonedVehicles(scene, arenaSize);
 
-  console.log(`[scenery] 🌍 Mundo construído: ${world.wallColliders.length} wallColliders, ${world.furnitureColliders.length} furnitureColliders`);
+  console.log(`[scenery v6] 🏙️ Cidade construída: ${world.wallColliders.length} paredes, ${world.furnitureColliders.length} móveis.`);
   return world;
 }
 
 // ════════════════════════════════════════════════════════════
-// TERRENO ESTENDIDO
+// TERRENO E LIMITES
 // ════════════════════════════════════════════════════════════
 function buildExtendedGround(scene, arenaSize) {
-  const size = arenaSize * 2.5; // 200 para arena 80
+  const size = arenaSize * 3.0; // 240 unidades de mundo aberto
   const tex = Textures.grassTexture();
-  tex.repeat.set(size / 2, size / 2); // mesma densidade do chão do game.js
+  tex.repeat.set(size / 3, size / 3);
   const g = new THREE.Mesh(
     new THREE.PlaneGeometry(size, size),
     new THREE.MeshLambertMaterial({ map: tex })
   );
   g.rotation.x = -Math.PI / 2;
-  g.position.y = -0.05; // abaixo do chão principal (game.js y=0)
+  g.position.y = -0.06;
   g.receiveShadow = true;
-  g.name = 'extendedGround';
   scene.add(g);
-
-  // Manchas de terra esparsas
-  const dirtTex = Textures.dirtTexture();
-  dirtTex.repeat.set(2, 2);
-  const dirtMat = new THREE.MeshLambertMaterial({ map: dirtTex, transparent: true, opacity: 0.85 });
-  const dirtCount = 18;
-  const dirtGeo = new THREE.CircleGeometry(3 + Math.random() * 2, 8);
-  const dirtMesh = new THREE.InstancedMesh(dirtGeo, dirtMat, dirtCount);
-  const dummy = new THREE.Object3D();
-  let placed = 0;
-  for (let i = 0; i < dirtCount * 5 && placed < dirtCount; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const dist = arenaSize * 0.4 + Math.random() * arenaSize * 0.4;
-    const x = Math.cos(angle) * dist;
-    const z = Math.sin(angle) * dist;
-    if (!isFreeSpot(x, z, 12, 8)) continue;
-    dummy.position.set(x, -0.04, z);
-    dummy.rotation.set(-Math.PI / 2, 0, Math.random() * Math.PI * 2);
-    dummy.scale.setScalar(0.7 + Math.random() * 0.8);
-    dummy.updateMatrix();
-    dirtMesh.setMatrixAt(placed, dummy.matrix);
-    placed++;
-  }
-  dirtMesh.count = placed;
-  dirtMesh.instanceMatrix.needsUpdate = true;
-  dirtMesh.receiveShadow = true;
-  scene.add(dirtMesh);
 }
 
-// ════════════════════════════════════════════════════════════
-// MORROS AO REDOR (barreira visual low-poly)
-// ════════════════════════════════════════════════════════════
 function buildRockBorder(scene, arenaSize) {
-  const rockGeo = new THREE.IcosahedronGeometry(1.5, 0);
-  const rockCount = 100;
-  const mesh = new THREE.InstancedMesh(rockGeo, MATS.rock, rockCount);
+  const rockGeo = new THREE.IcosahedronGeometry(1.8, 0);
+  const count = 140;
+  const mesh = new THREE.InstancedMesh(rockGeo, MATS.rock, count);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
 
   const dummy = new THREE.Object3D();
-  for (let i = 0; i < rockCount; i++) {
-    const angle = (i / rockCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.08;
-    const radius = arenaSize * 0.55 + Math.random() * 8;
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.05;
+    const radius = arenaSize * 0.65 + Math.random() * 12;
     dummy.position.set(
       Math.cos(angle) * radius,
-      0.4 + Math.random() * 0.6,
+      0.6 + Math.random() * 0.8,
       Math.sin(angle) * radius
     );
-    dummy.rotation.set(
-      Math.random() * 0.3,
-      Math.random() * Math.PI * 2,
-      Math.random() * 0.3
-    );
-    dummy.scale.set(
-      0.8 + Math.random() * 1.3,
-      0.7 + Math.random() * 0.9,
-      0.8 + Math.random() * 1.3
-    );
+    dummy.rotation.set(Math.random() * 0.4, Math.random() * Math.PI * 2, Math.random() * 0.4);
+    dummy.scale.set(1.2 + Math.random() * 1.5, 0.9 + Math.random() * 1.2, 1.2 + Math.random() * 1.5);
     dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
   }
   mesh.instanceMatrix.needsUpdate = true;
-  mesh.name = 'rockBorder';
   scene.add(mesh);
 }
 
 // ════════════════════════════════════════════════════════════
-// FAIXAS DE RUA
+// MALHA DE RUAS E CALÇADAS COMPLEXAS
 // ════════════════════════════════════════════════════════════
-function buildRoadLines(scene, arenaSize) {
-  // Faixa central (tracejada) — usa InstancedMesh
-  const dashGeo = new THREE.PlaneGeometry(0.35, 2);
-  const dashCount = 60;
-  const mesh = new THREE.InstancedMesh(dashGeo, MATS.roadLine, dashCount);
+function buildUrbanGrid(scene, arenaSize) {
+  // Avenidas Principais Cruzadas
+  scene.add(createRoad(0, 0, 10, arenaSize, true, 0.020));
+  scene.add(createRoad(0, 0, 10, arenaSize, false, 0.021));
+  // Ruas Secundárias Periféricas
+  scene.add(createRoad(0, -25, 6, arenaSize, true, 0.022));
+  scene.add(createRoad(0,  25, 6, arenaSize, true, 0.023));
+  scene.add(createRoad(-25, 0, 6, arenaSize, false, 0.024));
+  scene.add(createRoad( 25, 0, 6, arenaSize, false, 0.025));
+
+  // Faixas amarelas centrais tracejadas
+  const dashGeo = new THREE.PlaneGeometry(0.4, 2.5);
+  const mesh = new THREE.InstancedMesh(dashGeo, MATS.roadLine, 80);
   const dummy = new THREE.Object3D();
   let idx = 0;
 
-  // Linha horizontal (Y) — central
-  for (let i = 0; i < 30 && idx < dashCount; i++) {
-    const z = -arenaSize / 2 + 3 + i * 3;
-    dummy.position.set(0, 0.026, z);
+  for (let i = -35; i <= 35; i += 3) {
+    if (Math.abs(i) < 6) continue;
+    dummy.position.set(0, 0.028, i);
     dummy.rotation.set(-Math.PI / 2, 0, 0);
-    dummy.scale.setScalar(1);
     dummy.updateMatrix();
     mesh.setMatrixAt(idx++, dummy.matrix);
-  }
-  // Linha vertical (X) — central
-  for (let i = 0; i < 30 && idx < dashCount; i++) {
-    const x = -arenaSize / 2 + 3 + i * 3;
-    dummy.position.set(x, 0.027, 0);
+
+    dummy.position.set(i, 0.029, 0);
     dummy.rotation.set(-Math.PI / 2, 0, Math.PI / 2);
-    dummy.scale.setScalar(1);
     dummy.updateMatrix();
     mesh.setMatrixAt(idx++, dummy.matrix);
   }
   mesh.count = idx;
   mesh.instanceMatrix.needsUpdate = true;
   scene.add(mesh);
+
+  // Calçadas elevadas em blocos
+  const sidewalkMat = MATS.concrete;
+  const swGeo = new THREE.BoxGeometry(arenaSize, 0.15, 2.5);
+  
+  const sw1 = new THREE.Mesh(swGeo, sidewalkMat);
+  sw1.position.set(0, 0.075, -6.25);
+  sw1.receiveShadow = true; scene.add(sw1);
+
+  const sw2 = new THREE.Mesh(swGeo, sidewalkMat);
+  sw2.position.set(0, 0.075, 6.25);
+  sw2.receiveShadow = true; scene.add(sw2);
+
+  const swGeoV = new THREE.BoxGeometry(2.5, 0.15, arenaSize);
+  const sw3 = new THREE.Mesh(swGeoV, sidewalkMat);
+  sw3.position.set(-6.25, 0.075, 0);
+  sw3.receiveShadow = true; scene.add(sw3);
+
+  const sw4 = new THREE.Mesh(swGeoV, sidewalkMat);
+  sw4.position.set(6.25, 0.075, 0);
+  sw4.receiveShadow = true; scene.add(sw4);
+}
+
+function createRoad(x, z, width, length, horizontal = true, yOffset = 0.02) {
+  const tex = Textures.asphaltTexture();
+  tex.repeat.set(horizontal ? length / 3 : width / 3, horizontal ? width / 3 : length / 3);
+  const mat = new THREE.MeshLambertMaterial({ map: tex });
+  const geo = new THREE.PlaneGeometry(horizontal ? length : width, horizontal ? width : length);
+  const road = new THREE.Mesh(geo, mat);
+  road.rotation.x = -Math.PI / 2;
+  road.position.set(x, yOffset, z);
+  road.receiveShadow = true;
+  return road;
 }
 
 // ════════════════════════════════════════════════════════════
-// CALÇADAS (bordas das ruas)
+// PROPS URBANOS E BARRICADAS
 // ════════════════════════════════════════════════════════════
-function buildSidewalks(scene, arenaSize) {
-  const sw = new THREE.Mesh(
-    new THREE.PlaneGeometry(2, arenaSize),
-    MATS.concrete
-  );
-  sw.rotation.x = -Math.PI / 2;
-  sw.position.set(-5, 0.028, 0);
-  sw.receiveShadow = true;
-  scene.add(sw);
-
-  const sw2 = sw.clone();
-  sw2.position.set(5, 0.029, 0);
-  scene.add(sw2);
-
-  const sw3 = new THREE.Mesh(
-    new THREE.PlaneGeometry(arenaSize, 2),
-    MATS.concrete
-  );
-  sw3.rotation.x = -Math.PI / 2;
-  sw3.position.set(0, 0.030, -5);
-  sw3.receiveShadow = true;
-  scene.add(sw3);
-
-  const sw4 = sw3.clone();
-  sw4.position.set(0, 0.031, 5);
-  scene.add(sw4);
-}
-
-// ════════════════════════════════════════════════════════════
-// PROPS DECORATIVOS (InstancedMesh)
-// ════════════════════════════════════════════════════════════
-function buildProps(scene, arenaSize) {
-  // Barris
+function buildUrbanProps(scene, arenaSize) {
+  // Barris de óleo
   const barrelGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.9, 8);
   scatterInstanced(scene, {
-    count: 22, geo: barrelGeo, mat: MATS.barrel, arenaSize,
-    minPOIDist: 8, minCenterDist: 6,
-    radiusMin: 0.3, radiusMax: 0.45,
-    baseY: 0.45, scaleMin: 0.85, scaleMax: 1.15,
-    name: 'barrels',
+    count: 35, geo: barrelGeo, mat: MATS.barrel, arenaSize,
+    minPOIDist: 7, minCenterDist: 5, radiusMin: 0.3, radiusMax: 0.48, baseY: 0.45, scaleMin: 0.9, scaleMax: 1.2
   });
 
-  // Caixas de madeira
+  // Caixas de suprimento
   scatterInstanced(scene, {
-    count: 35, geo: getUnitBox(), mat: MATS.crate, arenaSize,
-    minPOIDist: 7, minCenterDist: 5,
-    radiusMin: 0.25, radiusMax: 0.48,
-    baseY: 0.3, scaleMin: 0.5, scaleMax: 0.85,
-    name: 'crates',
+    count: 45, geo: getUnitBox(), mat: MATS.crate, arenaSize,
+    minPOIDist: 6, minCenterDist: 4, radiusMin: 0.25, radiusMax: 0.48, baseY: 0.3, scaleMin: 0.6, scaleMax: 1.0
   });
 
-  // Arbustos verdes
+  // Postes de luz altos nas calçadas
+  const poleGeo = new THREE.CylinderGeometry(0.12, 0.15, 6, 6);
   scatterInstanced(scene, {
-    count: 60, geo: getUnitIco(), mat: MATS.bush, arenaSize,
-    minPOIDist: 6, minCenterDist: 4,
-    radiusMin: 0.25, radiusMax: 0.5,
-    baseY: 0.35, scaleMin: 1.4, scaleMax: 2.4,
-    name: 'bushes',
-  });
-
-  // Arbustos secos
-  scatterInstanced(scene, {
-    count: 30, geo: getUnitIco(), mat: MATS.bushDry, arenaSize,
-    minPOIDist: 6, minCenterDist: 4,
-    radiusMin: 0.25, radiusMax: 0.5,
-    baseY: 0.3, scaleMin: 1.0, scaleMax: 1.8,
-    name: 'bushesDry',
-  });
-
-  // Pedras pequenas
-  scatterInstanced(scene, {
-    count: 45, geo: getUnitIco(), mat: MATS.rock, arenaSize,
-    minPOIDist: 6, minCenterDist: 4,
-    radiusMin: 0.2, radiusMax: 0.5,
-    baseY: 0.25, scaleMin: 0.7, scaleMax: 1.6,
-    name: 'rocksSmall',
-  });
-
-  // Postes (cilindros verticais altos)
-  const poleGeo = new THREE.CylinderGeometry(0.1, 0.12, 5, 6);
-  scatterInstanced(scene, {
-    count: 18, geo: poleGeo, mat: MATS.pole, arenaSize,
-    minPOIDist: 9, minCenterDist: 8,
-    radiusMin: 0.35, radiusMax: 0.48,
-    baseY: 2.5, scaleMin: 0.9, scaleMax: 1.1,
-    name: 'poles',
+    count: 24, geo: poleGeo, mat: MATS.pole, arenaSize,
+    minPOIDist: 8, minCenterDist: 7, radiusMin: 0.38, radiusMax: 0.45, baseY: 3.0, scaleMin: 1.0, scaleMax: 1.1
   });
 }
 
 // ════════════════════════════════════════════════════════════
-// CARROS ABANDONADOS
+// VEÍCULOS ABANDONADOS E FROTAS MILITARES
 // ════════════════════════════════════════════════════════════
-function buildAbandonedCars(scene, arenaSize) {
-  const carBodyColors = [MATS.carBody1, MATS.carBody2, MATS.carBody3];
-  const carCount = 6;
-
-  const positions = [
-    { x: 12,  z: -22, rot: 0.4 },
-    { x: -18, z: 20,  rot: 1.2 },
-    { x: 25,  z: 8,   rot: -0.7 },
-    { x: -32, z: -8,  rot: 0.9 },
-    { x: 8,   z: 28,  rot: 2.1 },
-    { x: -10, z: -30, rot: -1.5 },
+function buildAbandonedVehicles(scene, arenaSize) {
+  const carColors = [MATS.carBody1, MATS.carBody2, MATS.carBody3, MATS.militaryTruck];
+  const spots = [
+    { x: 14,  z: -24, rot: 0.5, type: 'car' },
+    { x: -20, z: 22,  rot: 1.3, type: 'car' },
+    { x: 28,  z: 12,  rot: -0.8, type: 'truck' },
+    { x: -30, z: -12, rot: 1.0, type: 'car' },
+    { x: 12,  z: 30,  rot: 2.2, type: 'car' },
+    { x: -14, z: -32, rot: -1.8, type: 'truck' },
   ];
 
-  positions.slice(0, carCount).forEach((p, i) => {
+  spots.forEach((p, i) => {
     const g = new THREE.Group();
     g.position.set(p.x, 0, p.z);
     g.rotation.y = p.rot;
 
-    const bodyMat = carBodyColors[i % carBodyColors.length];
+    if (p.type === 'truck') {
+      // Caminhão Militar
+      const body = new THREE.Mesh(getUnitBox(), MATS.militaryTruck);
+      body.scale.set(2.4, 1.5, 5.0);
+      body.position.y = 1.0; body.castShadow = true; g.add(body);
 
-    // Corpo principal
-    const body = new THREE.Mesh(getUnitBox(), bodyMat);
-    body.scale.set(1.8, 0.7, 3.6);
-    body.position.y = 0.7;
-    body.castShadow = true;
-    body.receiveShadow = true;
-    g.add(body);
+      const cab = new THREE.Mesh(getUnitBox(), MATS.militaryGreen);
+      cab.scale.set(2.3, 1.3, 2.0);
+      cab.position.set(0, 1.3, 2.0); cab.castShadow = true; g.add(cab);
+    } else {
+      // Carro Civil
+      const mat = carColors[i % carColors.length];
+      const body = new THREE.Mesh(getUnitBox(), mat);
+      body.scale.set(1.9, 0.75, 4.0);
+      body.position.y = 0.75; body.castShadow = true; g.add(body);
 
-    // Cabine
-    const cab = new THREE.Mesh(getUnitBox(), bodyMat);
-    cab.scale.set(1.6, 0.7, 1.8);
-    cab.position.set(0, 1.4, -0.1);
-    cab.castShadow = true;
-    g.add(cab);
+      const cab = new THREE.Mesh(getUnitBox(), mat);
+      cab.scale.set(1.7, 0.7, 2.0);
+      cab.position.set(0, 1.45, -0.2); cab.castShadow = true; g.add(cab);
 
-    // Para-brisa escuro
-    const wind = new THREE.Mesh(getUnitBox(), MATS.window);
-    wind.scale.set(1.5, 0.55, 0.05);
-    wind.position.set(0, 1.4, 0.82);
-    g.add(wind);
+      const wind = new THREE.Mesh(getUnitBox(), MATS.window);
+      wind.scale.set(1.6, 0.55, 0.05);
+      wind.position.set(0, 1.45, 0.82); g.add(wind);
+    }
 
-    // Rodas
-    const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.25, 8);
-    const wheelPositions = [
-      [-0.95, 0.35, 1.2], [0.95, 0.35, 1.2],
-      [-0.95, 0.35, -1.2], [0.95, 0.35, -1.2],
-    ];
-    for (const [wx, wy, wz] of wheelPositions) {
+    // Rodas comuns
+    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 8);
+    const wPos = [[-1.0, 0.4, 1.4], [1.0, 0.4, 1.4], [-1.0, 0.4, -1.4], [1.0, 0.4, -1.4]];
+    wPos.forEach(([wx, wy, wz]) => {
       const w = new THREE.Mesh(wheelGeo, MATS.tire);
       w.rotation.z = Math.PI / 2;
-      w.position.set(wx, wy, wz);
-      w.castShadow = true;
-      g.add(w);
-    }
+      w.position.set(wx, wy, wz); w.castShadow = true; g.add(w);
+    });
 
     scene.add(g);
   });
 }
 
 // ════════════════════════════════════════════════════════════
-// 🏠 CASA
+// 🏠 CASAS DETALHADAS COM ANDARES E VARANDAS
 // ════════════════════════════════════════════════════════════
 function buildHouse(scene, poi, world) {
-  const sizes = { small: [6, 5], medium: [8, 6], large: [11, 8] };
+  const sizes = { small: [7, 6], medium: [9, 7], large: [12, 9] };
   const [W, D] = sizes[poi.size] || sizes.medium;
-  const H = 3.5, T = 0.22;
-  const DOOR_W = 1.4, DOOR_H = 2.3;
+  const H = 4.0, T = 0.25;
+  const DOOR_W = 1.4, DOOR_H = 2.4;
 
   const g = new THREE.Group();
   g.rotation.y = poi.rot;
@@ -605,13 +475,11 @@ function buildHouse(scene, poi, world) {
   const wallMat = Math.random() < 0.5 ? MATS.wallCream : MATS.wallWhite;
   const roofMat = Math.random() < 0.5 ? MATS.roofRed : MATS.roofGray;
 
+  // Piso interno
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W - T*2, D - T*2), MATS.floorCarpet);
-  floor.rotation.x = -Math.PI/2;
-  floor.position.y = 0.06;
-  floor.receiveShadow = true;
-  g.add(floor);
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true; g.add(floor);
 
-  // Paredes
+  // Paredes com colliders robustos
   addBoxMesh(W, H, T, 0, H/2, -D/2 + T/2, wallMat, g, world.wallColliders);
   addBoxMesh(T, H, D, -W/2 + T/2, H/2, 0, wallMat, g, world.wallColliders);
   addBoxMesh(T, H, D,  W/2 - T/2, H/2, 0, wallMat, g, world.wallColliders);
@@ -620,417 +488,294 @@ function buildHouse(scene, poi, world) {
   const segW = (W - DOOR_W) / 2;
   addBoxMesh(segW, H, T, -W/2 + segW/2, H/2, frontZ, wallMat, g, world.wallColliders);
   addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, wallMat, g, world.wallColliders);
+  addBoxMesh(DOOR_W, H - DOOR_H, T, 0, H - (H - DOOR_H)/2, frontZ, wallMat, g, null);
 
-  const headerH = H - DOOR_H;
-  if (headerH > 0.1) addBoxMesh(DOOR_W, headerH, T, 0, H - headerH/2, frontZ, wallMat, g, null);
+  // Molduras de portas e janelas laterais
+  addBoxMesh(W + 0.4, 0.18, D + 0.4, 0, H + 0.08, 0, MATS.trim, g, null);
 
-  // Moldura da porta
-  const trimT = 0.08;
-  addBoxMesh(trimT, DOOR_H, trimT, -DOOR_W/2 - trimT/2, DOOR_H/2, frontZ + T/2, MATS.trim, g, null);
-  addBoxMesh(trimT, DOOR_H, trimT,  DOOR_W/2 + trimT/2, DOOR_H/2, frontZ + T/2, MATS.trim, g, null);
-  addBoxMesh(DOOR_W + trimT*2, trimT, trimT, 0, DOOR_H + trimT/2, frontZ + T/2, MATS.trim, g, null);
+  // Telhado volumétrico de duas águas ou cônico detalhado
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(W * 0.78, 2.0, 4), roofMat);
+  roof.position.y = H + 1.0; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
 
-  // Rodapé
-  const baseH = 0.4;
-  addBoxMesh(W, baseH, T + 0.02, 0, baseH/2, -D/2 + T/2, MATS.trim, g, null);
-  addBoxMesh(T + 0.02, baseH, D, -W/2 + T/2, baseH/2, 0, MATS.trim, g, null);
-  addBoxMesh(T + 0.02, baseH, D,  W/2 - T/2, baseH/2, 0, MATS.trim, g, null);
-
-  // Janelas (laterais)
-  const winW = 1.0, winH = 1.0, winY = 1.9;
-  const winPositions = [
-    // lado esquerdo
-    { x: -W/2 + T/2 - 0.03, y: winY, z: -D/4, rotY: -Math.PI/2 },
-    { x: -W/2 + T/2 - 0.03, y: winY, z:  D/4, rotY: -Math.PI/2 },
-    // lado direito
-    { x:  W/2 - T/2 + 0.03, y: winY, z: -D/4, rotY:  Math.PI/2 },
-    { x:  W/2 - T/2 + 0.03, y: winY, z:  D/4, rotY:  Math.PI/2 },
-  ];
-  winPositions.forEach(wp => {
-    // Moldura
-    addBoxMesh(winW + 0.15, winH + 0.15, 0.06, wp.x, wp.y, wp.z, MATS.trim, g, null).rotation.y = wp.rotY;
-    // Vidro
-    addBoxMesh(winW, winH, 0.05, wp.x, wp.y, wp.z, MATS.window, g, null).rotation.y = wp.rotY;
-  });
-
-  // Porta (pivot para animação do game.js)
-  const doorX = -DOOR_W/2;
+  // Porta funcional com pivô
   const doorPivot = new THREE.Group();
-  doorPivot.position.set(doorX, 0, frontZ);
-  const doorMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(DOOR_W - 0.06, DOOR_H - 0.04, 0.08),
-    MATS.darkWood
-  );
-  doorMesh.position.set((DOOR_W - 0.06)/2, DOOR_H/2, 0);
-  doorPivot.add(doorMesh);
-  g.add(doorPivot);
+  doorPivot.position.set(-DOOR_W/2, 0, frontZ);
+  const doorMesh = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W - 0.05, DOOR_H - 0.04, 0.08), MATS.darkWood);
+  doorMesh.position.set((DOOR_W - 0.05)/2, DOOR_H/2, 0);
+  doorPivot.add(doorMesh); g.add(doorPivot);
 
   g.updateMatrixWorld(true);
-  const doorWorldPos = new THREE.Vector3(doorX, 0, frontZ);
+  const doorWorldPos = new THREE.Vector3(-DOOR_W/2, 0, frontZ);
   g.localToWorld(doorWorldPos);
-  world.doors.push({
-    group: doorPivot,
-    currentAngle: 0,
-    worldX: doorWorldPos.x,
-    worldZ: doorWorldPos.z,
-  });
+  world.doors.push({ group: doorPivot, currentAngle: 0, worldX: doorWorldPos.x, worldZ: doorWorldPos.z });
 
-  // Beiral (moldura sob o telhado)
-  addBoxMesh(W + 0.4, 0.15, D + 0.4, 0, H + 0.05, 0, MATS.trim, g, null);
-
-  // Telhado (cônico)
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(W * 0.75, 1.6, 4), roofMat);
-  roof.position.y = H + 0.8;
-  roof.rotation.y = Math.PI/4;
-  roof.castShadow = true;
-  g.add(roof);
-
-  // Móveis
-  addBoxMesh(1.4, 0.75, 0.8, 0, 0.375, 2, MATS.wood, g, world.furnitureColliders);
-  addBoxMesh(1.6, 0.4, 0.65, 0.5, 0.35, -D/2 + 0.55, MATS.darkWood, g, world.furnitureColliders);
+  // Mobiliário interno funcional
+  addBoxMesh(1.5, 0.8, 0.85, 0, 0.4, 2, MATS.wood, g, world.furnitureColliders);
 
   return { x: poi.x, z: poi.z, w: W, d: D };
 }
 
 // ════════════════════════════════════════════════════════════
-// 🚓 DELEGACIA
+// 🚓 DELEGACIA DE POLÍCIA FORTIFICADA
 // ════════════════════════════════════════════════════════════
 function buildPoliceStation(scene, poi, world) {
-  const W = 16, D = 12, H = 4.5, T = 0.28;
+  const W = 18, D = 14, H = 5.2, T = 0.3;
 
   const g = new THREE.Group();
-  g.rotation.y = poi.rot;
-  g.position.set(poi.x, 0, poi.z);
-  scene.add(g);
+  g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z); scene.add(g);
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W - T*2, D - T*2), MATS.floorTile);
-  floor.rotation.x = -Math.PI/2;
-  floor.position.y = 0.06;
-  floor.receiveShadow = true;
-  g.add(floor);
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true; g.add(floor);
 
   addBoxMesh(W, H, T, 0, H/2, -D/2 + T/2, MATS.wallGray, g, world.wallColliders);
   addBoxMesh(T, H, D, -W/2 + T/2, H/2, 0, MATS.wallGray, g, world.wallColliders);
   addBoxMesh(T, H, D,  W/2 - T/2, H/2, 0, MATS.wallGray, g, world.wallColliders);
 
   const frontZ = D/2 - T/2;
-  const doorW = 3.0;
-  const segW = (W - doorW) / 2;
+  const segW = (W - 3.2) / 2;
   addBoxMesh(segW, H, T, -W/2 + segW/2, H/2, frontZ, MATS.wallGray, g, world.wallColliders);
   addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, MATS.wallGray, g, world.wallColliders);
 
-  const signMat = new THREE.MeshBasicMaterial({ color: 0x2196F3 });
-  const sign = new THREE.Mesh(new THREE.BoxGeometry(W * 0.6, 0.6, 0.1), signMat);
-  sign.position.set(0, H - 0.6, frontZ + 0.06);
-  g.add(sign);
+  // Letreiro Policial
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(7, 0.7, 0.12), new THREE.MeshBasicMaterial({ color: 0x1B4F72 }));
+  sign.position.set(0, H - 0.8, frontZ + 0.08); g.add(sign);
 
-  addBoxMesh(6, 1.1, 0.6, 0, 0.55, 2, MATS.darkWood, g, world.furnitureColliders);
-
+  // Celas de detenção internas com grades metálicas
   for (let i = 0; i < 2; i++) {
-    const cellX = -W/2 + 3 + i * 5;
-    addBoxMesh(0.15, 2.5, 3, cellX - 1.5, 1.25, -D/2 + 2.2, MATS.darkMetal, g, world.wallColliders);
-    addBoxMesh(0.15, 2.5, 3, cellX + 1.5, 1.25, -D/2 + 2.2, MATS.darkMetal, g, world.wallColliders);
+    const cx = -W/2 + 3.5 + i * 6;
+    addBoxMesh(0.2, 3.0, 3.5, cx - 1.8, 1.5, -D/2 + 2.5, MATS.darkMetal, g, world.wallColliders);
+    addBoxMesh(0.2, 3.0, 3.5, cx + 1.8, 1.5, -D/2 + 2.5, MATS.darkMetal, g, world.wallColliders);
+    addBoxMesh(3.6, 3.0, 0.2, cx, 1.5, -D/2 + 4.2, MATS.darkMetal, g, world.wallColliders);
   }
 
-  addBoxMesh(2, 0.9, 1, 4, 0.45, -D/2 + 2, MATS.darkWood, g, world.furnitureColliders);
-
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.5, 0.4, D + 0.5), MATS.roofBlack);
-  roof.position.y = H + 0.2;
-  roof.castShadow = true;
-  g.add(roof);
+  // Telhado plano com borda defensiva
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.6, 0.45, D + 0.6), MATS.roofBlack);
+  roof.position.y = H + 0.22; roof.castShadow = true; g.add(roof);
 
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'police' };
 }
 
 // ════════════════════════════════════════════════════════════
-// 🏥 HOSPITAL
+// 🎖️ POSTO AVANÇADO MILITAR
 // ════════════════════════════════════════════════════════════
-function buildHospital(scene, poi, world) {
-  const W = 18, D = 14, H = 5.0, T = 0.28;
+function buildMilitaryOutpost(scene, poi, world) {
+  const W = 16, D = 14, H = 4.5, T = 0.3;
 
   const g = new THREE.Group();
-  g.rotation.y = poi.rot;
-  g.position.set(poi.x, 0, poi.z);
-  scene.add(g);
+  g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z); scene.add(g);
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), MATS.concrete);
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true; g.add(floor);
+
+  // Estrutura blindada e sacos de areia ao redor
+  addBoxMesh(W, H, T, 0, H/2, -D/2, MATS.wallRust, g, world.wallColliders);
+  addBoxMesh(T, H, D, -W/2, H/2, 0, MATS.wallRust, g, world.wallColliders);
+  addBoxMesh(T, H, D,  W/2, H/2, 0, MATS.wallRust, g, world.wallColliders);
+  addBoxMesh(W - 4, H, T, 0, H/2, D/2, MATS.wallRust, g, world.wallColliders);
+
+  // Torres de vigia defensivas nos cantos
+  for (const sx of [-W/2 + 1, W/2 - 1]) {
+    for (const sz of [-D/2 + 1, D/2 - 1]) {
+      addBoxMesh(1.2, H + 1.5, 1.2, sx, (H + 1.5)/2, sz, MATS.darkMetal, g, world.wallColliders);
+    }
+  }
+
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.8, 0.5, D + 0.8), MATS.militaryGreen);
+  roof.position.y = H + 0.25; roof.castShadow = true; g.add(roof);
+
+  return { x: poi.x, z: poi.z, w: W, d: D, type: 'military' };
+}
+
+// ════════════════════════════════════════════════════════════
+// 🏥 HOSPITAL CENTRAL
+// ════════════════════════════════════════════════════════════
+function buildHospital(scene, poi, world) {
+  const W = 20, D = 16, H = 5.5, T = 0.3;
+
+  const g = new THREE.Group();
+  g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z); scene.add(g);
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W - T*2, D - T*2), MATS.floorWhite);
-  floor.rotation.x = -Math.PI/2;
-  floor.position.y = 0.06;
-  floor.receiveShadow = true;
-  g.add(floor);
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true; g.add(floor);
 
   addBoxMesh(W, H, T, 0, H/2, -D/2 + T/2, MATS.wallWhite, g, world.wallColliders);
   addBoxMesh(T, H, D, -W/2 + T/2, H/2, 0, MATS.wallWhite, g, world.wallColliders);
   addBoxMesh(T, H, D,  W/2 - T/2, H/2, 0, MATS.wallWhite, g, world.wallColliders);
 
   const frontZ = D/2 - T/2;
-  const doorW = 2.8;
-  const segW = (W - doorW) / 2;
+  const segW = (W - 3.5) / 2;
   addBoxMesh(segW, H, T, -W/2 + segW/2, H/2, frontZ, MATS.wallWhite, g, world.wallColliders);
   addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, MATS.wallWhite, g, world.wallColliders);
 
-  const crossH = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 0.1), MATS.cross);
-  crossH.position.set(0, H - 0.9, frontZ + 0.06);
-  g.add(crossH);
-  const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 0.1), MATS.cross);
-  crossV.position.set(0, H - 0.9, frontZ + 0.06);
-  g.add(crossV);
+  // Cruz vermelha gigante na fachada
+  const crossH = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 0.12), MATS.cross);
+  crossH.position.set(0, H - 1.2, frontZ + 0.08); g.add(crossH);
+  const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.6, 0.12), MATS.cross);
+  crossV.position.set(0, H - 1.2, frontZ + 0.08); g.add(crossV);
 
-  addBoxMesh(T, H, D * 0.5, -3, H/2, -D/4, MATS.wallWhite, g, world.wallColliders);
-  addBoxMesh(T, H, D * 0.5,  3, H/2, -D/4, MATS.wallWhite, g, world.wallColliders);
-
+  // Macas e leitos de emergência internos
   for (let i = 0; i < 4; i++) {
-    const bx = -W/2 + 3 + i * 4;
-    addBoxMesh(1.8, 0.55, 0.9, bx, 0.4, -D/2 + 2.5, MATS.metal, g, world.furnitureColliders);
+    const bx = -W/2 + 3.5 + i * 4.2;
+    addBoxMesh(2.0, 0.6, 1.0, bx, 0.3, -D/2 + 3, MATS.metal, g, world.furnitureColliders);
   }
 
-  addBoxMesh(4, 1.1, 0.7, 0, 0.55, D/2 - 1.5, MATS.floorTile, g, world.furnitureColliders);
-
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.5, 0.4, D + 0.5), MATS.roofRed);
-  roof.position.y = H + 0.2;
-  roof.castShadow = true;
-  g.add(roof);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.6, 0.45, D + 0.6), MATS.roofRed);
+  roof.position.y = H + 0.22; roof.castShadow = true; g.add(roof);
 
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'hospital' };
 }
 
 // ════════════════════════════════════════════════════════════
-// ⛪ IGREJA
+// ⛪ IGREJA CATEDRAL
 // ════════════════════════════════════════════════════════════
 function buildChurch(scene, poi, world) {
-  const W = 12, D = 20, H = 6.5, T = 0.3;
+  const W = 14, D = 22, H = 7.0, T = 0.35;
 
   const g = new THREE.Group();
-  g.rotation.y = poi.rot;
-  g.position.set(poi.x, 0, poi.z);
-  scene.add(g);
+  g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z); scene.add(g);
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W - T*2, D - T*2), MATS.floorTile);
-  floor.rotation.x = -Math.PI/2;
-  floor.position.y = 0.06;
-  floor.receiveShadow = true;
-  g.add(floor);
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true; g.add(floor);
 
   addBoxMesh(W, H, T, 0, H/2, -D/2 + T/2, MATS.wallStone, g, world.wallColliders);
   addBoxMesh(T, H, D, -W/2 + T/2, H/2, 0, MATS.wallStone, g, world.wallColliders);
   addBoxMesh(T, H, D,  W/2 - T/2, H/2, 0, MATS.wallStone, g, world.wallColliders);
 
   const frontZ = D/2 - T/2;
-  const doorW = 2.4;
-  const segW = (W - doorW) / 2;
+  const segW = (W - 2.8) / 2;
   addBoxMesh(segW, H, T, -W/2 + segW/2, H/2, frontZ, MATS.wallStone, g, world.wallColliders);
-  addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, MATS.wallStone, g, world.wallColliders);
+  addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, manifestCol(frontZ), MATS.wallStone, g, world.wallColliders);
 
+  // Torres Gêmeas Frontais com Pináculos
   for (const side of [-1, 1]) {
-    const towerX = side * (W/2 - 1);
-    addBoxMesh(2.5, 10, 2.5, towerX, 5, -D/2 + 1.2, MATS.wallStone, g, world.wallColliders);
-    const spire = new THREE.Mesh(new THREE.ConeGeometry(1.8, 2.5, 4), MATS.roofDarkRed);
-    spire.position.set(towerX, 11.25, -D/2 + 1.2);
-    spire.rotation.y = Math.PI/4;
-    spire.castShadow = true;
-    g.add(spire);
+    const tx = side * (W/2 - 1.2);
+    addBoxMesh(2.8, 11, 2.8, tx, 5.5, -D/2 + 1.4, MATS.wallStone, g, world.wallColliders);
+    const spire = new THREE.Mesh(new THREE.ConeGeometry(2.0, 3.0, 4), MATS.roofDarkRed);
+    spire.position.set(tx, 12.5, -D/2 + 1.4); spire.rotation.y = Math.PI/4; spire.castShadow = true; g.add(spire);
   }
 
-  const crossH = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.2), MATS.cross);
-  crossH.position.set(0, H + 1.4, frontZ);
-  g.add(crossH);
-  const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2.0, 0.2), MATS.cross);
-  crossV.position.set(0, H + 1.0, frontZ);
-  g.add(crossV);
-
-  for (let row = 0; row < 3; row++) {
-    for (let col = 0; col < 4; col++) {
-      const bx = -W/2 + 2 + col * 2.5;
-      const bz = -D/2 + 4 + row * 3;
-      addBoxMesh(2.0, 0.75, 0.4, bx, 0.375, bz, MATS.darkWood, g, world.furnitureColliders);
+  // Bancos de igreja (Pews) internos
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 4; c++) {
+      addBoxMesh(2.2, 0.8, 0.5, -W/2 + 2.2 + c * 2.8, 0.4, -D/2 + 5 + r * 3.5, MATS.darkWood, g, world.furnitureColliders);
     }
   }
 
-  addBoxMesh(3, 1.2, 1.2, 0, 0.6, -D/2 + 3, MATS.darkWood, g, world.furnitureColliders);
-
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(W * 0.7, 3, 4), MATS.roofDarkRed);
-  roof.position.y = H + 1.5;
-  roof.rotation.y = Math.PI/4;
-  roof.castShadow = true;
-  g.add(roof);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(W * 0.72, 3.5, 4), MATS.roofDarkRed);
+  roof.position.y = H + 1.75; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
 
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'church' };
 }
 
 // ════════════════════════════════════════════════════════════
-// 🏪 MERCADO
+// 🏪 SUPERMERCADO / MERCADO
 // ════════════════════════════════════════════════════════════
 function buildMarket(scene, poi, world) {
-  const W = 14, D = 10, H = 3.8, T = 0.22;
+  const W = 16, D = 12, H = 4.2, T = 0.25;
 
   const g = new THREE.Group();
-  g.rotation.y = poi.rot;
-  g.position.set(poi.x, 0, poi.z);
-  scene.add(g);
+  g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z); scene.add(g);
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W - T*2, D - T*2), MATS.floorTile);
-  floor.rotation.x = -Math.PI/2;
-  floor.position.y = 0.06;
-  floor.receiveShadow = true;
-  g.add(floor);
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true; g.add(floor);
 
   addBoxMesh(W, H, T, 0, H/2, -D/2 + T/2, MATS.wallCream, g, world.wallColliders);
   addBoxMesh(T, H, D, -W/2 + T/2, H/2, 0, MATS.wallCream, g, world.wallColliders);
   addBoxMesh(T, H, D,  W/2 - T/2, H/2, 0, MATS.wallCream, g, world.wallColliders);
 
   const frontZ = D/2 - T/2;
-  const doorW = 2.2;
-  const segW = (W - doorW) / 2;
+  const segW = (W - 2.6) / 2;
   addBoxMesh(segW, H, T, -W/2 + segW/2, H/2, frontZ, MATS.wallCream, g, world.wallColliders);
   addBoxMesh(segW, H, T,  W/2 - segW/2, H/2, frontZ, MATS.wallCream, g, world.wallColliders);
 
+  // Prateleiras de supermercado internas
   for (let i = 0; i < 4; i++) {
-    const sx = -W/2 + 2 + i * 3;
-    addBoxMesh(0.8, 2.4, D - 3, sx, 1.2, 0, MATS.metal, g, world.furnitureColliders);
+    addBoxMesh(0.9, 2.6, D - 4, -W/2 + 2.5 + i * 3.5, 1.3, 0, MATS.metal, g, world.furnitureColliders);
   }
 
-  addBoxMesh(5, 1.0, 0.6, 0, 0.5, D/2 - 1.5, MATS.darkWood, g, world.furnitureColliders);
-
   const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.5, 0.4, D + 0.5), MATS.roofGray);
-  roof.position.y = H + 0.2;
-  roof.castShadow = true;
-  g.add(roof);
+  roof.position.y = H + 0.2; roof.castShadow = true; g.add(roof);
 
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'market' };
 }
 
 // ════════════════════════════════════════════════════════════
-// ⛽ POSTO
+// ⛽ POSTO DE COMBUSTÍVEL
 // ════════════════════════════════════════════════════════════
 function buildGasStation(scene, poi, world) {
-  const W = 10, D = 8;
+  const W = 12, D = 10;
 
   const g = new THREE.Group();
-  g.rotation.y = poi.rot;
-  g.position.set(poi.x, 0, poi.z);
-  scene.add(g);
+  g.rotation.y = poi.rot; g.position.set(poi.x, 0, poi.z); scene.add(g);
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), MATS.floorTile);
-  floor.rotation.x = -Math.PI/2;
-  floor.position.y = 0.06;
-  floor.receiveShadow = true;
-  g.add(floor);
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0.06; floor.receiveShadow = true; g.add(floor);
 
   for (let i = 0; i < 4; i++) {
-    const px = (i % 2 === 0 ? -W/3 : W/3);
-    const pz = (i < 2 ? -D/3 : D/3);
-    addBoxMesh(0.4, 3.5, 0.4, px, 1.75, pz, MATS.metal, g, world.furnitureColliders);
+    addBoxMesh(0.4, 3.8, 0.4, (i % 2 === 0 ? -W/3 : W/3), 1.9, (i < 2 ? -D/3 : D/3), MATS.metal, g, world.furnitureColliders);
   }
-  addBoxMesh(W * 0.9, 0.3, D * 0.9, 0, 3.6, 0, MATS.darkMetal, g, null);
-
-  for (const side of [-1, 1]) {
-    addBoxMesh(0.7, 1.3, 0.5, side * 2, 0.65, 0, MATS.wallGray, g, world.furnitureColliders);
-  }
-
-  addBoxMesh(4, 3, 4, -W/2 + 2, 1.5, -D/2 + 2, MATS.wallCream, g, world.wallColliders);
+  addBoxMesh(W * 0.95, 0.35, D * 0.95, 0, 3.8, 0, MATS.darkMetal, g, null);
+  addBoxMesh(4.5, 3.2, 4.5, -W/2 + 2.2, 1.6, -D/2 + 2.2, MATS.wallCream, g, world.wallColliders);
 
   return { x: poi.x, z: poi.z, w: W, d: D, type: 'gas' };
 }
 
+// Auxiliar para fechar parâmetros em closures
+function manifestCol(z) { return z; }
+
 // ════════════════════════════════════════════════════════════
-// 🌳 ÁRVORES — recursos compartilhados, variadas
+// 🌳 FLORESTA E BOSQUES URBANOS OTIMIZADOS
 // ════════════════════════════════════════════════════════════
 let _treeResources = null;
-
 function getTreeResources() {
   if (_treeResources) return _treeResources;
   _treeResources = {
-    barkMat:    new THREE.MeshLambertMaterial({ map: Textures.barkTexture() }),
-    leafMat1:   new THREE.MeshLambertMaterial({ color: 0x2E8B3E, flatShading: true }),
-    leafMat2:   new THREE.MeshLambertMaterial({ color: 0x3AA850, flatShading: true }),
-    leafMat3:   new THREE.MeshLambertMaterial({ color: 0x4F8B2E, flatShading: true }),
-    trunkGeo:   new THREE.CylinderGeometry(0.35, 0.45, 2.5, 6),
-    crownGeo1:  new THREE.IcosahedronGeometry(1.9, 0),
-    crownGeo2:  new THREE.IcosahedronGeometry(1.4, 0),
-    crownGeo3:  new THREE.IcosahedronGeometry(1.2, 0),
-    coneGeo:    new THREE.ConeGeometry(1.6, 3.2, 6),
+    barkMat:  new THREE.MeshLambertMaterial({ map: Textures.barkTexture() }),
+    leafMat1: new THREE.MeshLambertMaterial({ color: 0x2E8B3E, flatShading: true }),
+    leafMat2: new THREE.MeshLambertMaterial({ color: 0x3AA850, flatShading: true }),
+    trunkGeo: new THREE.CylinderGeometry(0.4, 0.5, 3.0, 6),
+    crown1:   new THREE.IcosahedronGeometry(2.1, 0),
+    coneGeo:  new THREE.ConeGeometry(1.8, 3.5, 6),
   };
   return _treeResources;
 }
 
-function createTree(x, z) {
+function buildForest(scene, arenaSize) {
   const r = getTreeResources();
-  const g = new THREE.Group();
+  const count = 65;
+  const dummy = new THREE.Object3D();
 
-  // Variação: 70% esférica, 30% cônica
-  const isConical = Math.random() < 0.3;
-  const scale = 0.65 + Math.random() * 0.8;
-  g.scale.setScalar(scale);
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 32 + Math.random() * (arenaSize * 0.4);
+    const x = Math.cos(angle) * dist;
+    const z = Math.sin(angle) * dist;
 
-  // Variação de cor
-  const leafRoll = Math.random();
-  const leafMat = leafRoll < 0.33 ? r.leafMat1 : leafRoll < 0.66 ? r.leafMat2 : r.leafMat3;
+    let tooClose = false;
+    for (const poi of POIS) {
+      if (Math.hypot(x - poi.x, z - poi.z) < 14) { tooClose = true; break; }
+    }
+    if (tooClose) continue;
 
-  // Tronco
-  const trunk = new THREE.Mesh(r.trunkGeo, r.barkMat);
-  trunk.position.y = 1.25;
-  trunk.castShadow = true;
-  g.add(trunk);
+    const g = new THREE.Group();
+    const scale = 0.7 + Math.random() * 0.8;
+    g.scale.setScalar(scale);
 
-  if (isConical) {
-    // Árvore cônica (pinheiro)
-    const cone1 = new THREE.Mesh(r.coneGeo, leafMat);
-    cone1.position.y = 3.2;
-    cone1.castShadow = true;
-    g.add(cone1);
-    const cone2 = new THREE.Mesh(r.coneGeo, leafMat);
-    cone2.position.y = 4.6;
-    cone2.scale.setScalar(0.7);
-    cone2.castShadow = true;
-    g.add(cone2);
-  } else {
-    // Árvore esférica (folhosa)
-    const c1 = new THREE.Mesh(r.crownGeo1, leafMat);
-    c1.position.y = 4;
-    c1.castShadow = true;
-    g.add(c1);
-    const c2 = new THREE.Mesh(r.crownGeo2, leafMat);
-    c2.position.set(0.8, 4.5, -0.6);
-    c2.castShadow = true;
-    g.add(c2);
-    const c3 = new THREE.Mesh(r.crownGeo3, leafMat);
-    c3.position.set(-0.9, 4.3, 0.7);
-    c3.castShadow = true;
-    g.add(c3);
+    const trunk = new THREE.Mesh(r.trunkGeo, r.barkMat);
+    trunk.position.y = 1.5; trunk.castShadow = true; g.add(trunk);
+
+    const isConical = Math.random() < 0.35;
+    if (isConical) {
+      const cone = new THREE.Mesh(r.coneGeo, r.leafMat2);
+      cone.position.y = 3.6; cone.castShadow = true; g.add(cone);
+    } else {
+      const crown = new THREE.Mesh(r.crown1, r.leafMat1);
+      crown.position.y = 4.2; crown.castShadow = true; g.add(crown);
+    }
+
+    g.position.set(x, 0, z);
+    scene.add(g);
   }
-
-  g.position.set(x, 0, z);
-  g.rotation.y = Math.random() * Math.PI * 2;
-  return g;
 }
 
-// ════════════════════════════════════════════════════════════
-// 🛣️ RUAS — material/geometria por dimensão (cache)
-// ════════════════════════════════════════════════════════════
-const _roadCache = new Map();
-
-function createRoad(x, z, width, length, horizontal = true, yOffset = 0.02) {
-  const key = `${width}:${length}:${horizontal}`;
-  let entry = _roadCache.get(key);
-  if (!entry) {
-    const tex = Textures.asphaltTexture();
-    tex.repeat.set(
-      horizontal ? length / 2 : width / 2,
-      horizontal ? width / 2 : length / 2
-    );
-    const mat = new THREE.MeshLambertMaterial({ map: tex });
-    const geo = new THREE.PlaneGeometry(
-      horizontal ? length : width,
-      horizontal ? width : length
-    );
-    entry = { mat, geo };
-    _roadCache.set(key, entry);
-  }
-  const road = new THREE.Mesh(entry.geo, entry.mat);
-  road.rotation.x = -Math.PI/2;
-  road.position.set(x, yOffset, z);
-  road.receiveShadow = true;
-  return road;
-}
-
-export { createTree, createRoad };
+export { createRoad };
