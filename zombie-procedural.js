@@ -1,12 +1,12 @@
 // ============================================================
 // zombie-procedural.js — v11
 // CHANGELOG v11:
-//   • FIX: cfg.skinDark inexistente → agora computado via darkerSkin()
-//   • FIX: shin 0.42 → 0.46 (sem gap na tíbia)
-//   • FIX: material cache robusto (ordem de chaves estável)
-//   • FIX: crawler não aplica pré-rotação (game.js anima)
-//   • FIX: crawler não recebe auto-pés-no-chão (conflita com animação)
-//   • Frustum culling ativo (padrão Three.js)
+//   • APLICA type.scale internamente (fix crítico)
+//   • skinDark computado via darkerSkin() (não usa cfg.skinDark)
+//   • shin 0.46 (sem gap na tíbia)
+//   • material cache robusto (ordem de chaves estável)
+//   • crawler sem pré-rotação (game.js anima)
+//   • frustum culling ativo (padrão Three.js)
 //   • localBoxes computadas da geometria real
 // ============================================================
 
@@ -93,21 +93,21 @@ function computeLocalBox(group, padding = 0.02) {
 // ─── Config por tipo ──────────────────────────────────────────
 function getTypeConfig(typeKey) {
   const configs = {
-    pt:        { name: 'PEDESTRE',    shirt: C.shirt,      skin: C.skin,     build: 'normal',  variant: 'civil' },
-    pt_donkey: { name: 'BURRO',       shirt: 0x4a3a2a,     skin: 0x9e8b7a,   build: 'normal',  variant: 'donkey' },
-    judge:     { name: 'JUIZ',        shirt: C.black,      skin: 0xc8a8a8,   build: 'normal',  variant: 'judge' },
-    runner:    { name: 'CORREDOR',    shirt: C.shirt2,     skin: C.skin,     build: 'slim',    variant: 'runner' },
-    crawler:   { name: 'RASTEJANTE',  shirt: C.shirt,      skin: 0x9a9a9a,   build: 'crawler', variant: 'crawler' },
-    worker:    { name: 'TRABALHADOR', shirt: 0x8b5a2b,     skin: 0xc8a878,   build: 'normal',  variant: 'worker' },
-    miner:     { name: 'MINEIRO',     shirt: 0x34495e,     skin: 0xb09878,   build: 'normal',  variant: 'miner' },
-    spitter:   { name: 'CUSPIDOR',    shirt: 0x4c593b,     skin: C.skin,     build: 'normal',  variant: 'spitter' },
-    boomer:    { name: 'EXPLOSIVO',   shirt: 0x6e493c,     skin: 0x88ff66,   build: 'fat',     variant: 'boomer' },
-    security:  { name: 'SEGURANÇA',   shirt: 0x1a1a1a,     skin: 0xa88a68,   build: 'normal',  variant: 'security' },
-    combat:    { name: 'COMBATENTE',  shirt: 0x1a1a1a,     skin: 0xa8a878,   build: 'normal',  variant: 'combat' },
-    brute:     { name: 'BRUTAMONTES', shirt: 0x56433a,     skin: C.skin,     build: 'brute',   variant: 'brute' },
-    riot:      { name: 'RIOT',        shirt: C.metalDark,  skin: 0x72904c,   build: 'brute',   variant: 'riot' },
-    queen:     { name: 'QUEEN',       shirt: C.purple,     skin: C.skin,     build: 'normal',  variant: 'queen' },
-    reaper:    { name: 'REAPER',      shirt: C.black,      skin: 0x7d9a51,   build: 'normal',  variant: 'reaper' },
+    pt:        { name: 'PEDESTRE',    shirt: C.shirt,      skin: C.skin,     build: 'normal',  variant: 'civil',    scale: 1.00 },
+    pt_donkey: { name: 'BURRO',       shirt: 0x4a3a2a,     skin: 0x9e8b7a,   build: 'normal',  variant: 'donkey',   scale: 0.95 },
+    judge:     { name: 'JUIZ',        shirt: C.black,      skin: 0xc8a8a8,   build: 'normal',  variant: 'judge',    scale: 1.12 },
+    runner:    { name: 'CORREDOR',    shirt: C.shirt2,     skin: C.skin,     build: 'slim',    variant: 'runner',   scale: 0.85 },
+    crawler:   { name: 'RASTEJANTE',  shirt: C.shirt,      skin: 0x9a9a9a,   build: 'crawler', variant: 'crawler',  scale: 0.85 },
+    worker:    { name: 'TRABALHADOR', shirt: 0x8b5a2b,     skin: 0xc8a878,   build: 'normal',  variant: 'worker',   scale: 1.02 },
+    miner:     { name: 'MINEIRO',     shirt: 0x34495e,     skin: 0xb09878,   build: 'normal',  variant: 'miner',    scale: 1.05 },
+    spitter:   { name: 'CUSPIDOR',    shirt: 0x4c593b,     skin: C.skin,     build: 'normal',  variant: 'spitter',  scale: 1.00 },
+    boomer:    { name: 'EXPLOSIVO',   shirt: 0x6e493c,     skin: 0x88ff66,   build: 'fat',     variant: 'boomer',   scale: 1.10 },
+    security:  { name: 'SEGURANÇA',   shirt: 0x1a1a1a,     skin: 0xa88a68,   build: 'normal',  variant: 'security', scale: 1.06 },
+    combat:    { name: 'COMBATENTE',  shirt: 0x1a1a1a,     skin: 0xa8a878,   build: 'normal',  variant: 'combat',   scale: 1.00 },
+    brute:     { name: 'BRUTAMONTES', shirt: 0x56433a,     skin: C.skin,     build: 'brute',   variant: 'brute',    scale: 1.30 },
+    riot:      { name: 'RIOT',        shirt: C.metalDark,  skin: 0x72904c,   build: 'brute',   variant: 'riot',     scale: 1.45 },
+    queen:     { name: 'QUEEN',       shirt: C.purple,     skin: C.skin,     build: 'normal',  variant: 'queen',    scale: 1.30 },
+    reaper:    { name: 'REAPER',      shirt: C.black,      skin: 0x7d9a51,   build: 'normal',  variant: 'reaper',   scale: 1.25 },
   };
   return configs[typeKey] || configs.pt;
 }
@@ -123,7 +123,6 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
   const isFat = cfg.build === 'fat';
   const isSlim = cfg.build === 'slim';
 
-  // FIX: skinDark computado dinamicamente (não estava definido por tipo)
   const skinDark = darkerSkin(cfg.skin);
 
   const bs = {
@@ -271,13 +270,11 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     legL = buildLegHierarchy(Hips, +1, legX, hipY, cfg, bs, isBrute, variant);
     legR = buildLegHierarchy(Hips, -1, legX, hipY, cfg, bs, isBrute, variant);
   } else {
-    // Stumps do rastejante
     block(Hips, [-0.15, -0.08, -0.10], [0.20, 0.16, 0.25], C.blood);
-    block(Hips, [ 0.15, -0.08, -0.10], [0.20, 0.16, 0.25], skinDark); // FIX: era cfg.skinDark
+    block(Hips, [ 0.15, -0.08, -0.10], [0.20, 0.16, 0.25], skinDark);
   }
 
-  // ═══ POSE INICIAL (game.js sobrescreve com animação) ═══
-  // Estas rotações são cosméticas antes do mixer/spring entrar em ação.
+  // Pose inicial corredor
   if (variant === 'runner') {
     SpineLower.rotation.x = 0.15;
     SpineUpper.rotation.x = 0.10;
@@ -287,9 +284,13 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     armR.elbow.rotation.x = 0.90;
   }
 
-  // ═══ AJUSTE FINAL: pés no chão ═══
-  // NOTA: crawler não recebe ajuste — game.js anima a pose de crawl,
-  //       e o auto-ajuste conflitaria com a animação.
+  // 🎯 APLICA ESCALA DO TIPO (brute, riot, queen, reaper ficam maiores)
+  const typeScale = cfg.scale || 1;
+  if (typeScale !== 1) {
+    root.scale.setScalar(typeScale);
+  }
+
+  // Ajuste final: pés no chão (não aplica pra crawler — game.js anima)
   if (!isCrawler) {
     root.updateMatrixWorld(true);
     const bbox = new THREE.Box3().setFromObject(root);
@@ -297,7 +298,7 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     root.updateMatrixWorld(true);
   }
 
-  // ═══ LOCAL BOXES — computadas da geometria real ═══
+  // Local boxes computadas da geometria real (escala já aplicada)
   const localBoxes = {
     head:  computeLocalBox(Head, 0.02),
     torso: computeLocalBox(SpineUpper, 0.02),
@@ -307,7 +308,6 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     legR:  legR ? computeLocalBox(legR.thigh, 0.02) : computeLocalBox(Hips, 0.02),
   };
 
-  // ═══ JOINTS ═══
   const joints = {
     pelvis: Hips,
     spineLower: SpineLower,
@@ -343,6 +343,7 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
     limpAmount:    Math.random(),
     limpSide:      Math.random() < 0.5 ? -1 : 1,
     walkStyle:     Math.random(),
+    scale:         typeScale,
   };
 }
 
@@ -351,8 +352,6 @@ export function buildCartoonZombie(typeKey = 'pt', type = {}) {
 // ══════════════════════════════════════════════════════════════
 function buildHead(Head, cfg, variant, skinDark) {
   const headSize = [0.48, 0.48, 0.43];
-
-  // Crânio base
   block(Head, [0, 0.24, 0], headSize, cfg.skin);
 
   if (variant === 'donkey') {
@@ -470,7 +469,7 @@ function buildHead(Head, cfg, variant, skinDark) {
     return;
   }
 
-  // ─── PADRÃO (pt, runner, crawler) ───
+  // Padrão (pt, runner, crawler)
   block(Head, [0, 0.48, -0.015], [0.51, 0.13, 0.46], 0x30302a);
   addEye(Head, -0.12, 0.275, 0.224, 0.82, skinDark);
   addEye(Head,  0.12, 0.275, 0.224, 0.82, skinDark);
@@ -492,30 +491,26 @@ function addEye(parent, x, y, z, s = 1, darkColor) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// ARM HIERARCHY — pivôs corretos (antebraço DENTRO do cotovelo)
+// ARM HIERARCHY
 // ══════════════════════════════════════════════════════════════
 function buildArmHierarchy(parent, side, armX, armLen, cfg, bs, variant, isBrute) {
   const shoulder = pivot(parent, [side * armX, 0.15, 0]);
   shoulder.name = side > 0 ? 'LeftArm' : 'RightArm';
   shoulder.rotation.z = -side * 0.06;
 
-  // Upper arm mesh: spans -armLen*0.70/2 a +armLen*0.70/2 com centro em -armLen*0.32
   const upperH = armLen * 0.70;
   const upperC = -armLen * 0.32;
   block(shoulder, [0, upperC, 0],
         [(isBrute ? 0.30 : 0.20 * bs.arm), upperH, (isBrute ? 0.24 : 0.24 * bs.arm)], cfg.shirt);
 
-  // Elbow pivot (filho do shoulder)
   const elbow = pivot(shoulder, [0, -armLen * 0.65, 0]);
   elbow.name = side > 0 ? 'LeftForeArm' : 'RightForeArm';
 
-  // Forearm mesh: centro em -armLen*0.25, altura armLen*0.55
   const foreH = armLen * 0.55;
   const foreC = -armLen * 0.25;
   block(elbow, [0, foreC, 0.015],
         [(isBrute ? 0.30 : 0.21 * bs.arm), foreH, (isBrute ? 0.25 : 0.25 * bs.arm)], cfg.skin);
 
-  // Hand pivot
   const hand = pivot(elbow, [0, -armLen * 0.50, 0]);
   hand.name = side > 0 ? 'LeftHand' : 'RightHand';
 
@@ -533,7 +528,7 @@ function buildArmHierarchy(parent, side, armX, armLen, cfg, bs, variant, isBrute
 }
 
 // ══════════════════════════════════════════════════════════════
-// LEG HIERARCHY — shin corrigido (0.46 → sem gap na tíbia)
+// LEG HIERARCHY
 // ══════════════════════════════════════════════════════════════
 function buildLegHierarchy(parent, side, legX, hipY, cfg, bs, isBrute, variant) {
   const thigh = pivot(parent, [side * legX, hipY, 0]);
@@ -545,7 +540,6 @@ function buildLegHierarchy(parent, side, legX, hipY, cfg, bs, isBrute, variant) 
   const knee = pivot(thigh, [0, -0.42, 0]);
   knee.name = side > 0 ? 'LeftLeg' : 'RightLeg';
 
-  // FIX: shin 0.46 (era 0.42) + centro -0.21 (era -0.18) → overlap com foot pivot
   block(knee, [0, -0.21, 0.015],
         [(isBrute ? 0.26 : 0.18 * bs.leg), 0.46, (isBrute ? 0.26 : 0.26 * bs.leg)], cfg.skin);
 
