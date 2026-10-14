@@ -8,11 +8,19 @@
 </head>
 <body>
 
+  <!-- ═══ MENU PRINCIPAL ═══ -->
   <div id="menu" class="menu-overlay">
     <div class="menu-container">
       <h1>QUARANTINE BLOCKS</h1>
       <p class="menu-subtitle">OPEN ALPHA — SOBREVIVA AS HORDAS</p>
       <p class="menu-subtitle" id="menu-record">RECORDE: —</p>
+
+      <div id="skin-selector" class="skin-selector">
+        <h3 class="skin-title">ESCOLHA SUA SKIN</h3>
+        <div id="skin-options" class="skin-options"></div>
+        <div id="skin-perk-preview" class="skin-perk-preview"></div>
+      </div>
+
       <button class="menu-btn" id="btn-start">JOGAR SOLO</button>
       <button class="menu-btn" id="btn-controls">CONFIGURAR CONTROLES</button>
       <button class="menu-btn" id="btn-calibrate">CALIBRAR ARMAS</button>
@@ -21,14 +29,18 @@
     </div>
   </div>
 
+  <!-- ═══ GAME CONTAINER ═══ -->
   <div id="game-container"></div>
 
+  <!-- ═══ HUD ═══ -->
   <div id="hud" class="hidden">
     <div id="timer">0:00</div>
+
     <div id="hud-health">
       <div class="hp-bar"><div id="hp-fill" class="hp-fill"></div></div>
       <span id="hp-text">100 / 100</span>
     </div>
+
     <div id="hud-ammo">
       <span id="weapon-class"></span>
       <span id="weapon-name">FACA</span>
@@ -36,6 +48,7 @@
       <div id="ammo-reserve">—</div>
       <div id="weapon-tooltip"></div>
     </div>
+
     <div id="hud-info">
       <div>HORDA <span id="wave">0</span></div>
       <div>LVL <span id="level">1</span></div>
@@ -43,23 +56,28 @@
       <div>Z <span id="zombies">0</span></div>
       <div>REVIVES <span id="revives">2</span></div>
     </div>
+
     <div id="xp-bar"><div id="xp-fill"></div></div>
+
     <div id="weapon-slots">
       <div class="slot" data-slot="1"><span class="slot-num">1</span><span class="slot-name">FACA</span></div>
       <div class="slot empty" data-slot="2"><span class="slot-num">2</span><span class="slot-name">-</span></div>
       <div class="slot empty" data-slot="3"><span class="slot-num">3</span><span class="slot-name">-</span></div>
       <div class="slot empty" data-slot="4"><span class="slot-num">4</span><span class="slot-name">-</span></div>
     </div>
+
     <div id="crosshair">
       <div class="ch-line ch-top"></div>
       <div class="ch-line ch-bottom"></div>
       <div class="ch-line ch-left"></div>
       <div class="ch-line ch-right"></div>
     </div>
+
     <div id="hit-marker">X</div>
     <div id="damage-flash"></div>
     <div id="damage-numbers"></div>
     <div id="kill-feed"></div>
+
     <div id="downed-overlay" class="hidden">
       <div id="downed-timer">30</div>
       <div id="downed-subtitle">VOCÊ CAIU</div>
@@ -71,13 +89,16 @@
     </div>
   </div>
 
+  <!-- ═══ WAVE BANNER ═══ -->
   <div id="wave-banner" class="hidden">HORDA 1</div>
 
+  <!-- ═══ PROMPT ═══ -->
   <div id="prompt" class="hidden">
     <span class="prompt-key">E</span>
     <span id="prompt-text">Comprar</span>
   </div>
 
+  <!-- ═══ PING WHEEL ═══ -->
   <div id="ping-wheel" class="hidden">
     <div class="ping-center">Q</div>
     <div class="ping-option ping-top" data-ping="enemy">
@@ -94,6 +115,7 @@
     </div>
   </div>
 
+  <!-- ═══ SCOREBOARD ═══ -->
   <div id="scoreboard" class="hidden">
     <div class="scoreboard-title">PLACAR</div>
     <table class="scoreboard-table">
@@ -102,6 +124,7 @@
     </table>
   </div>
 
+  <!-- ═══ SHOP ═══ -->
   <div id="shop" class="menu-overlay hidden">
     <div class="shop-container">
       <h2>LOJA</h2>
@@ -112,6 +135,7 @@
     </div>
   </div>
 
+  <!-- ═══ PAUSE ═══ -->
   <div id="pause" class="menu-overlay hidden">
     <div class="menu-container">
       <h1>PAUSADO</h1>
@@ -121,6 +145,7 @@
     </div>
   </div>
 
+  <!-- ═══ LEVEL UP ═══ -->
   <div id="levelup" class="menu-overlay hidden">
     <div class="levelup-container">
       <h2>NIVEL <span id="levelup-level">2</span></h2>
@@ -129,6 +154,7 @@
     </div>
   </div>
 
+  <!-- ═══ GAME OVER ═══ -->
   <div id="gameover" class="menu-overlay hidden">
     <div class="menu-container">
       <h1>VOCE MORREU</h1>
@@ -141,7 +167,7 @@
     </div>
   </div>
 
-  <!-- CALIBRADOR DE ARMAS -->
+  <!-- ═══ CALIBRADOR DE ARMAS ═══ -->
   <div id="calibration" class="menu-overlay hidden">
     <div class="calib-container">
       <div class="calib-header">
@@ -165,7 +191,7 @@
     </div>
   </div>
 
-  <!-- CONFIGURAÇÃO DE CONTROLES -->
+  <!-- ═══ CONTROLES ═══ -->
   <div id="controls-menu" class="menu-overlay hidden">
     <div class="controls-container">
       <div class="controls-header">
@@ -192,6 +218,7 @@
     </div>
   </div>
 
+  <!-- ═══ MOBILE CONTROLS ═══ -->
   <div id="mobile-controls" class="hidden">
     <div id="joystick-zone"><div id="joystick-base"><div id="joystick-stick"></div></div></div>
     <div id="look-zone"></div>
@@ -202,6 +229,7 @@
     <button id="btn-revive">REVIVER</button>
   </div>
 
+  <!-- ═══ IMPORTMAP ═══ -->
   <script type="importmap">
   {
     "imports": {
