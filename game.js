@@ -1,10 +1,11 @@
 // ============================================================
-// game.js — v16 "ZB3 Dismemberment" (PARTE 1/3)
+// game.js — v17 "ZB3 Fixed"
 // ============================================================
-// Estrutura completa em 3 partes:
-//   PARTE 1 (esta)  → Setup, Config, State, Scene, World, Player
-//   PARTE 2         → Zumbis, Combate, Sangue, Ragdoll, Efeitos
-//   PARTE 3         → Waves, Input, updatePlayer, Loop, UI, Start
+// Integra:
+//   • Sistema ZB3 de desmembramento (Verlet + gibs + stumps)
+//   • ZB2 Zombie Systems (LOD 3-state + população por POI)
+//   • Correções: raycast O(1), transform local, material clone,
+//     dispose completo, hp/health, spawn robusto
 // ============================================================
 
 import * as THREE from 'three';
@@ -21,10 +22,8 @@ import { SpatialGrid } from './src/core/spatial-grid.js';
 import { geoBox, geoSphere, geoCyl, matL, matB, zMat } from './src/core/geo-cache.js';
 import { enrichWeapons, MELEE_TYPES, ZOMBIE_LORE, formatWeaponTooltip } from './src/core/lore.js';
 import { initPhysics, stepPhysics, addStaticBox, clearPhysics } from './src/core/ragdoll-physics.js';
-
 import { Action, getControls } from './save-controls.js';
 import { ControlsUI } from './controls-ui.js';
-
 import * as Daytime from './src/core/daytime.js';
 import * as Gore from './src/core/gore.js';
 import * as ZombieAI from './src/core/zombie-ai.js';
@@ -37,16 +36,12 @@ import { Weapon3DView } from './src/render/viewmodel-3d.js';
 import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pickup-3d.js';
 import { getWeaponIconURL, getAmmoIconURL } from './src/render/weapon-icon-renderer.js';
 import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
-
-import { preloadGibs, createGib } from './gib-models.js';
-import { preloadGibGLBs, createLimb, hasLimb, createCorpse, listCorpseTypes } from './gib-glb.js';
+import { preloadGibs } from './gib-models.js';
+import { preloadGibGLBs } from './gib-glb.js';
 import { preloadCharacters, createCharacter } from './character-models.js';
 import { precacheAllWeaponGLBs } from './src/render/weapon-models.js';
-
 import { applyPerk, getPerk } from './perks-system.js';
-import { buildCartoonZombie } from './zombie-procedural.js';
 
-// ─── ZB2 Zombie Systems (LOD + população) ───
 import {
   ZombieLoadState,
   initZombieSystems,
@@ -54,23 +49,19 @@ import {
   updateZombieSleepState,
   tickZombiePopulation,
   applyZombieWaterDamage,
-  getZombieSystemStats,
 } from './zb2-zombie-systems.js';
 
-// ─── ZB3 Dismemberment (Verlet + gibs + stumps) ───
 import {
-  LIMBS, L2G, GONE, STUMP, GIBEND, LINKS,
-  computePose, renderFigure, placeLimb,
+  LIMBS, L2G, GONE, STUMP, GIBEND,
+  computePose, renderFigure,
   VerletRagdoll, LimbGib, tryDismember,
+  SHARED_BOX, SHARED_STUMP_GEO,
 } from './zombie-dismember.js';
 
 bus.setAdapter(new LocalAdapter());
 window.ZOMBIE_TYPES_FROM_MODULE = ZOMBIE_TYPES;
 const controls = getControls();
 
-// ════════════════════════════════════════════════════════════
-// PRECACHE
-// ════════════════════════════════════════════════════════════
 window.__assetsReady = false;
 (async () => {
   console.log('[game] 📦 Carregando assets...');
@@ -81,54 +72,45 @@ window.__assetsReady = false;
   window.__assetsReady = true;
 })();
 
-// ════════════════════════════════════════════════════════════
-// HELPERS
-// ════════════════════════════════════════════════════════════
+// ─── HELPERS ───
 const roundedBoxCache = new Map();
 function geoRoundBox(w, h, d, radius = 0.03) {
   const k = `rb:${w.toFixed(3)}:${h.toFixed(3)}:${d.toFixed(3)}:${radius.toFixed(3)}`;
   let g = roundedBoxCache.get(k);
   if (!g) {
     const r = Math.min(radius, Math.min(w, h, d) * 0.45);
-    const minDim = Math.min(w, h, d);
-    g = minDim < 0.08 ? new THREE.BoxGeometry(w, h, d) : new RoundedBoxGeometry(w, h, d, 2, r);
+    g = Math.min(w, h, d) < 0.08 ? new THREE.BoxGeometry(w, h, d) : new RoundedBoxGeometry(w, h, d, 2, r);
     roundedBoxCache.set(k, g);
   }
   return g;
 }
-
 const MAT_EYE_WHITE = matB(0xFFFFFF);
 const MAT_EYE_BLACK = matB(0x000000);
-const MAT_WOUND     = matB(0xC0392B);
+const MAT_WOUND = matB(0xC0392B);
 
-// ════════════════════════════════════════════════════════════
-// WEAPONS
-// ════════════════════════════════════════════════════════════
+// ─── WEAPONS ───
 const WEAPONS = {
-  knife:       { id:'knife',       name:'FACA',           slot:1, type:'melee',  damage:35, range:3.0, cooldown:0.55, cost:0,    color:0xBDC3C7, arc:0.35, hitCount:1, chop:0.65 },
-  woodenClub:  { id:'woodenClub',  name:'PORRETE',        slot:1, type:'melee',  damage:55, range:2.8, cooldown:0.75, cost:30,   color:0x8B5A2B, arc:0.4,  hitCount:2, chop:0.15 },
-  pipe:        { id:'pipe',        name:'CANO DE FERRO',  slot:1, type:'melee',  damage:60, range:3.2, cooldown:0.65, cost:50,   color:0x7F8C8D, arc:0.35, hitCount:2, chop:0.25 },
-  cleaver:     { id:'cleaver',     name:'CUTELO',         slot:1, type:'melee',  damage:70, range:2.5, cooldown:0.7,  cost:80,   color:0xC0C0C0, arc:0.3,  hitCount:1, chop:0.8 },
-  shovel:      { id:'shovel',      name:'PÁ',             slot:1, type:'melee',  damage:45, range:3.5, cooldown:0.8,  cost:60,   color:0x5D4030, arc:0.35, hitCount:2, chop:0.1, push:true },
-  katana:      { id:'katana',      name:'KATANA',         slot:1, type:'melee',  damage:90, range:3.3, cooldown:0.5,  cost:400,  color:0xE8E8E8, arc:0.4,  hitCount:3, chop:0.95 },
-  kukri:       { id:'kukri',       name:'KUKRI',          slot:1, type:'melee',  damage:75, range:2.8, cooldown:0.55, cost:200,  color:0xB0B0B0, arc:0.35, hitCount:2, chop:0.85 },
-  pipeWrench:  { id:'pipeWrench',  name:'CHAVE GRIFO',    slot:1, type:'melee',  damage:65, range:2.9, cooldown:0.9,  cost:70,   color:0x4A4A4A, arc:0.4,  hitCount:1, chop:0.1 },
-  reaperScythe:{ id:'reaperScythe',name:'FOICE DO CEIFADOR',slot:1,type:'melee', damage:180,range:4.0, cooldown:1.0,  cost:1500, color:0x1A1A1A, arc:0.6,  hitCount:5, chop:1.0 },
-  pistol:      { id:'pistol',      name:'PISTOLA',        slot:2, type:'ranged', damage:40, range:16, cooldown:0.28, cost:40,   spread:0.02,  pellets:1, auto:false, color:0x2C3E50, magSize:12, reserveMax:120, reloadTime:1.3 },
-  revolver:    { id:'revolver',    name:'REVOLVER',       slot:2, type:'ranged', damage:90, range:15, cooldown:0.75, cost:120,  spread:0.008, pellets:1, auto:false, color:0x4A4A4A, magSize:6,  reserveMax:42,  reloadTime:2.2 },
-  smg:         { id:'smg',         name:'SMG',            slot:3, type:'ranged', damage:18, range:13, cooldown:0.075,cost:160,  spread:0.07,  pellets:1, auto:true,  color:0x34495E, magSize:30, reserveMax:240, reloadTime:1.9 },
-  rifle:       { id:'rifle',       name:'RIFLE',          slot:3, type:'ranged', damage:160,range:30, cooldown:1.1,  cost:320,  spread:0.005, pellets:1, auto:false, color:0x2C3E50, magSize:5,  reserveMax:40,  reloadTime:2.9 },
-  shotgun:     { id:'shotgun',     name:'SHOTGUN',        slot:3, type:'ranged', damage:32, range:8,  cooldown:1.15, cost:220,  spread:0.22,  pellets:10,auto:false, color:0x8B4513, magSize:5,  reserveMax:30,  reloadTime:2.5 },
-  launcher:    { id:'launcher',    name:'LANÇA-FOGUETES', slot:4, type:'ranged', damage:250,range:20, cooldown:1.9,  cost:700,  spread:0.02,  pellets:1, auto:false, color:0xC0392B, magSize:1,  reserveMax:5,   reloadTime:3.5 },
+  knife:       { id:'knife',       name:'FACA',             slot:1, type:'melee',  damage:35, range:3.0, cooldown:0.55, cost:0,    color:0xBDC3C7, arc:0.35, hitCount:1, chop:0.65 },
+  woodenClub:  { id:'woodenClub',  name:'PORRETE',          slot:1, type:'melee',  damage:55, range:2.8, cooldown:0.75, cost:30,   color:0x8B5A2B, arc:0.4,  hitCount:2, chop:0.15 },
+  pipe:        { id:'pipe',        name:'CANO DE FERRO',    slot:1, type:'melee',  damage:60, range:3.2, cooldown:0.65, cost:50,   color:0x7F8C8D, arc:0.35, hitCount:2, chop:0.25 },
+  cleaver:     { id:'cleaver',     name:'CUTELO',           slot:1, type:'melee',  damage:70, range:2.5, cooldown:0.7,  cost:80,   color:0xC0C0C0, arc:0.3,  hitCount:1, chop:0.8 },
+  shovel:      { id:'shovel',      name:'PÁ',               slot:1, type:'melee',  damage:45, range:3.5, cooldown:0.8,  cost:60,   color:0x5D4030, arc:0.35, hitCount:2, chop:0.1, push:true },
+  katana:      { id:'katana',      name:'KATANA',           slot:1, type:'melee',  damage:90, range:3.3, cooldown:0.5,  cost:400,  color:0xE8E8E8, arc:0.4,  hitCount:3, chop:0.95 },
+  kukri:       { id:'kukri',       name:'KUKRI',            slot:1, type:'melee',  damage:75, range:2.8, cooldown:0.55, cost:200,  color:0xB0B0B0, arc:0.35, hitCount:2, chop:0.85 },
+  pipeWrench:  { id:'pipeWrench',  name:'CHAVE GRIFO',      slot:1, type:'melee',  damage:65, range:2.9, cooldown:0.9,  cost:70,   color:0x4A4A4A, arc:0.4,  hitCount:1, chop:0.1 },
+  reaperScythe:{ id:'reaperScythe',name:'FOICE DO CEIFADOR',slot:1, type:'melee',  damage:180,range:4.0, cooldown:1.0,  cost:1500, color:0x1A1A1A, arc:0.6,  hitCount:5, chop:1.0 },
+  pistol:      { id:'pistol',      name:'PISTOLA',          slot:2, type:'ranged', damage:40, range:16, cooldown:0.28, cost:40,   spread:0.02,  pellets:1, auto:false, color:0x2C3E50, magSize:12, reserveMax:120, reloadTime:1.3 },
+  revolver:    { id:'revolver',    name:'REVOLVER',         slot:2, type:'ranged', damage:90, range:15, cooldown:0.75, cost:120,  spread:0.008, pellets:1, auto:false, color:0x4A4A4A, magSize:6,  reserveMax:42,  reloadTime:2.2 },
+  smg:         { id:'smg',         name:'SMG',              slot:3, type:'ranged', damage:18, range:13, cooldown:0.075,cost:160,  spread:0.07,  pellets:1, auto:true,  color:0x34495E, magSize:30, reserveMax:240, reloadTime:1.9 },
+  rifle:       { id:'rifle',       name:'RIFLE',            slot:3, type:'ranged', damage:160,range:30, cooldown:1.1,  cost:320,  spread:0.005, pellets:1, auto:false, color:0x2C3E50, magSize:5,  reserveMax:40,  reloadTime:2.9 },
+  shotgun:     { id:'shotgun',     name:'SHOTGUN',          slot:3, type:'ranged', damage:32, range:8,  cooldown:1.15, cost:220,  spread:0.22,  pellets:10,auto:false, color:0x8B4513, magSize:5,  reserveMax:30,  reloadTime:2.5 },
+  launcher:    { id:'launcher',    name:'LANÇA-FOGUETES',   slot:4, type:'ranged', damage:250,range:20, cooldown:1.9,  cost:700,  spread:0.02,  pellets:1, auto:false, color:0xC0392B, magSize:1,  reserveMax:5,   reloadTime:3.5 },
 };
 enrichWeapons(WEAPONS);
-
 const AMMO_PACKS  = { pistol:60, revolver:12, smg:90, rifle:15, shotgun:15, launcher:2 };
 const AMMO_PRICES = { pistol:5,  revolver:15, smg:25, rifle:40, shotgun:30, launcher:100 };
 
-// ════════════════════════════════════════════════════════════
-// SKILLS
-// ════════════════════════════════════════════════════════════
+// ─── SKILLS ───
 const SKILLS = [
   { id:'vitality',   icon:'V', name:'VITALIDADE',   desc:'+20 HP maximo',      apply:()=>{ state.maxHealth+=20; state.health=Math.min(state.maxHealth,state.health+20); } },
   { id:'strength',   icon:'F', name:'FORCA',        desc:'+15% dano',          apply:()=>{ state.damageMult+=0.15; } },
@@ -143,9 +125,6 @@ const SKILLS = [
   { id:'heavy',      icon:'H', name:'GOLPE PESADO', desc:'+0.5x dano critico', apply:()=>{ state.critDamageBonus+=0.5; } },
 ];
 
-// ════════════════════════════════════════════════════════════
-// WAVE PACKAGES
-// ════════════════════════════════════════════════════════════
 const WAVE_PACKAGES = [
   { firstWave: 1,  lastWave: 3,   types: ['pt'],                                       baseZombies: 5,  zombiesPerWave: 2, timeVariation: 0.20 },
   { firstWave: 4,  lastWave: 6,   types: ['pt','runner'],                              baseZombies: 8,  zombiesPerWave: 3, timeVariation: 0.25 },
@@ -154,50 +133,28 @@ const WAVE_PACKAGES = [
   { firstWave: 13, lastWave: 999, types: ['combat','brute','riot','boomer','spitter'], baseZombies: 16, zombiesPerWave: 4, timeVariation: 0.40 },
 ];
 
-// ════════════════════════════════════════════════════════════
-// CONFIG
-// ════════════════════════════════════════════════════════════
 const CONFIG = {
-  player: {
-    speed:7.0, height:1.7, maxHealth:100, radius:0.4,
-    staminaMax:100, staminaRegen:25, staminaDrainRun:14,
-    sprintMult:1.55,
-    jumpForce:7.0, jumpForwardForce:6.5, jumpAirDecay:2.2, gravity:22,
-    vaultSpeed:8.5, vaultDuration:0.55, vaultHeightMax:1.6,
-  },
+  player: { speed:7.0, height:1.7, maxHealth:100, radius:0.4, staminaMax:100, staminaRegen:25, staminaDrainRun:14, sprintMult:1.55, jumpForce:7.0, jumpForwardForce:6.5, jumpAirDecay:2.2, gravity:22, vaultSpeed:8.5, vaultDuration:0.55, vaultHeightMax:1.6 },
   zombie: { speed:3.0, maxHealth:40, damage:8, attackRange:1.6, attackCooldown:1.2, xpReward:10, coinReward:2, knockbackStagger:0.25, radius:0.4 },
   pursuit: { responsiveness:3.8, arrivalRadius:1.15 },
   scaling: { hpPerWave:0.10, dmgPerWave:0.05, speedPerWave:0.02, speedCap:1.30 },
   aggro: { alertRadius:8.0, alertDuration:3.0, alertSpeedMult:1.4 },
-  wave: { breakTime:5, bossEvery:5, clearBonusBase:15, clearBonusPerWave:5, clearHealFrac:0.15, clearAmmoFrac:0.30, maxZombies:24 },
+  wave: { breakTime:5, bossEvery:5, clearBonusBase:15, clearBonusPerWave:5, clearHealFrac:0.15, clearAmmoFrac:0.30, maxZombies:16 },
   arena: { size: 600 },
   island: { innerRadius: 200, waterY: -2.5, waterMargin: 2.0 },
-  ragdoll: { maxActive:3, settleTime:15, fadeDuration:1.2, impactImpulse:10, sliceRange:3.5, sliceDotMin:0.25 },
   crit: { baseChance:0.15, damageMultiplier:2 },
-  dismember: { headChance:0.65, armChance:0.55, legChance:0.55, limbSpeed:16, limbLife:12 },
   headshotMultiplier: 2.5,
   shake: { hit:0.05, kill:0.12, shoot:0.03, explosion:0.5 },
   melee: { coneDot:0.35, hitstop:0.055 },
   launcher: { explosionRadius:5, selfDamageFactor:0.4 },
   downed: { selfReviveAt:15000, selfReviveHold:3000, duration:30000, maxHP:30, maxRevives:2 },
-  debris: { minHitSpeed2:6, pushRadiusBonus:0.6, staggerTime:0.22 },
-  brazier: { fuelPerWave:1, maxFuel:3, costPerBurn:1, waveSpeedBoost:3.0, rewardMult:2.0 },
-  vendor: { spawnEveryWaves:3, durationSec:60, buyDiscount:0.8, sellRate:0.4 },
-  crawl: { speedMul:0.35, attackRangeMul:0.75, cooldownMul:1.4 },
-  ik: { lookAtMaxYaw: 0.6, lookAtHeadShare: 0.75, leanTowardPlayerDist: 4, leanAmount: 0.10, footMinY: -0.02 },
+  brazier: { fuelPerWave:1, maxFuel:3, waveSpeedBoost:3.0, rewardMult:2.0 },
+  vendor: { spawnEveryWaves:3, durationSec:60, buyDiscount:0.8 },
   loot: { pickupRadius: 1.6, bobSpeed: 2.5, spinSpeed: 1.5 },
-  attackPermission: {
-    maxAttackersEasy: 4, maxAttackersMedium: 3,
-    maxAttackersHard: 2, maxAttackersVeryHard: 2,
-    cooldownPerZombie: 1.8, distanceThreshold: 18,
-  },
-  spine: { maxYawDegrees: 55, maxPitchDegrees: 30, lerpSpeed: 6 },
+  attackPermission: { maxAttackersEasy: 4, maxAttackersMedium: 3, maxAttackersHard: 2, maxAttackersVeryHard: 2, cooldownPerZombie: 1.8, distanceThreshold: 18 },
   difficultyRegions: { randomizePerMatch: true, offsetsRange: 40 },
 };
 
-// ════════════════════════════════════════════════════════════
-// LOOT TABLE per RoomLootID + tier
-// ════════════════════════════════════════════════════════════
 const LOOT_TABLE = {
   generic:           { tier1:'food',     tier2:'ammo',     tier3:'medkit',   tier4:'ammo',   tier5:'ammo'   },
   bedroom:           { tier1:'food',     tier2:'medkit',   tier3:'ammo',     tier4:'ammo',   tier5:'ammo'   },
@@ -214,9 +171,7 @@ const LOOT_TABLE = {
   gov_office:        { tier1:'cash',     tier2:'cash',     tier3:'cash',     tier4:'medkit', tier5:'ammo'   },
 };
 
-// ════════════════════════════════════════════════════════════
-// STATE
-// ════════════════════════════════════════════════════════════
+// ─── STATE ───
 const state = {
   waveIntervalId:null, waveStartTimeoutId:null,
   health:CONFIG.player.maxHealth, maxHealth:CONFIG.player.maxHealth,
@@ -231,7 +186,7 @@ const state = {
   levelUpActive:false, pendingLevelUps:0,
   inventory:{ 1:'knife', 2:null, 3:null, 4:null }, currentSlot:1,
   mouseDown:false, aiming:false, shake:0,
-  ammo:{}, reload:{ active:false, wid:null, elapsed:0, duration:0, startTime:0, endTime:0 },
+  ammo:{}, reload:{ active:false, wid:null, elapsed:0, duration:0 },
   shopOpen:false,
   downed:false, downedElapsed:0, downedHP:0, downedMaxHP:CONFIG.downed.maxHP,
   reviveProgress:0, revivesLeft:CONFIG.downed.maxRevives, invulnUntil:0,
@@ -242,32 +197,25 @@ const state = {
   hitstopUntil:0,
   isGrounded:true, velocityY:0, jumpOffset:0,
   jumpVelX:0, jumpVelZ:0, isSprinting:false,
-  brazierFuel:1, brazierBurning:false, brazierBurnStart:0,
-  vendorVanActive:false, vendorVanSpawnedAt:0, vendorVanWave:0,
-  bossSpawned: false,
+  brazierFuel:1, brazierBurning:false,
+  vendorVanActive:false, vendorVanSpawnedAt:0,
+  bossSpawned: false, bossPos: null,
   mouseDX: 0, mouseDY: 0,
   reviveSpeedMult: 1, reviveHealBonus: 0,
-  shopDiscount: 1, sellBonus: 1,
-  reloadSpeedMult: 1, reserveAmmoBonus: 0,
-  healMult: 1, autoBandage: false,
-  recoilMult: 1, sprintSpeedBonus: 1,
+  shopDiscount: 1, reloadSpeedMult: 1, reserveAmmoBonus: 0,
+  healMult: 1, recoilMult: 1, sprintSpeedBonus: 1,
   killRefillsStamina: false, killStaminaDuration: 0,
   brazierDurationMult: 1, brazierFuelBonus: 1,
   activePerk: null, staminaBoostUntil: 0,
   discoveredPOIs: new Set(),
   vaulting: false, vaultTimer: 0, vaultVelX: 0, vaultVelZ: 0, vaultTargetY: 0,
-  attackPermission: { grantedThisFrame: 0, zombiesSinceLastGrant: 0, recentAttackers: new Map() },
-  torsoYaw: 0, torsoPitch: 0,
+  attackPermission: { recentAttackers: new Map() },
   zombiesRef: [],
+  zombiesToRemove: [],
 };
 
-// ─── HUD validation ───
 (function validateHUD() {
-  const expected = [
-    'hp-fill','hp-text','xp-fill','coins','wave','level','zombies',
-    'revives','weapon-name','weapon-class','weapon-tooltip',
-    'ammo-current','ammo-reserve','timer',
-  ];
+  const expected = ['hp-fill','hp-text','xp-fill','coins','wave','level','zombies','revives','weapon-name','weapon-class','weapon-tooltip','ammo-current','ammo-reserve','timer'];
   const missing = expected.filter(id => !document.getElementById(id));
   if (missing.length > 0) console.error(`[game] ❌ IDs HUD faltando:`, missing);
 })();
@@ -289,14 +237,12 @@ const HUD = {
   timer:         document.getElementById('timer'),
 };
 
-// ════════════════════════════════════════════════════════════
-// SCENE
-// ════════════════════════════════════════════════════════════
+// ─── SCENE ───
 const container = document.getElementById('game-container');
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0xC5E0F5, 60, 200);
+scene.fog = new THREE.Fog(0xC5E0F5, 40, 140);
 
-const camera = new THREE.PerspectiveCamera(78, window.innerWidth/window.innerHeight, 0.1, 350);
+const camera = new THREE.PerspectiveCamera(78, window.innerWidth/window.innerHeight, 0.1, 200);
 window.__qbCamera = camera;
 camera.position.set(70, CONFIG.player.height, 70);
 
@@ -308,36 +254,30 @@ renderer.shadowMap.type = THREE.BasicShadowMap;
 renderer.shadowMap.autoUpdate = false;
 container.appendChild(renderer.domElement);
 
-// ─── Iluminação ───
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
 scene.add(ambientLight);
-
 const hemiLight = new THREE.HemisphereLight(0x8ecae6, 0x5a7a3a, 0.65);
 hemiLight.position.set(0, 50, 0);
 scene.add(hemiLight);
-
 const sun = new THREE.DirectionalLight(0xfff4e0, 1.15);
 sun.position.set(80, 120, 60);
 sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
-sun.shadow.camera.left = -60;
-sun.shadow.camera.right = 60;
-sun.shadow.camera.top = 60;
-sun.shadow.camera.bottom = -60;
-sun.shadow.camera.far = 200;
+sun.shadow.mapSize.set(512, 512);
+sun.shadow.camera.left = -35;
+sun.shadow.camera.right = 35;
+sun.shadow.camera.top = 35;
+sun.shadow.camera.bottom = -35;
+sun.shadow.camera.far = 120;
 sun.shadow.bias = -0.001;
 sun.shadow.normalBias = 0.02;
 scene.add(sun);
 scene.add(sun.target);
 
 scene.add(new THREE.Mesh(
-  new THREE.SphereGeometry(400, 16, 8),
+  new THREE.SphereGeometry(300, 8, 6),
   new THREE.MeshBasicMaterial({ map:Textures.skyTexture(), side:THREE.BackSide, fog:false })
 ));
 
-// ════════════════════════════════════════════════════════════
-// WORLD
-// ════════════════════════════════════════════════════════════
 console.log(`[game] 🏝️  Construindo ilha...`);
 const world = buildWorld(scene, CONFIG.arena.size);
 initPhysics(scene);
@@ -351,7 +291,6 @@ scene.traverse(obj => {
   }
 });
 
-// ─── Dificuldade 4-tier ───
 function randomizeDifficultyRegions() {
   if (!CONFIG.difficultyRegions.randomizePerMatch) return;
   const off = CONFIG.difficultyRegions.offsetsRange;
@@ -362,27 +301,19 @@ function randomizeDifficultyRegions() {
 }
 randomizeDifficultyRegions();
 
-// ════════════════════════════════════════════════════════════
-// LOOT SPOTS
-// ════════════════════════════════════════════════════════════
 const lootSpots = [];
 function initLootSpots() {
   for (const spot of world.lootSpots) {
-    const color = spot.type === 'ammo'    ? 0xFFAA33
-                : spot.type === 'medkit'  ? 0xFF4444
-                : spot.type === 'food'    ? 0x66DD66
-                : spot.type === 'cash'    ? 0xFFDD33
-                : 0x99AAFF;
-    const geo = new THREE.BoxGeometry(0.35, 0.35, 0.35);
-    const mat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.4 });
-    const mesh = new THREE.Mesh(geo, mat);
+    const color = spot.type === 'ammo' ? 0xFFAA33
+                : spot.type === 'medkit' ? 0xFF4444
+                : spot.type === 'food' ? 0x66DD66
+                : spot.type === 'cash' ? 0xFFDD33 : 0x99AAFF;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35),
+      new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.4 }));
     mesh.position.set(spot.x, spot.y + 0.3, spot.z);
-    mesh.castShadow = true;
     scene.add(mesh);
-    const halo = new THREE.Mesh(
-      new THREE.RingGeometry(0.4, 0.55, 16),
-      new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.5, side:THREE.DoubleSide, depthWrite:false })
-    );
+    const halo = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.55, 16),
+      new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.5, side:THREE.DoubleSide, depthWrite:false }));
     halo.rotation.x = -Math.PI/2;
     halo.position.set(spot.x, 0.06, spot.z);
     scene.add(halo);
@@ -391,14 +322,11 @@ function initLootSpots() {
 }
 initLootSpots();
 
-// ════════════════════════════════════════════════════════════
-// CAVES (spawn em redor da ilha)
-// ════════════════════════════════════════════════════════════
 const caves = [];
 {
-  const R = world.island.innerRadius * 0.95;
-  for (let i = 0; i < 12; i++) {
-    const angle = (i / 12) * Math.PI * 2;
+  const R = world.island.innerRadius * 0.9;
+  for (let i = 0; i < 10; i++) {
+    const angle = (i / 10) * Math.PI * 2;
     const x = Math.cos(angle) * R;
     const z = Math.sin(angle) * R;
     const mesh = createCave(x, z, angle);
@@ -420,8 +348,6 @@ function createCave(x, z, rotationY) {
   }
   rock(-1.8, 1.4, 0.2, 1.8, 2.8, 2.0, rockMat);
   rock(1.8, 1.4, 0.2, 1.8, 2.8, 2.0, rockMat);
-  rock(-0.9, 3.2, 0.2, 1.6, 1.4, 2.2, darkRock);
-  rock(0.9, 3.2, 0.2, 1.6, 1.4, 2.2, darkRock);
   rock(0, 3.6, 0.2, 3.6, 0.9, 2.0, rockMat);
   const hole = new THREE.Mesh(geoBox(2.6, 2.6, 0.4, 1), holeMat);
   hole.position.set(0, 1.3, -1.0);
@@ -432,14 +358,12 @@ function createCave(x, z, rotationY) {
   return g;
 }
 
-// ─── Bounds da ilha ───
 function clampToIsland(pos, radius = 0.4) {
   const R = world.island.innerRadius - CONFIG.island.waterMargin - radius;
   const d = Math.hypot(pos.x, pos.z);
   if (d > R) { const k = R / d; pos.x *= k; pos.z *= k; }
 }
 
-// ─── Vault ───
 function tryVaultBarrier() {
   if (state.vaulting || !state.isGrounded) return false;
   const px = player.position.x, pz = player.position.z;
@@ -462,9 +386,7 @@ function tryVaultBarrier() {
   return false;
 }
 
-// ════════════════════════════════════════════════════════════
-// VIEWMODEL + UI CONTROLS
-// ════════════════════════════════════════════════════════════
+// ─── VIEWMODEL / CONTROLS ───
 scene.add(camera);
 let weaponView = null;
 let calibrator = null;
@@ -483,9 +405,8 @@ function initCalibrator() {
     closeBtn:   document.getElementById('btn-calib-close'),
   });
 }
-document.getElementById('btn-calibrate').addEventListener('click', () => {
-  initCalibrator(); calibrator.open();
-});
+const _btnCalib = document.getElementById('btn-calibrate');
+if (_btnCalib) _btnCalib.addEventListener('click', () => { initCalibrator(); calibrator.open(); });
 
 function initControlsUI() {
   if (controlsUI) return;
@@ -503,20 +424,11 @@ function initControlsUI() {
 }
 initControlsUI();
 
-function initWeaponView() {
-  if (weaponView) weaponView.dispose();
-  weaponView = new Weapon3DView(camera);
-}
-function setWeaponViewModel(weaponId) {
-  if (!weaponView) initWeaponView();
-  weaponView.setVisible(true);
-  weaponView.setWeapon(weaponId);
-}
+function initWeaponView() { if (weaponView) weaponView.dispose(); weaponView = new Weapon3DView(camera); }
+function setWeaponViewModel(wid) { if (!weaponView) initWeaponView(); weaponView.setVisible(true); weaponView.setWeapon(wid); }
 function triggerSwing() { if (weaponView) weaponView.swing(); }
 
-// ════════════════════════════════════════════════════════════
-// PLAYER + ZB2 ZOMBIE SYSTEMS INIT
-// ════════════════════════════════════════════════════════════
+// ─── PLAYER ───
 const player = {
   id: nextId('p'),
   position: new THREE.Vector3(70, CONFIG.player.height, 70),
@@ -525,43 +437,35 @@ const player = {
 };
 
 initZombieSystems({ world, scene, config: CONFIG, caves, player });
-
 Daytime.initDaytime(scene, sun, ambientLight);
 Gore.initGore(scene);
 Extraction.initExtraction(scene, player);
 BossAI.initBossSystem(scene, camera, player, spawnBossProjectile);
 
 ZombieAI.registerAICallbacks({
-  spawnToxProjectile: ({ origin, dir, speed, damage, radius }) => {
-    spawnBossProjectile({ type: 'tox', origin, dir, speed, damage, radius });
-  },
-  onBoomerExplode: (z) => { spawnExplosion(z.mesh ? z.mesh.position : z.p); },
+  spawnToxProjectile: ({ origin, dir, speed, damage, radius }) => spawnBossProjectile({ type: 'tox', origin, dir, speed, damage, radius }),
+  onBoomerExplode: (z) => spawnExplosion(z.p ? z.p.clone() : z.mesh.position.clone()),
 });
 
 bus.on(Ev.WORLD_BLOOD_MOON, () => { addShake(0.5); showWaveBanner('LUA DE SANGUE!'); });
 bus.on(Ev.EXTRACTION_SPAWNED, () => showWaveBanner('HELICÓPTERO CHEGANDO!'));
 bus.on(Ev.EXTRACTION_LANDED,  () => showWaveBanner('ENTRE NO HELICÓPTERO!'));
 
-// ════════════════════════════════════════════════════════════
-// BOSS PROJECTILES
-// ════════════════════════════════════════════════════════════
+// ─── BOSS PROJECTILES ───
 const bossProjectiles = [];
 function spawnBossProjectile({ type, origin, dir, speed, damage, radius }) {
   const geo = new THREE.SphereGeometry(radius, type === 'tox' ? 10 : 6, type === 'tox' ? 8 : 4);
-  const color = type === 'tox' ? 0x66ff33 : 0xffdd44;
-  const mat = new THREE.MeshBasicMaterial({ color });
-  const m = new THREE.Mesh(geo, mat);
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: type === 'tox' ? 0x66ff33 : 0xffdd44 }));
   m.position.copy(origin);
   scene.add(m);
-  bossProjectiles.push({ mesh: m, dir: dir.clone(), speed, damage, life: 3, type });
+  bossProjectiles.push({ mesh: m, dir: dir.clone(), speed, damage, life: 3 });
 }
 function updateBossProjectiles(dt) {
   for (let i = bossProjectiles.length - 1; i >= 0; i--) {
     const p = bossProjectiles[i];
     p.life -= dt;
     p.mesh.position.addScaledVector(p.dir, p.speed * dt);
-    const d = p.mesh.position.distanceTo(player.position);
-    if (d < 0.8) {
+    if (p.mesh.position.distanceTo(player.position) < 0.8) {
       state.health -= p.damage;
       survival.onPlayerHit(p.damage);
       showDamageFlash(); updateHUD();
@@ -570,21 +474,19 @@ function updateBossProjectiles(dt) {
       bossProjectiles.splice(i, 1);
       continue;
     }
-    if (p.life <= 0 || p.mesh.position.y < 0) {
+    if (p.life <= 0) {
       scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose();
       bossProjectiles.splice(i, 1);
     }
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// DIFFICULTY 4-tier
-// ════════════════════════════════════════════════════════════
+// ─── DIFFICULTY TIERS ───
 function getDifficultyTier(x, z) {
   if (!world.difficultyRegions) return 0;
-  for (const region of world.difficultyRegions) {
-    const d = Math.hypot(x - region.centerX, z - region.centerZ);
-    if (d >= region.innerRadius && d < region.outerRadius) return region.tier;
+  for (const r of world.difficultyRegions) {
+    const d = Math.hypot(x - r.centerX, z - r.centerZ);
+    if (d >= r.innerRadius && d < r.outerRadius) return r.tier;
   }
   return 0;
 }
@@ -596,21 +498,15 @@ const TIER_ZOMBIE_TYPES = {
   3: ['combat','security','brute','boomer','spitter'],
 };
 
-// ════════════════════════════════════════════════════════════
-// ENTITY HELPERS (usados por várias partes)
-// ════════════════════════════════════════════════════════════
+// ─── HELPERS ───
 function smoothstep(x) { if (x < 0) x = 0; else if (x > 1) x = 1; return x*x*(3-2*x); }
-function smoothDamp(current, target, speed, dt) {
-  return current + (target - current) * (1 - Math.exp(-speed * dt));
-}
+function smoothDamp(current, target, speed, dt) { return current + (target - current) * (1 - Math.exp(-speed * dt)); }
 function rollCrit() { return Math.random() < state.critChance; }
 
-// ════════════════════════════════════════════════════════════
-// HUD FEEDBACK (usado por todo o resto)
-// ════════════════════════════════════════════════════════════
-const hitMarker   = document.getElementById('hit-marker');
+// ─── HUD FEEDBACK ───
+const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
-const waveBanner  = document.getElementById('wave-banner');
+const waveBanner = document.getElementById('wave-banner');
 
 function showHitMarker(critical = false) {
   if (!hitMarker) return;
@@ -626,7 +522,6 @@ function showDamageFlash() {
   setTimeout(() => damageFlash.classList.remove('active'), 120);
 }
 function addShake(amount) { state.shake = Math.min(0.7, state.shake + amount); }
-
 function showWaveBanner(text) {
   if (!waveBanner) return;
   waveBanner.textContent = text;
@@ -636,19 +531,13 @@ function showWaveBanner(text) {
     setTimeout(() => waveBanner.classList.add('hidden'), 350);
   }, 1400);
 }
-
 let lootToastTimer = null;
 function showLootToast(text) {
   let el = document.getElementById('loot-toast');
   if (!el) {
     el = document.createElement('div');
     el.id = 'loot-toast';
-    el.style.cssText = `
-      position:fixed; left:50%; top:70%; transform:translateX(-50%);
-      background:rgba(0,0,0,0.7); color:#ffdd00; padding:8px 16px;
-      border-radius:6px; font-family:monospace; font-weight:bold;
-      pointer-events:none; transition:opacity 0.4s; z-index:100;
-    `;
+    el.style.cssText = 'position:fixed;left:50%;top:70%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:#ffdd00;padding:8px 16px;border-radius:6px;font-family:monospace;font-weight:bold;pointer-events:none;transition:opacity 0.4s;z-index:100;';
     document.body.appendChild(el);
   }
   el.textContent = text;
@@ -656,29 +545,28 @@ function showLootToast(text) {
   clearTimeout(lootToastTimer);
   lootToastTimer = setTimeout(() => { el.style.opacity = '0'; }, 1200);
 }
-// ════════════════════════════════════════════════════════════
-// ZOMBIES: ARRAY + HELPERS
-// ════════════════════════════════════════════════════════════
-const zombies = [];
-const ragdolls = [];       // Verlet ragdolls (ZB3)
-const flyingLimbs = [];    // LimbGib instances (ZB3)
 
-// Sprites de materia das limbs (cache)
-let _limbMatsCache = null;
+// ─── ZOMBIES ───
+const zombies = [];
+const ragdolls = [];
+const flyingLimbs = [];
+
+const _limbMatsCacheMap = new Map();
 function getLimbMats(skinColor) {
-  if (!_limbMatsCache || _limbMatsCache.color !== skinColor) {
-    _limbMatsCache = {
+  let c = _limbMatsCacheMap.get(skinColor);
+  if (!c) {
+    c = {
       color: skinColor,
       SKIN: matL(skinColor),
       DARK: matL(new THREE.Color(skinColor).multiplyScalar(0.7).getHex()),
       BODY: matL(0x8aa37b),
       BLOOD: matL(0x8b1a1a),
     };
+    _limbMatsCacheMap.set(skinColor, c);
   }
-  return _limbMatsCache;
+  return c;
 }
 
-// ─── ZB3: createZombieMesh com 16 limb meshes ───
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
   const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey] || { scale: 1 };
@@ -686,9 +574,8 @@ function createZombieMesh(opts = {}) {
 
   const skinColor = type.skin || 0x86bd55;
   const { SKIN, DARK, BODY } = getLimbMats(skinColor);
-  const BOX = new THREE.BoxGeometry(1, 1, 1);
+  const BOX = SHARED_BOX;
 
-  // 16 limb meshes seguindo LIMBS do zombie-dismember.js
   const limbs = LIMBS.map(l => {
     const isExtremity = /Head|Hand|Foot/.test(l[0]);
     const isRight = /^Right/.test(l[0]);
@@ -703,28 +590,17 @@ function createZombieMesh(opts = {}) {
   neck.castShadow = true;
   g.add(neck);
 
-  g.userData = {
-    limbs, neck,
-    gone: {},
-    gore: new Set(),
-    skinColor,
-    typeKey,
-  };
-
+  g.userData = { limbs, neck, gone: {}, gore: new Set(), skinColor, typeKey };
   return g;
 }
 
-// ─── ZB3: poseZombie chama computePose + renderFigure ───
 const _poseScratch = [];
 function poseZombie(z) {
-  const p = computePose(z, _poseScratch);
+  const p = computePose(z, _poseScratch, false);
   renderFigure(p, z.limbs, z.neck, z.gone);
   return p;
 }
 
-// ════════════════════════════════════════════════════════════
-// SPAWN ZOMBIE
-// ════════════════════════════════════════════════════════════
 function spawnZombie(forceType, spawnX, spawnZ) {
   if (typeof spawnX !== 'number' || typeof spawnZ !== 'number') {
     const cave = caves[Math.floor(Math.random() * caves.length)];
@@ -756,7 +632,6 @@ function spawnZombie(forceType, spawnX, spawnZ) {
   const baseHP     = CONFIG.zombie.maxHealth * type.hpMul * hpScale * tierMul;
   const baseDamage = CONFIG.zombie.damage    * type.dmgMul * dmgScale * tierMul;
 
-  // ZB3 schema: z.g, z.p (mesh position), z.hp, z.max, z.top, z.acc, z.limbs, z.gone, z.gore
   const z = {
     id: nextId('z'),
     g: mesh,
@@ -781,7 +656,6 @@ function spawnZombie(forceType, spawnX, spawnZ) {
     hit: false,
     hitDir: new THREE.Vector3(1, 0, 0),
     hitReactEndTime: 0,
-    // ZB3 dismemberment
     limbs: mesh.userData.limbs,
     neck:  mesh.userData.neck,
     gone:  mesh.userData.gone,
@@ -792,7 +666,6 @@ function spawnZombie(forceType, spawnX, spawnZ) {
     rm: false,
     isBoss: false,
     difficultyTier: tier,
-    // ZB2 LOD
     _loadState: ZombieLoadState.REAL,
     _canSleep: false,
     _waterAccum: 0,
@@ -801,10 +674,9 @@ function spawnZombie(forceType, spawnX, spawnZ) {
     armDroopR: -0.05,
     emergeTime: 0,
     _ragdolled: false,
-    // aliases para compatibilidade com zombie-ai.js
     mesh,
     speed: CONFIG.zombie.speed * type.speedMul * spdScale,
-    scale: type.scale,
+    scale: type.scale || 1,
     radius: CONFIG.zombie.radius * (type.scale || 1),
     attackRange: type.attackRange || 1.6,
     attackCooldown: type.cooldown || 1.2,
@@ -812,8 +684,8 @@ function spawnZombie(forceType, spawnX, spawnZ) {
     xpReward: Math.round(CONFIG.zombie.xpReward * type.xpMul * (1 + (state.wave - 1) * 0.06) * tierMul),
     coinReward: Math.round(CONFIG.zombie.coinReward * type.coinMul * (1 + (state.wave - 1) * 0.05) * tierMul),
     typeKey,
-    alertUntil: 0,
     alertedUntil: 0,
+    alertUntil: 0,
     lastAttackTime: 0,
     vx: 0,
     vz: 0,
@@ -823,14 +695,10 @@ function spawnZombie(forceType, spawnX, spawnZ) {
   initStuckState(z);
   ZombieAI.initZombieAIState(z);
   state.zombiesAlive++;
-  bus.emit(Ev.ZOMBIE_SPAWNED, { id:z.id, type:typeKey, tier:type.tier, isBoss:z.isBoss,
-    pos:{ x:mesh.position.x, y:0, z:mesh.position.z } });
+  bus.emit(Ev.ZOMBIE_SPAWNED, { id:z.id, type:typeKey, tier:type.tier, isBoss:z.isBoss, pos:{ x:mesh.position.x, y:0, z:mesh.position.z } });
   updateHUD();
 }
 
-// ════════════════════════════════════════════════════════════
-// ATTACK PERMISSION (ZB2)
-// ════════════════════════════════════════════════════════════
 function maxAttackersForCurrentDifficulty() {
   const w = state.wave;
   if (w <= 2) return CONFIG.attackPermission.maxAttackersEasy;
@@ -841,9 +709,7 @@ function maxAttackersForCurrentDifficulty() {
 function zombieCanAttack(z, now) {
   const maxAttackers = maxAttackersForCurrentDifficulty();
   const recent = state.attackPermission.recentAttackers;
-  for (const [id, t] of recent) {
-    if (now - t > CONFIG.attackPermission.cooldownPerZombie) recent.delete(id);
-  }
+  for (const [id, t] of recent) if (now - t > CONFIG.attackPermission.cooldownPerZombie) recent.delete(id);
   if (recent.has(z.id)) { recent.set(z.id, now); return true; }
   if (recent.size >= maxAttackers) return false;
   const d = Math.hypot(player.position.x - z.p.x, player.position.z - z.p.z);
@@ -852,10 +718,8 @@ function zombieCanAttack(z, now) {
   return true;
 }
 
-// ════════════════════════════════════════════════════════════
-// BLOOD PARTICLES (pool ZB3)
-// ════════════════════════════════════════════════════════════
-const BLOOD_MAX = 400;
+// ─── BLOOD ───
+const BLOOD_MAX = 300;
 const bloodGeo = new THREE.BufferGeometry();
 const bloodPos = new Float32Array(BLOOD_MAX * 3);
 bloodGeo.setAttribute('position', new THREE.BufferAttribute(bloodPos, 3));
@@ -869,11 +733,7 @@ function emitBlood(pos, big) {
   const spread = big ? 2 : 1;
   bloodActive.push({
     p: pos.clone(),
-    v: new THREE.Vector3(
-      (Math.random() - 0.5) * 6 * spread,
-      2 + Math.random() * 4,
-      (Math.random() - 0.5) * 6 * spread
-    ),
+    v: new THREE.Vector3((Math.random()-0.5) * 6 * spread, 2 + Math.random() * 4, (Math.random()-0.5) * 6 * spread),
     t: 0.6 + Math.random() * 0.6,
   });
 }
@@ -894,88 +754,77 @@ function updateBlood(dt) {
   bloodGeo.setDrawRange(0, bloodActive.length);
 }
 
-// ─── Blood pools no chão (ZB2 style) ───
 const bloodPools = [];
+const BLOOD_POOL_MAX = 10;
+const BLOOD_POOL_GEO = new THREE.CircleGeometry(1, 8);
+const BLOOD_POOL_MAT = new THREE.MeshBasicMaterial({ color: 0x6B0000, transparent: true, opacity: 0.75, depthWrite: false });
+
 function spawnBloodPool(position) {
-  const size = 0.7 + Math.random() * 0.5;
-  const pool = new THREE.Mesh(
-    new THREE.CircleGeometry(size, 8),
-    new THREE.MeshBasicMaterial({ color: 0x6B0000, transparent: true, opacity: 0.75, depthWrite: false })
-  );
-  pool.rotation.x = -Math.PI / 2;
+  let pool;
+  if (bloodPools.length >= BLOOD_POOL_MAX) {
+    const old = bloodPools.shift();
+    pool = old.mesh;
+    pool.visible = true;
+  } else {
+    pool = new THREE.Mesh(BLOOD_POOL_GEO, BLOOD_POOL_MAT);
+    pool.rotation.x = -Math.PI / 2;
+    pool.renderOrder = 1;
+    scene.add(pool);
+  }
+  pool.scale.setScalar(0.7 + Math.random() * 0.5);
   pool.rotation.z = Math.random() * Math.PI * 2;
   pool.position.set(position.x, 0.03, position.z);
-  pool.renderOrder = 1;
-  scene.add(pool);
   bloodPools.push({ mesh: pool, life: 20 });
-  if (bloodPools.length > 12) {
-    const old = bloodPools.shift();
-    scene.remove(old.mesh);
-    old.mesh.geometry.dispose();
-    old.mesh.material.dispose();
-  }
 }
 function updateBloodPools(dt) {
   for (let i = bloodPools.length - 1; i >= 0; i--) {
     const b = bloodPools[i];
     b.life -= dt;
-    if (b.life < 3) b.mesh.material.opacity = Math.max(0, (b.life / 3) * 0.75);
+    if (b.life < 3) b.mesh.material.opacity = Math.max(0, (b.life/3)*0.75);
     if (b.life <= 0) {
-      scene.remove(b.mesh);
-      b.mesh.geometry.dispose();
-      b.mesh.material.dispose();
+      b.mesh.visible = false;
       bloodPools.splice(i, 1);
     }
   }
+  for (const b of bloodPools) {
+    if (b.life >= 3) b.mesh.material.opacity = 0.75;
+  }
 }
 
-// ════════════════════════════════════════════════════════════
-// ZB3: DISMEMBER + GORE (com stumps + gibs Verlet)
-// ════════════════════════════════════════════════════════════
+// ─── GORE / DISMEMBER ───
 function applyGore(z, group) {
   if (z.gore.has(group)) return;
   z.gore.add(group);
-
   const goneList = GONE[group];
   for (const limbId of goneList) z.gone[limbId] = true;
   for (let i = 0; i < LIMBS.length; i++) {
     if (z.gone[LIMBS[i][0]]) z.limbs[i].visible = false;
   }
-
   const stumpIdx = STUMP[group];
   const gibEndIdx = GIBEND[group];
   if (stumpIdx == null || gibEndIdx == null || !z.pts) return;
-
-  // Spawn stump (sphere vermelho)
   const stumpPos = z.pts[stumpIdx];
-  const stumpMesh = new THREE.Mesh(
-    new THREE.SphereGeometry(0.07, 6, 4),
-    getLimbMats(z.limbs[0]?.material?.color?.getHex() || 0x86bd55).BLOOD
-  );
+  const stumpMesh = new THREE.Mesh(SHARED_STUMP_GEO, getLimbMats(z.limbs[0]?.material?.color?.getHex() || 0x86bd55).BLOOD);
   stumpMesh.position.copy(stumpPos);
   z.g.add(stumpMesh);
   z._stumps = z._stumps || [];
   z._stumps.push(stumpMesh);
 
-  // Spawn limb gib (box along the limb)
   const a = z.pts[stumpIdx].clone();
   const b = z.pts[gibEndIdx].clone();
   const len = Math.max(0.15, a.distanceTo(b));
-  const gibMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(0.12, len, 0.12),
-    getLimbMats(z.limbs[0]?.material?.color?.getHex() || 0x86bd55).SKIN
-  );
+  const gibMesh = new THREE.Mesh(SHARED_BOX, getLimbMats(z.limbs[0]?.material?.color?.getHex() || 0x86bd55).SKIN);
+  gibMesh.scale.set(0.12, len, 0.12);
   const gib = new LimbGib(gibMesh, a.clone().add(b).multiplyScalar(0.5), z.hitDir, len);
   scene.add(gibMesh);
   flyingLimbs.push(gib);
-
-  // Blood pool imediato
+  while (flyingLimbs.length > 30) {
+    const old = flyingLimbs.shift();
+    old.dispose(scene);
+  }
   spawnBloodPool(z.p.clone().setY(0.03));
 }
 
-// ════════════════════════════════════════════════════════════
-// DAMAGE ZOMBIE (com ZB3 dismemberment)
-// ════════════════════════════════════════════════════════════
 function damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, sourceType) {
   if (z.state === 'Dying' || z.rm) return;
   z.hp -= dmg;
@@ -985,22 +834,19 @@ function damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, sourceType) {
   z.target = true;
   z.sleep = false;
   z.alertedUntil = performance.now() / 1000 + 3;
-
   emitBlood(hitPoint, isCrit || part === 'Head');
   if (isCrit || part === 'Head') spawnBloodPool(z.p.clone().setY(0.03));
 
   if (z.hp <= 0) {
     z.state = 'Dying';
     z.tmr = 0;
-    // ZB3: gore só na morte
-    const ratio = z.top / z.max;
     if (sourceType === 'explosion') {
       ['Head','BicepsL','BicepsR','LegL','LegR'].forEach(g => {
         if (Math.random() < 0.5 && !z.gore.has(g)) applyGore(z, g);
       });
-    } else if (ratio >= 0.25) {
-      const chance = Math.min(1, (ratio - 0.25) / 0.5) * 0.9;
-      if (Math.random() < chance && L2G[part]) applyGore(z, L2G[part]);
+    } else {
+      const out = {};
+      if (tryDismember(z, part, false, out)) applyGore(z, out.group);
     }
   } else if (z.state !== 'Attack') {
     z.state = 'Stagger';
@@ -1008,9 +854,7 @@ function damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, sourceType) {
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// ALERT / NOISE
-// ════════════════════════════════════════════════════════════
+// ─── ALERT / NOISE ───
 function alertNearbyZombies(source, position) {
   const now = performance.now() / 1000;
   const R2 = 3.0 * 3.0;
@@ -1040,11 +884,10 @@ function makeNoise(position, radius) {
   spawnNoiseRipple(position, radius);
 }
 
-// ─── Noise ripples visuais ───
 const _noiseRipples = [];
 function spawnNoiseRipple(pos, radius) {
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(radius * 0.9, radius, 24),
+    new THREE.RingGeometry(radius * 0.9, radius, 16),
     new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false })
   );
   ring.rotation.x = -Math.PI / 2;
@@ -1068,90 +911,65 @@ function updateNoiseRipples(dt) {
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// HIT REACTION (spring kicks na cabeça/torso/braços/pernas)
-// ════════════════════════════════════════════════════════════
-function applyHitReaction(z, part, hitDirWorld, force = 1) {
-  // ZB3 usa pose geométrica — não temos spring anim, mas mantemos
-  // um pequeno empurrão na direção do hit para o ragdoll nascer direito.
-  z.hitDir.copy(hitDirWorld);
-}
-
-// ════════════════════════════════════════════════════════════
-// RAYCAST + OBB
-// ════════════════════════════════════════════════════════════
-function rayAABB(origin, dir, min, max, maxDist) {
-  let tMin = 0, tMax = maxDist;
-  const axes = [
-    { o: origin.x, d: dir.x, mn: min.x, mx: max.x },
-    { o: origin.y, d: dir.y, mn: min.y, mx: max.y },
-    { o: origin.z, d: dir.z, mn: min.z, mx: max.z },
-  ];
-  for (const { o, d, mn, mx } of axes) {
-    if (Math.abs(d) < 1e-6) { if (o < mn || o > mx) return null; }
-    else {
-      let t1 = (mn - o) / d, t2 = (mx - o) / d;
-      if (t1 > t2) { const s = t1; t1 = t2; t2 = s; }
-      tMin = Math.max(tMin, t1); tMax = Math.min(tMax, t2);
-      if (tMin > tMax) return null;
-    }
+// ─── RAYCAST (O(1) contra segmentos) ───
+function raySegmentHit(ro, rd, a, b, radius, minT, maxT) {
+  const vx = b.x - a.x, vy = b.y - a.y, vz = b.z - a.z;
+  const wx = ro.x - a.x, wy = ro.y - a.y, wz = ro.z - a.z;
+  const ux = rd.x, uy = rd.y, uz = rd.z;
+  const d2 = ux * vx + uy * vy + uz * vz;
+  const d3 = vx * vx + vy * vy + vz * vz;
+  const d4 = ux * wx + uy * wy + uz * wz;
+  const d5 = vx * wx + vy * wy + vz * wz;
+  const denom = d3 - d2 * d2;
+  let sc, tc;
+  if (denom > 1e-6) {
+    sc = (d2 * d5 - d3 * d4) / denom;
+    tc = (d5 - d2 * d4) / denom;
+  } else {
+    sc = 0;
+    tc = d5 / d3;
   }
-  if (tMax < 0) return null;
-  return tMin >= 0 ? tMin : tMax;
+  if (sc < 0) { sc = 0; tc = d5 / d3; }
+  if (tc < 0) { tc = 0; sc = -d4; }
+  else if (tc > 1) { tc = 1; sc = d2 - d4; }
+  if (sc < minT || sc > maxT) return -1;
+  const px = ro.x + ux * sc, py = ro.y + uy * sc, pz = ro.z + uz * sc;
+  const qx = a.x + vx * tc, qy = a.y + vy * tc, qz = a.z + vz * tc;
+  const dx = px - qx, dy = py - qy, dz = pz - qz;
+  if (dx*dx + dy*dy + dz*dz > radius * radius) return -1;
+  return sc;
 }
 
-// Distance from point to segment (line in 3D)
-function distToSegment(p, a, b) {
-  const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
-  const apx = p.x - a.x, apy = p.y - a.y, apz = p.z - a.z;
-  const ab2 = abx * abx + aby * aby + abz * abz;
-  const t = ab2 > 0 ? Math.max(0, Math.min(1, (apx * abx + apy * aby + apz * abz) / ab2)) : 0;
-  const dx = a.x + abx * t - p.x;
-  const dy = a.y + aby * t - p.y;
-  const dz = a.z + abz * t - p.z;
-  return Math.sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-// ─── Raycast contra limbs (ZB3) ───
 function raycastLimbs(origin, dir, maxDist) {
-  let best = null;
-  const tmpA = new THREE.Vector3();
-  const tmpB = new THREE.Vector3();
-  const tmpP = new THREE.Vector3();
-
+  let bestZ = null, bestLimb = null, bestS = Infinity;
   for (let zi = 0; zi < zombies.length; zi++) {
     const z = zombies[zi];
     if (z.state === 'Dying' || !z.pts) continue;
-    // Broadphase: distância ao zumbi
-    tmpA.subVectors(z.p, origin);
-    const t = tmpA.dot(dir);
-    if (t < 0 || t > maxDist + 2) continue;
-    if (tmpA.addScaledVector(dir, -t).length() > 2.5) continue;
-
+    const dxZ = z.p.x - origin.x;
+    const dzZ = z.p.z - origin.z;
+    const tProj = dxZ * dir.x + dzZ * dir.z;
+    if (tProj < -1 || tProj > maxDist + 1.5) continue;
     for (let li = 0; li < LIMBS.length; li++) {
       const l = LIMBS[li];
       if (z.gone[l[0]]) continue;
       const a = z.pts[l[1]];
       const b = z.pts[l[2]];
-      for (let s = 0.5; s <= maxDist; s += 0.15) {
-        tmpP.copy(origin).addScaledVector(dir, s);
-        if (distToSegment(tmpP, a, b) <= l[3] + 0.05) {
-          if (!best || s < best.s) best = { s, z, limb: l[0], point: tmpP.clone() };
-          break;
-        }
+      const s = raySegmentHit(origin, dir, a, b, l[3] + 0.05, 0.1, maxDist);
+      if (s > 0 && s < bestS) {
+        bestS = s;
+        bestZ = z;
+        bestLimb = l[0];
       }
     }
   }
-  return best;
+  if (!bestZ) return null;
+  return { s: bestS, z: bestZ, limb: bestLimb, point: origin.clone().addScaledVector(dir, bestS) };
 }
 
-// ════════════════════════════════════════════════════════════
-// TRACERS / MUZZLE / EXPLOSIONS
-// ════════════════════════════════════════════════════════════
+// ─── MUZZLE / TRACERS / EXPLOSIONS ───
 const muzzleLight = new THREE.PointLight(0xFFAA33, 0, 8, 2);
 scene.add(muzzleLight);
 let muzzleLightEnd = 0;
-
 const explosionLight = new THREE.PointLight(0xFF6600, 0, 14, 2);
 scene.add(explosionLight);
 let explosionLightEnd = 0;
@@ -1164,7 +982,6 @@ function spawnMuzzleFlash() {
   muzzleLight.intensity = 3;
 }
 
-// ─── Tracers pool ───
 const tracerPool = [], tracers = [];
 function spawnTracer(from, to) {
   let t = tracerPool.pop();
@@ -1197,7 +1014,6 @@ function updateTracers(dt) {
   }
 }
 
-// ─── Explosions ───
 const explosions = [];
 function spawnExplosion(pos) {
   explosionLight.position.copy(pos);
@@ -1258,23 +1074,17 @@ function updateExplosions(dt) {
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// RELOAD
-// ════════════════════════════════════════════════════════════
+// ─── RELOAD ───
 function startReload(wid) {
   if (state.reload.active) return;
   const w = WEAPONS[wid], am = state.ammo[wid];
-  if (!w || !am) return;
-  if (am.mag >= w.magSize || am.reserve <= 0) return;
+  if (!w || !am || am.mag >= w.magSize || am.reserve <= 0) return;
   state.reload.active = true;
   state.reload.wid = wid;
   state.reload.elapsed = 0;
-  const duration = w.reloadTime / state.reloadSpeedMult;
-  state.reload.duration = duration;
-  state.reload.startTime = performance.now() / 1000;
-  state.reload.endTime = duration;
+  state.reload.duration = w.reloadTime / state.reloadSpeedMult;
   if (state.aiming) { state.aiming = false; updateCrosshair(); }
-  if (weaponView) weaponView.reload(duration);
+  if (weaponView) weaponView.reload(state.reload.duration);
   Sfx.playReload();
 }
 function cancelReload() {
@@ -1282,8 +1092,6 @@ function cancelReload() {
   state.reload.wid = null;
   state.reload.elapsed = 0;
   state.reload.duration = 0;
-  state.reload.startTime = 0;
-  state.reload.endTime = 0;
   if (weaponView) weaponView.cancelReload();
 }
 function updateReload(dt) {
@@ -1294,17 +1102,14 @@ function updateReload(dt) {
     if (am && w) {
       const need = w.magSize - am.mag;
       const take = Math.min(need, am.reserve);
-      am.mag += take;
-      am.reserve -= take;
+      am.mag += take; am.reserve -= take;
     }
     cancelReload();
     updateHUD();
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// ATTACK (melee multi-hit + ranged com pellets/pierce)
-// ════════════════════════════════════════════════════════════
+// ─── ATTACK ───
 function attack(isRightClick = false) {
   if (state.downed) {
     const wid = state.inventory[state.currentSlot] || 'knife';
@@ -1326,20 +1131,13 @@ function attack(isRightClick = false) {
       return false;
     }
     am.mag--;
-    if (am.mag === 0 && am.reserve > 0) {
-      setTimeout(() => { if (state.running) startReload(weaponId); }, 250);
-    }
+    if (am.mag === 0 && am.reserve > 0) setTimeout(() => { if (state.running) startReload(weaponId); }, 250);
     updateHUD();
   }
 
   state.lastAttackTime = now;
-  bus.emit(Ev.ATTACK, {
-    playerId: player.id, weaponId, weaponType: weapon.type, aiming: state.aiming,
-    pos: { x: player.position.x, y: player.position.y, z: player.position.z },
-    yaw: player.yaw, pitch: player.pitch,
-  });
+  bus.emit(Ev.ATTACK, { playerId: player.id, weaponId, weaponType: weapon.type, aiming: state.aiming, pos: { x: player.position.x, y: player.position.y, z: player.position.z }, yaw: player.yaw, pitch: player.pitch });
 
-  // Som
   if (weapon.type === 'melee') Sfx.playKnifeSwing();
   else if (weaponId === 'pistol') Sfx.playPistol();
   else if (weaponId === 'revolver') Sfx.playRevolver();
@@ -1349,28 +1147,18 @@ function attack(isRightClick = false) {
   else if (weaponId === 'launcher') Sfx.playLauncher();
 
   triggerSwing();
-  if (weapon.type === 'ranged' && weaponView) {
-    weaponView.recoil(Math.min(2, weapon.damage / 60) * state.recoilMult);
-  }
+  if (weapon.type === 'ranged' && weaponView) weaponView.recoil(Math.min(2, weapon.damage / 60) * state.recoilMult);
   makeNoise(player.position, weapon.noise || 15);
-  if (weapon.type === 'ranged') {
-    spawnMuzzleFlash();
-    addShake(CONFIG.shake.shoot * (weapon.damage / 40));
-  }
+  if (weapon.type === 'ranged') { spawnMuzzleFlash(); addShake(CONFIG.shake.shoot * (weapon.damage/40)); }
 
-  // ─── MELEE ───
   if (weapon.type === 'melee') {
     const camOrigin = camera.position.clone();
-    const camForward = new THREE.Vector3();
-    camera.getWorldDirection(camForward);
+    const camForward = new THREE.Vector3(); camera.getWorldDirection(camForward);
     const range = weapon.range + state.rangeBonus;
-
     let hitCount = 0;
     const maxHits = weapon.hitCount || 1;
 
-    // Raycast preciso contra limbs
     const precise = raycastLimbs(camOrigin, camForward, range);
-
     if (precise) {
       const z = precise.z;
       const part = precise.limb;
@@ -1384,11 +1172,8 @@ function attack(isRightClick = false) {
       hitDir.subVectors(z.p, camOrigin).setY(0);
       if (hitDir.lengthSq() < 0.0001) hitDir.copy(camForward);
       hitDir.normalize();
-
       damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, 'melee');
       hitCount++;
-
-      // Multi-hit em cone
       if (maxHits > 1) {
         const minDot = CONFIG.melee.coneDot;
         for (let i = zombies.length - 1; i >= 0 && hitCount < maxHits; i--) {
@@ -1405,37 +1190,32 @@ function attack(isRightClick = false) {
           const isCrit2 = rollCrit();
           const baseDmg2 = weapon.damage * state.damageMult * 0.6 * (isRightClick ? 1.3 : 1.0);
           const dmg2 = baseDmg2 * (isCrit2 ? (CONFIG.crit.damageMultiplier + state.critDamageBonus) : 1);
-          const hd2 = new THREE.Vector3(dx / horiz, 0, dz / horiz);
+          const hd2 = new THREE.Vector3(dx/horiz, 0, dz/horiz);
           damageZombie(z2, dmg2, isCrit2, 'Chest', hd2, hp, 'melee');
           hitCount++;
         }
       }
     }
-
     if (hitCount > 0) {
       state.hitstopUntil = performance.now() + CONFIG.melee.hitstop * 1000;
       Sfx.playKnifeHitFlesh();
-      showHitMarker(true);
     }
     return true;
   }
 
-  // ─── RANGED ───
   const origin = camera.position.clone();
-  const forward = new THREE.Vector3();
-  camera.getWorldDirection(forward);
+  const forward = new THREE.Vector3(); camera.getWorldDirection(forward);
   const range = weapon.range + state.rangeBonus;
   const baseSpread = state.aiming ? weapon.spread * 0.25 : weapon.spread;
 
   for (let i = 0; i < weapon.pellets; i++) {
     const dir = forward.clone();
     if (baseSpread > 0) {
-      dir.x += (Math.random() - 0.5) * baseSpread * 2;
-      dir.y += (Math.random() - 0.5) * baseSpread * 2;
-      dir.z += (Math.random() - 0.5) * baseSpread * 2;
+      dir.x += (Math.random()-0.5)*baseSpread*2;
+      dir.y += (Math.random()-0.5)*baseSpread*2;
+      dir.z += (Math.random()-0.5)*baseSpread*2;
       dir.normalize();
     }
-
     if (weaponId === 'launcher') {
       const result = raycastLimbs(origin, dir, range);
       let hitPos;
@@ -1443,39 +1223,28 @@ function attack(isRightClick = false) {
       else {
         hitPos = origin.clone().addScaledVector(dir, range);
         if (dir.y < -0.01) {
-          const t = -origin.y / dir.y;
-          if (t > 0 && t < range) {
-            hitPos = origin.clone().addScaledVector(dir, t);
-            hitPos.y = 0.1;
-          }
+          const t = -origin.y/dir.y;
+          if (t > 0 && t < range) { hitPos = origin.clone().addScaledVector(dir, t); hitPos.y = 0.1; }
         }
       }
       spawnTracer(origin.clone().addScaledVector(dir, 0.8), hitPos);
       spawnExplosion(hitPos);
       continue;
     }
-
-    // Pierce múltiplo
     const maxPierce = (weapon.pierce || 0) + 1;
     let pierceCount = 0;
     const hitIds = new Set();
     let rayOrigin = origin.clone();
     let remainingDist = range;
-
     while (pierceCount < maxPierce && remainingDist > 0.5) {
       const result = raycastLimbs(rayOrigin, dir, remainingDist);
       if (!result) {
-        spawnTracer(
-          rayOrigin.clone().addScaledVector(dir, 0.3),
-          rayOrigin.clone().addScaledVector(dir, remainingDist)
-        );
+        spawnTracer(rayOrigin.clone().addScaledVector(dir, 0.3), rayOrigin.clone().addScaledVector(dir, remainingDist));
         break;
       }
       if (hitIds.has(result.z.id)) break;
       hitIds.add(result.z.id);
-
       spawnTracer(rayOrigin.clone().addScaledVector(dir, 0.3), result.point);
-
       const isCrit = rollCrit();
       const baseDmg = weapon.damage * state.damageMult * (pierceCount > 0 ? 0.65 : 1);
       const critMult = CONFIG.crit.damageMultiplier + state.critDamageBonus;
@@ -1488,13 +1257,10 @@ function attack(isRightClick = false) {
       remainingDist -= result.s + 0.15;
     }
   }
-
   return true;
 }
 
-// ════════════════════════════════════════════════════════════
-// LEVEL UP
-// ════════════════════════════════════════════════════════════
+// ─── LEVEL UP ───
 function checkLevelUp() {
   let leveled = false;
   while (state.xp >= state.xpToNextLevel) {
@@ -1505,10 +1271,7 @@ function checkLevelUp() {
     bus.emit(Ev.LEVEL_UP, { playerId: player.id, level: state.level });
     leveled = true;
   }
-  if (leveled) {
-    Sfx.playLevelUp();
-    if (!state.levelUpActive) showLevelUp();
-  }
+  if (leveled) { Sfx.playLevelUp(); if (!state.levelUpActive) showLevelUp(); }
   updateHUD();
 }
 function showLevelUp() {
@@ -1527,9 +1290,7 @@ function showLevelUp() {
   chosen.forEach(skill => {
     const card = document.createElement('button');
     card.className = 'skill-card';
-    card.innerHTML = `<div class="skill-icon">${skill.icon}</div>
-                      <div class="skill-name">${skill.name}</div>
-                      <div class="skill-desc">${skill.desc}</div>`;
+    card.innerHTML = `<div class="skill-icon">${skill.icon}</div><div class="skill-name">${skill.name}</div><div class="skill-desc">${skill.desc}</div>`;
     card.addEventListener('click', () => pickSkill(skill.id));
     cont.appendChild(card);
   });
@@ -1552,14 +1313,12 @@ function pickSkill(skillId) {
   updateHUD();
 }
 
-// ════════════════════════════════════════════════════════════
-// HUD UPDATE
-// ════════════════════════════════════════════════════════════
+// ─── HUD UPDATE ───
 function updateHUD() {
   const hp = Math.max(0, state.health);
-  if (HUD.hpFill) HUD.hpFill.style.width = `${(hp / state.maxHealth) * 100}%`;
+  if (HUD.hpFill) HUD.hpFill.style.width = `${(hp/state.maxHealth)*100}%`;
   if (HUD.hpText) HUD.hpText.textContent = `${Math.ceil(hp)} / ${state.maxHealth}`;
-  if (HUD.xpFill) HUD.xpFill.style.width = `${(state.xp / state.xpToNextLevel) * 100}%`;
+  if (HUD.xpFill) HUD.xpFill.style.width = `${(state.xp/state.xpToNextLevel)*100}%`;
   if (HUD.coins) HUD.coins.textContent = state.coins;
   if (HUD.wave) HUD.wave.textContent = state.wave;
   if (HUD.level) HUD.level.textContent = state.level;
@@ -1580,24 +1339,18 @@ function updateHUD() {
     if (am) {
       if (state.reload.active && state.reload.wid === w.id) {
         const pct = Math.floor(Math.min(1, state.reload.elapsed / state.reload.duration) * 100);
-        if (HUD.ammoCurrent) {
-          HUD.ammoCurrent.textContent = 'RECARREGANDO ' + pct + '%';
-          HUD.ammoCurrent.style.color = '#ffdd00';
-        }
+        if (HUD.ammoCurrent) { HUD.ammoCurrent.textContent = 'RECARREGANDO ' + pct + '%'; HUD.ammoCurrent.style.color = '#ffdd00'; }
       } else {
-        if (HUD.ammoCurrent) {
-          HUD.ammoCurrent.textContent = am.mag + ' / ' + w.magSize;
-          HUD.ammoCurrent.style.color = am.mag <= 0 ? '#ff4444' : '#fff';
-        }
+        if (HUD.ammoCurrent) { HUD.ammoCurrent.textContent = am.mag + ' / ' + w.magSize; HUD.ammoCurrent.style.color = am.mag <= 0 ? '#ff4444' : '#fff'; }
       }
       if (HUD.ammoReserve) HUD.ammoReserve.textContent = 'RESERVA ' + am.reserve;
     }
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// DOWNED (system base — o HUD completo vive na Parte 3)
-// ════════════════════════════════════════════════════════════
+function updateCrosshair() { document.body.classList.toggle('aiming', state.aiming); }
+
+// ─── DOWNED ───
 function enterDownedState() {
   if (state.downed) return;
   if (state.revivesLeft <= 0) { gameOver(); return; }
@@ -1653,30 +1406,24 @@ function exitDownedState(hpFraction) {
 }
 function updateDownedState(dt) {
   if (!state.downed) return;
-  state.downedElapsed += dt * 1000;
+  state.downedElapsed += dt*1000;
   if (state.downedHP <= 0) { exitDownedState(0); gameOver(); return; }
   const remaining = Math.max(0, CONFIG.downed.duration - state.downedElapsed);
   const timerEl = document.getElementById('downed-timer');
-  if (timerEl) timerEl.textContent = Math.ceil(remaining / 1000);
+  if (timerEl) timerEl.textContent = Math.ceil(remaining/1000);
   const hpF = document.getElementById('downed-hp-fill');
-  if (hpF) hpF.style.width = Math.max(0, (state.downedHP / state.downedMaxHP) * 100) + '%';
-
+  if (hpF) hpF.style.width = Math.max(0, (state.downedHP/state.downedMaxHP)*100) + '%';
   const prompt = document.getElementById('downed-prompt');
   const progressWrap = document.getElementById('downed-progress-wrap');
   const progressBar = document.getElementById('downed-progress');
-
   if (state.downedElapsed >= CONFIG.downed.selfReviveAt && state.revivesLeft > 0) {
     if (prompt) prompt.classList.add('visible');
     if (controls.isDown(Action.Interact, state.keys)) {
-      state.reviveProgress += dt * 1000 * state.reviveSpeedMult;
+      state.reviveProgress += dt*1000 * state.reviveSpeedMult;
       if (progressWrap) progressWrap.classList.add('visible');
       const pct = Math.min(1, state.reviveProgress / CONFIG.downed.selfReviveHold);
-      if (progressBar) progressBar.style.width = (pct * 100) + '%';
-      if (state.reviveProgress >= CONFIG.downed.selfReviveHold) {
-        state.revivesLeft--;
-        exitDownedState(0.3);
-        return;
-      }
+      if (progressBar) progressBar.style.width = (pct*100) + '%';
+      if (state.reviveProgress >= CONFIG.downed.selfReviveHold) { state.revivesLeft--; exitDownedState(0.3); return; }
     } else {
       state.reviveProgress = 0;
       if (progressWrap) progressWrap.classList.remove('visible');
@@ -1689,27 +1436,16 @@ function updateDownedState(dt) {
   if (remaining <= 0) { exitDownedState(0); gameOver(); }
 }
 
-// ════════════════════════════════════════════════════════════
-// CROSSHAIR
-// ════════════════════════════════════════════════════════════
-function updateCrosshair() {
-  document.body.classList.toggle('aiming', state.aiming);
-}
-// ════════════════════════════════════════════════════════════
-// BRAZIER + VENDOR VAN (grupos visuais)
-// ════════════════════════════════════════════════════════════
+// ─── BRAZIER + VENDOR VAN ───
 const brazierGroup = new THREE.Group();
 {
-  const base = new THREE.Mesh(geoCyl(0.7, 0.9, 1.2, 8), matL(0x3A3A3A, { flatShading: true }));
+  const base = new THREE.Mesh(geoCyl(0.7, 0.9, 1.2, 8), matL(0x3A3A3A, { flatShading:true }));
   base.position.y = 0.6; base.castShadow = true; brazierGroup.add(base);
-  const bowl = new THREE.Mesh(geoCyl(1.0, 0.7, 0.5, 8), matL(0x2A2A2A, { flatShading: true }));
+  const bowl = new THREE.Mesh(geoCyl(1.0, 0.7, 0.5, 8), matL(0x2A2A2A, { flatShading:true }));
   bowl.position.y = 1.35; bowl.castShadow = true; brazierGroup.add(bowl);
   const dark = new THREE.Mesh(geoBox(1.6, 0.3, 1.6, 1), matB(0x1A1A1A));
   dark.position.y = 1.55; brazierGroup.add(dark);
-  const flame = new THREE.Mesh(
-    new THREE.ConeGeometry(0.5, 1.5, 8),
-    new THREE.MeshBasicMaterial({ color: 0xFF6600, transparent: true, opacity: 0.9 })
-  );
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.5, 8), new THREE.MeshBasicMaterial({ color:0xFF6600, transparent:true, opacity:0.9 }));
   flame.position.y = 2.4; flame.name = 'flame'; flame.visible = false; brazierGroup.add(flame);
   const flameLight = new THREE.PointLight(0xFF6600, 0, 12, 2);
   flameLight.position.y = 2.4; flameLight.name = 'flameLight'; brazierGroup.add(flameLight);
@@ -1724,9 +1460,9 @@ const vendorVan = new THREE.Group();
   const cab = new THREE.Mesh(geoRoundBox(2.2, 1.2, 1.6, 0.15), matL(0x5D4030));
   cab.position.set(0, 1.1, -2.5); cab.castShadow = true; vendorVan.add(cab);
   const wheelMat = matL(0x1A1A1A);
-  [[-1.1, 0.4, 1.2], [1.1, 0.4, 1.2], [-1.1, 0.4, -1.8], [1.1, 0.4, -1.8]].forEach(([x, y, z]) => {
+  [[-1.1, 0.4, 1.2], [1.1, 0.4, 1.2], [-1.1, 0.4, -1.8], [1.1, 0.4, -1.8]].forEach(([x,y,z]) => {
     const w = new THREE.Mesh(geoCyl(0.4, 0.4, 0.3, 8), wheelMat);
-    w.rotation.z = Math.PI / 2; w.position.set(x, y, z); w.castShadow = true; vendorVan.add(w);
+    w.rotation.z = Math.PI/2; w.position.set(x, y, z); w.castShadow = true; vendorVan.add(w);
   });
   const awning = new THREE.Mesh(geoBox(2.6, 0.1, 1.5, 1), matL(0xE74C3C));
   awning.position.set(0, 2.3, -0.5); awning.castShadow = true; vendorVan.add(awning);
@@ -1734,43 +1470,31 @@ const vendorVan = new THREE.Group();
 }
 scene.add(vendorVan);
 
-// ════════════════════════════════════════════════════════════
-// WAVES
-// ════════════════════════════════════════════════════════════
+// ─── WAVES ───
 function findWavePackage(waveNum) {
   for (const pkg of WAVE_PACKAGES) {
     if (waveNum >= pkg.firstWave && waveNum <= pkg.lastWave) return pkg;
   }
   return WAVE_PACKAGES[WAVE_PACKAGES.length - 1];
 }
-
 function startWave() {
   if (state.waveIntervalId !== null) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; }
   state.wave++;
   state.betweenWaves = false;
   const pkg = findWavePackage(state.wave);
-  const count = Math.min(
-    pkg.baseZombies + (state.wave - pkg.firstWave) * pkg.zombiesPerWave,
-    CONFIG.wave.maxZombies
-  );
+  const count = Math.min(pkg.baseZombies + (state.wave - pkg.firstWave) * pkg.zombiesPerWave, CONFIG.wave.maxZombies);
   const isBossWave = state.wave % CONFIG.wave.bossEvery === 0;
-  const bossType = isBossWave
-    ? BOSS_ROTATION[Math.floor(state.wave / CONFIG.wave.bossEvery - 1) % BOSS_ROTATION.length]
-    : null;
+  const bossType = isBossWave ? BOSS_ROTATION[Math.floor(state.wave / CONFIG.wave.bossEvery - 1) % BOSS_ROTATION.length] : null;
   state.zombiesRemainingInWave = count + (isBossWave ? 1 : 0);
   state.bossSpawned = false;
-
-  let waveLabel = isBossWave
-    ? `HORDA CHEFE ${state.wave} — ${bossType.toUpperCase()}`
-    : `HORDA ${state.wave}  ·  PKG ${WAVE_PACKAGES.indexOf(pkg)}`;
+  let waveLabel = isBossWave ? `HORDA CHEFE ${state.wave} — ${bossType.toUpperCase()}` : `HORDA ${state.wave}  ·  PKG ${WAVE_PACKAGES.indexOf(pkg)}`;
   if (isBossWave && ZOMBIE_LORE[bossType]) waveLabel += '  ·  ' + ZOMBIE_LORE[bossType];
   showWaveBanner(waveLabel);
-  bus.emit(Ev.WAVE_START, { wave: state.wave, count, boss: isBossWave });
+  bus.emit(Ev.WAVE_START, { wave:state.wave, count, boss:isBossWave });
   updateHUD();
 
-  const baseInterval = state.brazierBurning ? 500 / CONFIG.brazier.waveSpeedBoost : 500;
+  const baseInterval = state.brazierBurning ? 500/CONFIG.brazier.waveSpeedBoost : 500;
   const spawnInterval = baseInterval * (1 + (Math.random() - 0.5) * pkg.timeVariation);
-
   state.waveIntervalId = setInterval(() => {
     if (!state.running || state.paused) {
       if (!state.running) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; }
@@ -1784,41 +1508,33 @@ function startWave() {
     if (isBossWave && !state.bossSpawned) {
       spawnZombie(bossType);
       state.bossSpawned = true;
+      state.bossPos = { x: player.position.x, z: player.position.z };
     } else {
       const cave = caves[Math.floor(Math.random() * caves.length)];
       const regionTier = getDifficultyTier(cave.x, cave.z);
       const regionTypes = TIER_ZOMBIE_TYPES[regionTier] || pkg.types;
       const pool = pkg.types.filter(t => regionTypes.includes(t));
-      const typeKey = pool.length > 0
-        ? pool[Math.floor(Math.random() * pool.length)]
-        : pkg.types[Math.floor(Math.random() * pkg.types.length)];
+      const typeKey = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : pkg.types[Math.floor(Math.random() * pkg.types.length)];
       spawnZombie(typeKey);
     }
     state.zombiesRemainingInWave--;
     updateHUD();
   }, spawnInterval);
 
-  if (state.wave > 0 && state.wave % CONFIG.vendor.spawnEveryWaves === 0) {
-    spawnVendorVan();
-  }
+  if (state.wave > 0 && state.wave % CONFIG.vendor.spawnEveryWaves === 0) spawnVendorVan();
 }
-
 function checkWaveComplete() {
   if (state.betweenWaves) return;
   if (state.zombiesAlive === 0 && state.zombiesRemainingInWave <= 0) {
     state.betweenWaves = true;
-    bus.emit(Ev.WAVE_CLEAR, { wave: state.wave });
+    bus.emit(Ev.WAVE_CLEAR, { wave:state.wave });
     const rewardMul = state.brazierBurning ? CONFIG.brazier.rewardMult : 1;
-    const coinBonus = Math.round(
-      (CONFIG.wave.clearBonusBase + (state.wave - 1) * CONFIG.wave.clearBonusPerWave) *
-      state.coinMult * rewardMul
-    );
+    const coinBonus = Math.round((CONFIG.wave.clearBonusBase + (state.wave - 1) * CONFIG.wave.clearBonusPerWave) * state.coinMult * rewardMul);
     state.coins += coinBonus;
     const heal = Math.round(state.maxHealth * CONFIG.wave.clearHealFrac * state.healMult);
     const beforeHP = state.health;
     state.health = Math.min(state.maxHealth, state.health + heal);
     const healed = Math.round(state.health - beforeHP);
-
     let ammoGiven = 0;
     Object.values(state.inventory).forEach(wid => {
       if (!wid || wid === 'knife') return;
@@ -1829,16 +1545,10 @@ function checkWaveComplete() {
       am.reserve = Math.min(w.reserveMax, am.reserve + give);
       ammoGiven += am.reserve - before;
     });
-
-    state.brazierFuel = Math.min(
-      CONFIG.brazier.maxFuel * state.brazierDurationMult,
-      state.brazierFuel + CONFIG.brazier.fuelPerWave * state.brazierFuelBonus
-    );
-
+    state.brazierFuel = Math.min(CONFIG.brazier.maxFuel * state.brazierDurationMult, state.brazierFuel + CONFIG.brazier.fuelPerWave * state.brazierFuelBonus);
     showWaveBanner(`+${coinBonus}$  +${healed}HP${ammoGiven ? '  +' + ammoGiven + 'AMMO' : ''}  — PROXIMA EM ${CONFIG.wave.breakTime}s`);
     updateHUD();
     Extraction.trySpawnExtraction(state.wave);
-
     if (state.waveStartTimeoutId !== null) clearTimeout(state.waveStartTimeoutId);
     state.waveStartTimeoutId = setTimeout(() => {
       state.waveStartTimeoutId = null;
@@ -1847,87 +1557,60 @@ function checkWaveComplete() {
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// PING
-// ════════════════════════════════════════════════════════════
+// ─── PING ───
 const pings = [];
-const PING_COLORS = { enemy: 0xff2020, help: 0xffdd00, go: 0x22dd22, careful: 0xff8800 };
-
+const PING_COLORS = { enemy:0xff2020, help:0xffdd00, go:0x22dd22, careful:0xff8800 };
 function updatePingHighlight() {
   const x = state.pingAccumX, y = state.pingAccumY;
   const mag = Math.hypot(x, y);
-  if (mag < 25) {
-    state.pingHighlight = null;
-    document.querySelectorAll('.ping-option').forEach(el => el.classList.remove('highlighted'));
-    return;
-  }
-  const angle = Math.atan2(y, x);
-  const pi = Math.PI;
+  if (mag < 25) { state.pingHighlight = null; document.querySelectorAll('.ping-option').forEach(el => el.classList.remove('highlighted')); return; }
+  const angle = Math.atan2(y, x); const pi = Math.PI;
   let dir;
-  if (angle >= -3 * pi / 4 && angle < -pi / 4) dir = 'top';
-  else if (angle >= -pi / 4 && angle < pi / 4) dir = 'right';
-  else if (angle >= pi / 4 && angle < 3 * pi / 4) dir = 'bottom';
+  if (angle >= -3*pi/4 && angle < -pi/4) dir = 'top';
+  else if (angle >= -pi/4 && angle < pi/4) dir = 'right';
+  else if (angle >= pi/4 && angle < 3*pi/4) dir = 'bottom';
   else dir = 'left';
-  const map = { top: 'enemy', right: 'help', bottom: 'go', left: 'careful' };
+  const map = { top:'enemy', right:'help', bottom:'go', left:'careful' };
   state.pingHighlight = map[dir];
-  document.querySelectorAll('.ping-option').forEach(el => {
-    el.classList.toggle('highlighted', el.classList.contains('ping-' + dir));
-  });
+  document.querySelectorAll('.ping-option').forEach(el => { el.classList.toggle('highlighted', el.classList.contains('ping-' + dir)); });
 }
 function getPingPosition() {
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
+  const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
   const pos = camera.position.clone();
-  if (dir.y < -0.01) {
-    const t = (0.1 - pos.y) / dir.y;
-    if (t > 0 && t < 60) { pos.addScaledVector(dir, t); pos.y = 0.1; return pos; }
-  }
+  if (dir.y < -0.01) { const t = (0.1 - pos.y)/dir.y; if (t > 0 && t < 60) { pos.addScaledVector(dir, t); pos.y = 0.1; return pos; } }
   pos.addScaledVector(dir, 15); pos.y = 0.1; return pos;
 }
 function emitPing(type) {
   const pos = getPingPosition();
-  bus.emit(Ev.PING, { playerId: player.id, type, pos: { x: pos.x, y: pos.y, z: pos.z } });
+  bus.emit(Ev.PING, { playerId: player.id, type, pos:{ x:pos.x, y:pos.y, z:pos.z } });
   spawnPingMarker(pos, type);
   Sfx.playPing();
 }
 function spawnPingMarker(pos, type) {
   const color = PING_COLORS[type] || 0xffffff;
   const group = new THREE.Group();
-  const pillar = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.15, 0.15, 6, 6, 1, true),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false })
-  );
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 6, 6, 1, true), new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.4, side:THREE.DoubleSide, depthWrite:false }));
   pillar.position.y = 3; group.add(pillar);
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.5, 0.75, 16),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, side: THREE.DoubleSide, depthWrite: false })
-  );
-  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.15; group.add(ring);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.75, 16), new THREE.MeshBasicMaterial({ color, transparent:true, opacity:1, side:THREE.DoubleSide, depthWrite:false }));
+  ring.rotation.x = -Math.PI/2; ring.position.y = 0.15; group.add(ring);
   group.position.copy(pos); scene.add(group);
-  pings.push({ group, pillar, ring, life: 3, maxLife: 3 });
+  pings.push({ group, pillar, ring, life:3, maxLife:3 });
 }
 function updatePings(dt) {
   for (let i = pings.length - 1; i >= 0; i--) {
     const p = pings[i]; p.life -= dt;
-    const t = Math.max(0, p.life / p.maxLife);
-    p.ring.scale.setScalar(1 + (1 - t) * 2.2);
+    const t = Math.max(0, p.life/p.maxLife);
+    p.ring.scale.setScalar(1 + (1-t)*2.2);
     p.ring.material.opacity = t;
-    p.pillar.material.opacity = t * 0.4;
-    if (p.life <= 0) {
-      scene.remove(p.group);
-      p.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
-      pings.splice(i, 1);
-    }
+    p.pillar.material.opacity = t*0.4;
+    if (p.life <= 0) { scene.remove(p.group); p.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); }); pings.splice(i, 1); }
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// SHOP / BRAZIER / VENDOR VAN
-// ════════════════════════════════════════════════════════════
+// ─── SHOP / BRAZIER / VENDOR ───
 const shopEl = document.getElementById('shop');
 const shopItemsEl = document.getElementById('shop-items');
 const shopCoinsEl = document.getElementById('shop-coins');
-
 function openShop() {
   if (state.shopOpen) return;
   state.shopOpen = true;
@@ -1948,9 +1631,7 @@ function renderShop() {
   const owned = Object.values(state.inventory).filter(x => x && x !== 'knife');
   if (owned.length === 0) {
     const el = document.createElement('div');
-    el.style.color = '#888';
-    el.style.gridColumn = '1 / -1';
-    el.style.padding = '20px';
+    el.style.color = '#888'; el.style.gridColumn = '1 / -1'; el.style.padding = '20px';
     el.textContent = 'Você ainda não tem armas.';
     shopItemsEl.appendChild(el);
     return;
@@ -1965,28 +1646,20 @@ function renderShop() {
     el.className = 'shop-item' + (canBuy ? '' : ' disabled');
     const info = document.createElement('div');
     info.className = 'shop-info';
-    info.innerHTML = `
-      <div class="item-name">${w.name}</div>
-      <div class="item-info">${am.mag}/${w.magSize} · reserva ${am.reserve}/${w.reserveMax}</div>
-      <div class="item-cost">+${pack} MUNIÇÃO — $${price}</div>`;
+    info.innerHTML = `<div class="item-name">${w.name}</div><div class="item-info">${am.mag}/${w.magSize} · reserva ${am.reserve}/${w.reserveMax}</div><div class="item-cost">+${pack} MUNIÇÃO — $${price}</div>`;
     el.appendChild(info);
     if (canBuy) el.addEventListener('click', () => {
       state.coins -= price;
       am.reserve = Math.min(w.reserveMax, am.reserve + pack);
-      Sfx.playBuy();
-      renderShop();
-      updateHUD();
+      Sfx.playBuy(); renderShop(); updateHUD();
     });
     shopItemsEl.appendChild(el);
   });
 }
-
 function tryLightBrazier() {
-  if (state.brazierFuel <= 0) return;
-  if (state.brazierBurning) return;
+  if (state.brazierFuel <= 0 || state.brazierBurning) return;
   state.brazierFuel--;
   state.brazierBurning = true;
-  state.brazierBurnStart = performance.now() / 1000;
   const flame = brazierGroup.getObjectByName('flame');
   const light = brazierGroup.getObjectByName('flameLight');
   if (flame) flame.visible = true;
@@ -2000,29 +1673,22 @@ function tryLightBrazier() {
   }
   updateHUD();
 }
-
 function spawnVendorVan() {
   const angle = Math.random() * Math.PI * 2;
   const dist = 50;
-  const x = Math.cos(angle) * dist;
-  const z = Math.sin(angle) * dist;
-  vendorVan.position.set(x, 0, z);
+  vendorVan.position.set(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
   vendorVan.rotation.y = -angle + Math.PI;
   vendorVan.visible = true;
   state.vendorVanActive = true;
-  state.vendorVanSpawnedAt = performance.now() / 1000;
-  state.vendorVanWave = state.wave;
+  state.vendorVanSpawnedAt = performance.now()/1000;
   showWaveBanner('VENDEDOR AMBULANTE APARECEU! (60s)');
-}
-function closeVendorVan() {
-  state.vendorVanActive = false;
-  vendorVan.visible = false;
 }
 function updateVendorVan() {
   if (!state.vendorVanActive) return;
-  const elapsed = performance.now() / 1000 - state.vendorVanSpawnedAt;
+  const elapsed = performance.now()/1000 - state.vendorVanSpawnedAt;
   if (elapsed > CONFIG.vendor.durationSec) {
-    closeVendorVan();
+    state.vendorVanActive = false;
+    vendorVan.visible = false;
     showWaveBanner('Vendedor foi embora...');
   }
 }
@@ -2031,30 +1697,19 @@ function updateDynamicLights() {
   if (!flameLight) return;
   const dxB = player.position.x - brazierGroup.position.x;
   const dzB = player.position.z - brazierGroup.position.z;
-  const distB2 = dxB * dxB + dzB * dzB;
-  const shouldBeOn = distB2 < 40 * 40 && state.brazierBurning;
-  if (shouldBeOn) {
-    if (flameLight.intensity < 2.5) flameLight.intensity = 2.5;
-  } else {
-    if (flameLight.intensity > 0) flameLight.intensity = 0;
-  }
+  const shouldBeOn = (dxB*dxB + dzB*dzB) < 40*40 && state.brazierBurning;
+  flameLight.intensity = shouldBeOn ? 2.5 : 0;
 }
 
-// ════════════════════════════════════════════════════════════
-// JUMP / SWITCH / PAUSE
-// ════════════════════════════════════════════════════════════
+// ─── JUMP / SWITCH / PAUSE ───
 function tryJump() {
-  if (state.downed) return false;
-  if (!state.isGrounded) return false;
-  if (state.vaulting) return false;
+  if (state.downed || !state.isGrounded || state.vaulting) return false;
   if (performance.now() < state.hitstopUntil) return false;
-
   let mx = 0, mz = 0;
   if (controls.isDown(Action.MoveForward,  state.keys)) mz -= 1;
   if (controls.isDown(Action.MoveBackward, state.keys)) mz += 1;
   if (controls.isDown(Action.MoveLeft,     state.keys)) mx -= 1;
   if (controls.isDown(Action.MoveRight,    state.keys)) mx += 1;
-
   const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
   const dir = new THREE.Vector3();
@@ -2064,16 +1719,12 @@ function tryJump() {
     dir.normalize();
     state.jumpVelX = dir.x * CONFIG.player.jumpForwardForce;
     state.jumpVelZ = dir.z * CONFIG.player.jumpForwardForce;
-  } else {
-    state.jumpVelX = 0;
-    state.jumpVelZ = 0;
-  }
+  } else { state.jumpVelX = 0; state.jumpVelZ = 0; }
   state.velocityY = CONFIG.player.jumpForce;
   state.isGrounded = false;
   Sfx.playJump();
   return true;
 }
-
 function switchToSlot(slot) {
   if (!state.inventory[slot] || state.currentSlot === slot) return;
   cancelReload();
@@ -2083,8 +1734,7 @@ function switchToSlot(slot) {
   if (weapon.type === 'melee' && state.aiming) { state.aiming = false; updateCrosshair(); }
   setWeaponViewModel(weaponId);
   bus.emit(Ev.PLAYER_WEAPON, { playerId: player.id, slot, weaponId });
-  updateHUD();
-  updateWeaponSlotsHUD();
+  updateHUD(); updateWeaponSlotsHUD();
 }
 function updateWeaponSlotsHUD() {
   document.querySelectorAll('#weapon-slots .slot').forEach(el => {
@@ -2093,13 +1743,9 @@ function updateWeaponSlotsHUD() {
     el.classList.toggle('empty', !has);
     el.classList.toggle('active', state.currentSlot === slot);
     const nameEl = el.querySelector('.slot-name');
-    if (nameEl) {
-      if (has) nameEl.textContent = WEAPONS[state.inventory[slot]].name;
-      else nameEl.textContent = '-';
-    }
+    if (nameEl) { if (has) nameEl.textContent = WEAPONS[state.inventory[slot]].name; else nameEl.textContent = '-'; }
   });
 }
-
 const pauseEl = document.getElementById('pause');
 function togglePause() {
   if (!state.running) return;
@@ -2113,58 +1759,42 @@ function togglePause() {
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// INPUT
-// ════════════════════════════════════════════════════════════
+// ─── INPUT ───
 document.addEventListener('keydown', e => {
   const wasDown = !!state.keys[e.code];
   state.keys[e.code] = true;
   if (wasDown) return;
-
   if (e.code === controls.getKey(Action.Slot1)) switchToSlot(1);
   if (e.code === controls.getKey(Action.Slot2)) switchToSlot(2);
   if (e.code === controls.getKey(Action.Slot3)) switchToSlot(3);
   if (e.code === controls.getKey(Action.Slot4)) switchToSlot(4);
-
   if (e.code === controls.getKey(Action.Mute)) Sfx.setMuted(!Sfx.isMuted());
-
   if (e.code === controls.getKey(Action.Pause)) {
     if (state.shopOpen) { closeShop(); return; }
     if (state.running && !state.levelUpActive) togglePause();
     return;
   }
-
-  if (e.code === controls.getKey(Action.Reload) &&
-      state.running && !state.downed && !state.shopOpen && !state.reload.active) {
+  if (e.code === controls.getKey(Action.Reload) && state.running && !state.downed && !state.shopOpen && !state.reload.active) {
     const wid = state.inventory[state.currentSlot];
     if (wid && WEAPONS[wid].type === 'ranged') startReload(wid);
   }
-
-  if (e.code === controls.getKey(Action.Ping) &&
-      state.running && !state.downed && !state.levelUpActive && !state.pingWheelOpen && !state.shopOpen) {
-    state.pingWheelOpen = true;
-    state.pingAccumX = 0;
-    state.pingAccumY = 0;
-    state.pingHighlight = null;
+  if (e.code === controls.getKey(Action.Ping) && state.running && !state.downed && !state.levelUpActive && !state.pingWheelOpen && !state.shopOpen) {
+    state.pingWheelOpen = true; state.pingAccumX = 0; state.pingAccumY = 0; state.pingHighlight = null;
     const wheel = document.getElementById('ping-wheel');
     if (wheel) wheel.classList.remove('hidden');
   }
-
-  if (e.code === controls.getKey(Action.Interact) &&
-      state.running && !state.downed && !state.levelUpActive) {
+  if (e.code === controls.getKey(Action.Interact) && state.running && !state.downed && !state.levelUpActive) {
     if (state.shopOpen) { closeShop(); return; }
     const dxB = player.position.x - brazierGroup.position.x;
     const dzB = player.position.z - brazierGroup.position.z;
-    if (Math.sqrt(dxB * dxB + dzB * dzB) < 3.0) { tryLightBrazier(); return; }
+    if (Math.sqrt(dxB*dxB + dzB*dzB) < 3.0) { tryLightBrazier(); return; }
     if (state.vendorVanActive) {
       const dxV = player.position.x - vendorVan.position.x;
       const dzV = player.position.z - vendorVan.position.z;
-      if (Math.sqrt(dxV * dxV + dzV * dzV) < 4.0) { openShop(); return; }
+      if (Math.sqrt(dxV*dxV + dzV*dzV) < 4.0) { openShop(); return; }
     }
-    if (nearWeapon && !nearWeapon.bought) tryBuyWeapon();
-    else openShop();
+    if (nearWeapon && !nearWeapon.bought) tryBuyWeapon(); else openShop();
   }
-
   const jumpKey = controls.getKey(Action.Jump);
   if (jumpKey && e.code === jumpKey) {
     e.preventDefault();
@@ -2174,7 +1804,6 @@ document.addEventListener('keydown', e => {
     return;
   }
 });
-
 document.addEventListener('keyup', e => {
   state.keys[e.code] = false;
   if (e.code === controls.getKey(Action.Ping) && state.pingWheelOpen) {
@@ -2185,22 +1814,14 @@ document.addEventListener('keyup', e => {
     state.pingHighlight = null;
   }
 });
-
 renderer.domElement.addEventListener('click', () => {
   if (!state.running || isMobile() || state.levelUpActive || state.shopOpen || state.paused) return;
-  Sfx.initAudio();
-  Sfx.resumeAudio();
+  Sfx.initAudio(); Sfx.resumeAudio();
   renderer.domElement.requestPointerLock();
 });
-
 document.addEventListener('mousemove', e => {
   if (document.pointerLockElement !== renderer.domElement) return;
-  if (state.pingWheelOpen) {
-    state.pingAccumX += e.movementX;
-    state.pingAccumY += e.movementY;
-    updatePingHighlight();
-    return;
-  }
+  if (state.pingWheelOpen) { state.pingAccumX += e.movementX; state.pingAccumY += e.movementY; updatePingHighlight(); return; }
   const sens = controls.getEffectiveSens(state.aiming);
   player.yaw -= e.movementX * sens;
   player.pitch -= e.movementY * sens;
@@ -2208,24 +1829,17 @@ document.addEventListener('mousemove', e => {
   state.mouseDX += e.movementX;
   state.mouseDY += e.movementY;
 });
-
 document.addEventListener('mousedown', e => {
   if (state.paused || state.shopOpen) return;
   if (e.button === 0) {
     state.mouseDown = true;
-    if (state.running && !state.levelUpActive && document.pointerLockElement === renderer.domElement) {
-      attack(false);
-    }
+    if (state.running && !state.levelUpActive && document.pointerLockElement === renderer.domElement) attack(false);
   }
   if (e.button === 2) {
     if (state.downed) return;
     const weaponId = state.inventory[state.currentSlot] || 'knife';
-    if (WEAPONS[weaponId].type !== 'melee') {
-      state.aiming = true;
-      updateCrosshair();
-    } else if (state.running && document.pointerLockElement === renderer.domElement) {
-      attack(true);
-    }
+    if (WEAPONS[weaponId].type !== 'melee') { state.aiming = true; updateCrosshair(); }
+    else if (state.running && document.pointerLockElement === renderer.domElement) attack(true);
   }
 });
 document.addEventListener('mouseup', e => {
@@ -2234,179 +1848,174 @@ document.addEventListener('mouseup', e => {
 });
 document.addEventListener('contextmenu', e => { if (state.running) e.preventDefault(); });
 
-function isMobile() {
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || 'ontouchstart' in window;
+function isMobile() { return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || 'ontouchstart' in window; }
+
+function setupMobile() {
+  if (!isMobile()) return;
+  const mc = document.getElementById('mobile-controls');
+  if (mc) mc.classList.remove('hidden');
+  const atk = document.getElementById('btn-attack');
+  if (atk) atk.addEventListener('touchstart', e => { e.preventDefault(); attack(false); }, { passive: false });
+  const rel = document.getElementById('btn-reload');
+  if (rel) rel.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const wid = state.inventory[state.currentSlot];
+    if (wid && WEAPONS[wid].type === 'ranged') startReload(wid);
+  }, { passive: false });
 }
+setupMobile();
 
-// ════════════════════════════════════════════════════════════
-// PLAYER UPDATE
-// ════════════════════════════════════════════════════════════
+// ─── PLAYER UPDATE ───
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _move = new THREE.Vector3();
-
 function updatePlayer(dt) {
   if (state.vaulting) {
     state.vaultTimer -= dt;
     player.position.x += state.vaultVelX * dt;
     player.position.z += state.vaultVelZ * dt;
-    if (state.vaultTimer <= 0) {
-      state.vaulting = false;
-      state.jumpOffset = 0;
-      state.isGrounded = true;
-    }
-    player.position.y = CONFIG.player.height +
-      (state.vaultTargetY - CONFIG.player.height) *
-      Math.sin(Math.PI * (1 - state.vaultTimer / CONFIG.player.vaultDuration));
+    if (state.vaultTimer <= 0) { state.vaulting = false; state.jumpOffset = 0; state.isGrounded = true; }
+    player.position.y = CONFIG.player.height + (state.vaultTargetY - CONFIG.player.height) * Math.sin(Math.PI * (1 - state.vaultTimer / CONFIG.player.vaultDuration));
     camera.position.set(player.position.x, player.position.y, player.position.z);
     camera.rotation.y = player.yaw;
     camera.rotation.x = player.pitch;
     return;
   }
-
   if (!state.isGrounded) {
     state.velocityY -= CONFIG.player.gravity * dt;
     state.jumpOffset += state.velocityY * dt;
-    if (state.jumpOffset <= 0) {
-      state.jumpOffset = 0;
-      state.velocityY = 0;
-      state.isGrounded = true;
-      state.jumpVelX = 0;
-      state.jumpVelZ = 0;
-    }
+    if (state.jumpOffset <= 0) { state.jumpOffset = 0; state.velocityY = 0; state.isGrounded = true; state.jumpVelX = 0; state.jumpVelZ = 0; }
   }
   player.position.y = CONFIG.player.height + state.jumpOffset;
-
   if (!state.isGrounded && (state.jumpVelX !== 0 || state.jumpVelZ !== 0)) {
     player.position.x += state.jumpVelX * dt;
     player.position.z += state.jumpVelZ * dt;
     const decay = Math.exp(-CONFIG.player.jumpAirDecay * dt);
-    state.jumpVelX *= decay;
-    state.jumpVelZ *= decay;
+    state.jumpVelX *= decay; state.jumpVelZ *= decay;
     if (Math.abs(state.jumpVelX) < 0.05) state.jumpVelX = 0;
     if (Math.abs(state.jumpVelZ) < 0.05) state.jumpVelZ = 0;
   }
-
   _fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   _right.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
-
   let mx = 0, mz = 0;
-  if (isMobile()) { mx = 0; mz = 0; }
-  else {
-    if (controls.isDown(Action.MoveForward,  state.keys)) mz -= 1;
-    if (controls.isDown(Action.MoveBackward, state.keys)) mz += 1;
-    if (controls.isDown(Action.MoveLeft,     state.keys)) mx -= 1;
-    if (controls.isDown(Action.MoveRight,    state.keys)) mx += 1;
-  }
+  if (controls.isDown(Action.MoveForward,  state.keys)) mz -= 1;
+  if (controls.isDown(Action.MoveBackward, state.keys)) mz += 1;
+  if (controls.isDown(Action.MoveLeft,     state.keys)) mx -= 1;
+  if (controls.isDown(Action.MoveRight,    state.keys)) mx += 1;
   _move.set(0, 0, 0);
   _move.addScaledVector(_fwd, -mz);
   _move.addScaledVector(_right, mx);
   state.isMoving = _move.lengthSq() > 0.0025;
   if (state.isMoving) _move.normalize();
-
   let speedMult = state.aiming ? 0.5 : 1;
   if (state.downed) speedMult = 0.25;
-
   const now = performance.now() / 1000;
   if (now < state.staminaBoostUntil) state.stamina = state.staminaMax;
-
   const sprintKeyHeld = controls.isDown(Action.Sprint, state.keys);
   const canSprint = state.isMoving && !state.downed && !state.aiming && state.stamina > 0;
   state.isSprinting = canSprint && sprintKeyHeld;
   const sprintMult = state.isSprinting ? CONFIG.player.sprintMult * state.sprintSpeedBonus : 1;
   const speed = CONFIG.player.speed * state.speedMult * speedMult * sprintMult;
-
   player.position.addScaledVector(_move, speed * dt);
   resolveWallCollisions(player.position, CONFIG.player.radius);
   clampToIsland(player.position, CONFIG.player.radius);
-
-  if (state.isSprinting) {
-    state.stamina = Math.max(0, state.stamina - CONFIG.player.staminaDrainRun * dt);
-  } else {
-    state.stamina = Math.min(state.staminaMax, state.stamina + CONFIG.player.staminaRegen * dt);
-  }
-
-  if (state.isMoving) state.bobTime += dt * 9;
-  else state.bobTime *= 0.9;
+  if (state.isSprinting) state.stamina = Math.max(0, state.stamina - CONFIG.player.staminaDrainRun * dt);
+  else state.stamina = Math.min(state.staminaMax, state.stamina + CONFIG.player.staminaRegen * dt);
+  if (state.isMoving) state.bobTime += dt*9; else state.bobTime *= 0.9;
   const bobY = Math.sin(state.bobTime) * (state.aiming ? 0.02 : 0.055);
   const camBaseY = state.downed ? 0.55 : player.position.y;
-
   camera.position.set(player.position.x, camBaseY + bobY, player.position.z);
   camera.rotation.order = 'YXZ';
   camera.rotation.y = player.yaw;
   camera.rotation.x = player.pitch;
-
   if (state.shake > 0.001) {
-    camera.position.x += (Math.random() - 0.5) * state.shake;
-    camera.position.y += (Math.random() - 0.5) * state.shake;
-    camera.rotation.z = (Math.random() - 0.5) * state.shake * 0.5;
+    camera.position.x += (Math.random()-0.5)*state.shake;
+    camera.position.y += (Math.random()-0.5)*state.shake;
+    camera.rotation.z = (Math.random()-0.5)*state.shake*0.5;
     state.shake *= Math.pow(0.001, dt);
-  } else {
-    camera.rotation.z = 0;
-    state.shake = 0;
-  }
-
+  } else { camera.rotation.z = 0; state.shake = 0; }
   if (player.userData._pendingDamage) {
     const dmg = player.userData._pendingDamage;
     player.userData._pendingDamage = 0;
-    if (!state.downed && performance.now() / 1000 >= state.invulnUntil) {
+    if (!state.downed && performance.now()/1000 >= state.invulnUntil) {
       state.health -= dmg;
       survival.onPlayerHit(dmg);
-      showDamageFlash();
-      updateHUD();
+      showDamageFlash(); updateHUD();
       if (state.health <= 0) enterDownedState();
     }
   }
-
   sun.position.set(player.position.x + 80, 120, player.position.z + 60);
   sun.target.position.set(player.position.x, 0, player.position.z);
   sun.target.updateMatrixWorld();
 }
-
+function circleVsAABB(px, pz, radius, box) {
+  const cx = Math.max(box.minX, Math.min(px, box.maxX));
+  const cz = Math.max(box.minZ, Math.min(pz, box.maxZ));
+  const dx = px - cx, dz = pz - cz;
+  const d2 = dx*dx + dz*dz;
+  if (d2 > radius * radius) return null;
+  const d = Math.sqrt(d2);
+  if (d > 0.0001) return { x: px + dx/d*(radius-d), z: pz + dz/d*(radius-d) };
+  const exL = Math.abs(px - box.minX), exR = Math.abs(box.maxX - px);
+  const ezU = Math.abs(pz - box.minZ), ezD = Math.abs(box.maxZ - pz);
+  const m = Math.min(exL, exR, ezU, ezD);
+  if (m === exL) return { x: box.minX - radius, z: pz };
+  if (m === exR) return { x: box.maxX + radius, z: pz };
+  if (m === ezU) return { x: px, z: box.minZ - radius };
+  return { x: px, z: box.maxZ + radius };
+}
+function resolveColliders(pos, radius, colliders) {
+  for (let i = 0; i < colliders.length; i++) {
+    const box = colliders[i];
+    if (pos.x + radius < box.minX || pos.x - radius > box.maxX) continue;
+    if (pos.z + radius < box.minZ || pos.z - radius > box.maxZ) continue;
+    const r = circleVsAABB(pos.x, pos.z, radius, box);
+    if (r) { pos.x = r.x; pos.z = r.z; }
+  }
+}
+function resolveWallCollisions(pos, radius) {
+  resolveColliders(pos, radius, world.wallColliders);
+  resolveColliders(pos, radius, world.furnitureColliders);
+}
 function resolvePlayerZombieCollision() {
   for (const z of zombies) {
     if (z.hp <= 0) continue;
     const dx = player.position.x - z.p.x;
     const dz = player.position.z - z.p.z;
-    const d2 = dx * dx + dz * dz;
+    const d2 = dx*dx + dz*dz;
     const minD = CONFIG.player.radius + (z.radius || 0.4);
-    if (d2 < minD * minD && d2 > 0.0001) {
+    if (d2 < minD*minD && d2 > 0.0001) {
       const d = Math.sqrt(d2), overlap = minD - d;
-      const nx = dx / d, nz = dz / d;
-      player.position.x += nx * overlap * 0.5;
-      player.position.z += nz * overlap * 0.5;
-      z.p.x -= nx * overlap * 0.5;
-      z.p.z -= nz * overlap * 0.5;
+      const nx = dx/d, nz = dz/d;
+      player.position.x += nx*overlap*0.5;
+      player.position.z += nz*overlap*0.5;
+      z.p.x -= nx*overlap*0.5;
+      z.p.z -= nz*overlap*0.5;
     }
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// ZOMBIE UPDATE (com ZB3 pose + Verlet + throttling)
-// ════════════════════════════════════════════════════════════
+// ─── ZOMBIE UPDATE ───
 let _lodTickAccum = 0;
 let _popTickAccum = 0;
 const LOD_TICK_INTERVAL = 0.5;
 const POP_TICK_INTERVAL = 2.0;
 const _TMP = new THREE.Vector3();
-
 function updateZombies(dt) {
   const now = performance.now() / 1000;
   state.attackPermission.recentAttackers.clear();
 
-  // ── LOD 3-state (throttled) ──
   _lodTickAccum += dt;
   if (_lodTickAccum >= LOD_TICK_INTERVAL) {
     _lodTickAccum = 0;
     state.zombiesRef = zombies;
-    updateZombieLOD(zombies, player.position, LOD_TICK_INTERVAL, 200);
+    updateZombieLOD(zombies, player.position, LOD_TICK_INTERVAL, 140);
   }
-
-  // ── População (throttled) ──
   _popTickAccum += dt;
   if (_popTickAccum >= POP_TICK_INTERVAL) {
     _popTickAccum = 0;
     tickZombiePopulation(POP_TICK_INTERVAL, {
       spawnZombie,
       state,
+      bossPos: state.bossPos,
       bossActive: state.bossSpawned,
     });
   }
@@ -2415,7 +2024,6 @@ function updateZombies(dt) {
     const z = zombies[i];
     if (z.hp <= 0 && z.state !== 'Dying') continue;
 
-    // ── Morte: ragdoll ──
     if (z.state === 'Dying') {
       z.tmr += dt;
       if (z.tmr < 0.5) {
@@ -2423,9 +2031,8 @@ function updateZombies(dt) {
       } else {
         if (!z._ragdolled) {
           z._ragdolled = true;
-          const rag = new VerletRagdoll(z, z.hitDir);
+          const rag = new VerletRagdoll(z, z.hitDir, scene, world);
           ragdolls.push(rag);
-          // Spawna blood pool no chão
           spawnBloodPool(z.p.clone().setY(0.03));
         }
         z.rm = true;
@@ -2435,14 +2042,13 @@ function updateZombies(dt) {
       }
     }
 
-    // ── LOD skip ──
     if (z._loadState === ZombieLoadState.UNLOADED) continue;
     if (z._loadState === ZombieLoadState.PROP) {
       z.g.position.set(z.p.x, 0, z.p.z);
       continue;
     }
 
-    updateZombieSleepState(z, dt);
+    updateZombieSleepState(z);
     applyZombieWaterDamage(z, dt, CONFIG.island.waterY);
     ZombieAI.updateZombieAIState(z, player, dt, world);
 
@@ -2451,14 +2057,12 @@ function updateZombies(dt) {
     const dir = _TMP.divideScalar(d || 1);
     const dot = dir.x * Math.sin(z.yaw) + dir.z * Math.cos(z.yaw);
 
-    // ── Targeting ──
     z.tf -= dt;
     if (z.tf <= 0) {
       z.tf = 0.2 + Math.random() * 0.2;
-      if (player.userData._dead) {
-        z.target = false;
-      } else if (d < 28) {
-        const n = 1 - d * d / 784;
+      if (player.userData._dead) z.target = false;
+      else if (d < 28) {
+        const n = 1 - d*d/784;
         const lo = 0.2 + (1 - n) * -0.907;
         const f = Math.pow(Math.max(0, Math.min(1, (dot - lo) / (1 - lo))), 2);
         z.aggro += n * n * f * 2.2 * (z.target ? 1.5 : 1);
@@ -2466,18 +2070,15 @@ function updateZombies(dt) {
       }
     }
 
-    // ── AI state ──
     if (z.ai === 'Idle' && z.target) z.ai = 'Chase';
     if (!z.target) z.ai = 'Idle';
     const reach = player.position.y < 1.2;
     if (z.ai === 'Chase' && reach && d < 2.2) z.ai = 'Combat';
     else if (z.ai === 'Combat' && (d > 2.2 || !reach)) z.ai = 'Chase';
 
-    // ── Body state ──
     if (z.state === 'Unaware' && z.ai !== 'Idle') z.state = 'Aware';
     else if (z.state === 'Aware' && z.ai === 'Idle') z.state = 'Unaware';
 
-    // ── Movement ──
     let v = 0;
     if (z.state === 'Stagger') {
       z.tmr += dt;
@@ -2491,8 +2092,7 @@ function updateZombies(dt) {
           const dm = (z.s.dmg || z.damage) * (1 - state.damageReduction);
           state.health -= dm;
           survival.onPlayerHit(dm);
-          showDamageFlash();
-          updateHUD();
+          showDamageFlash(); updateHUD();
           if (state.health <= 0 && !state.downed) enterDownedState();
         }
       }
@@ -2502,10 +2102,7 @@ function updateZombies(dt) {
         let da = Math.atan2(dir.x, dir.z) - z.yaw;
         da = Math.atan2(Math.sin(da), Math.cos(da));
         z.yaw += Math.max(-6 * dt, Math.min(6 * dt, da));
-        const top = Math.max(
-          z.s.speed * (0.6 + 0.4 * Math.max(0, Math.min(1, (z.hp / z.max - 0.5) / 0.25))),
-          1
-        );
+        const top = Math.max(z.s.speed * (0.6 + 0.4 * Math.max(0, Math.min(1, (z.hp / z.max - 0.5) / 0.25))), 1);
         v = z.ai === 'Combat' ? Math.max(-1, Math.min(top, (d - 1.4) * 3)) : top;
         if (z.state === 'Unaware') v *= 0.5;
       }
@@ -2523,13 +2120,15 @@ function updateZombies(dt) {
     z.p.x = Math.max(-200, Math.min(200, z.p.x + Math.sin(z.yaw) * v * dt));
     z.p.z = Math.max(-200, Math.min(200, z.p.z + Math.cos(z.yaw) * v * dt));
     z.ph += Math.abs(v) * dt * 2.4;
-
-    // ── Aplica pose ZB3 ──
     z.g.position.set(z.p.x, 0, z.p.z);
     z.g.rotation.y = z.yaw;
-    z.pts = poseZombie(z);
 
-    // ── Stuck detection (compatível com ZB2) ──
+    z._poseFrame = (z._poseFrame || 0) + 1;
+    const updateEvery = d < 25 ? 1 : (d < 50 ? 2 : 3);
+    if (z._poseFrame % updateEvery === 0 || !z.pts) {
+      z.pts = poseZombie(z);
+    }
+
     if (!z.type.flight) {
       z.mesh = z.g;
       z.mesh.position.copy(z.p);
@@ -2537,49 +2136,37 @@ function updateZombies(dt) {
     }
   }
 
-  // ── Atualiza ragdolls (Verlet) ──
   for (let i = ragdolls.length - 1; i >= 0; i--) {
-    if (ragdolls[i].update(dt, emitBlood, null)) {
+    if (ragdolls[i].update(dt, emitBlood)) {
       ragdolls[i].dispose();
       ragdolls.splice(i, 1);
     }
   }
-
-  // ── Atualiza limb gibs ──
   for (let i = flyingLimbs.length - 1; i >= 0; i--) {
     if (flyingLimbs[i].update(dt)) {
       flyingLimbs[i].dispose(scene);
       flyingLimbs.splice(i, 1);
     }
   }
-
-  // ── Remove zumbis marcados ──
   for (let i = zombies.length - 1; i >= 0; i--) {
     if (zombies[i].rm) zombies.splice(i, 1);
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// DOORS
-// ════════════════════════════════════════════════════════════
+// ─── DOORS / LOOT / WEAPONS ───
 function updateDoors(dt) {
   for (const door of world.doors) {
     const dx = player.position.x - door.worldX;
     const dz = player.position.z - door.worldZ;
-    const dist = Math.sqrt(dx * dx + dz * dz);
-    const target = dist < 2.2 ? -Math.PI / 2 : 0;
-    door.currentAngle += (target - door.currentAngle) * Math.min(1, dt * 6);
+    const dist = Math.sqrt(dx*dx + dz*dz);
+    const target = dist < 2.2 ? -Math.PI/2 : 0;
+    door.currentAngle += (target - door.currentAngle) * Math.min(1, dt*6);
     door.group.rotation.y = door.currentAngle;
   }
 }
-
-// ════════════════════════════════════════════════════════════
-// LOOT SPOTS
-// ════════════════════════════════════════════════════════════
 function lootTypeForRoom(room, tier) {
   const table = LOOT_TABLE[room] || LOOT_TABLE.generic;
-  const key = `tier${Math.min(tier + 1, 5)}`;
-  return table[key] || 'ammo';
+  return table[`tier${Math.min(tier + 1, 5)}`] || 'ammo';
 }
 function collectLoot(spot) {
   Sfx.playBuy();
@@ -2589,19 +2176,16 @@ function collectLoot(spot) {
   switch (effectiveType) {
     case 'ammo': {
       const wid = state.inventory[state.currentSlot];
-      const w = WEAPONS[wid];
-      const am = state.ammo[wid];
+      const w = WEAPONS[wid]; const am = state.ammo[wid];
       if (w && w.type === 'ranged' && am) {
         const give = Math.min(spot.amount * 30, w.reserveMax - am.reserve);
-        am.reserve += give;
-        label = `+${give} MUNIÇÃO`;
-      } else { label = '+MUNIÇÃO (sem arma)'; }
+        am.reserve += give; label = `+${give} MUNIÇÃO`;
+      } else label = '+MUNIÇÃO (sem arma)';
       break;
     }
     case 'medkit': {
       const heal = Math.round(25 * spot.amount * state.healMult);
-      state.health = Math.min(state.maxHealth, state.health + heal);
-      label = `+${heal} HP`;
+      state.health = Math.min(state.maxHealth, state.health + heal); label = `+${heal} HP`;
       break;
     }
     case 'food': {
@@ -2611,18 +2195,8 @@ function collectLoot(spot) {
       label = `+${heal} HP, +30 Stam`;
       break;
     }
-    case 'cash': {
-      const coins = Math.round(10 * spot.amount * state.coinMult);
-      state.coins += coins;
-      label = `+$${coins}`;
-      break;
-    }
-    case 'component': {
-      const coins = Math.round(15 * spot.amount * state.coinMult);
-      state.coins += coins;
-      label = `+$${coins} (componente)`;
-      break;
-    }
+    case 'cash': { const coins = Math.round(10 * spot.amount * state.coinMult); state.coins += coins; label = `+$${coins}`; break; }
+    case 'component': { const coins = Math.round(15 * spot.amount * state.coinMult); state.coins += coins; label = `+$${coins} (componente)`; break; }
     default: label = `Loot (${effectiveType})!`;
   }
   updateHUD();
@@ -2637,8 +2211,7 @@ function updateLootSpots(dt) {
     spot.mesh.rotation.y += dt * CONFIG.loot.spinSpeed;
     const dx = player.position.x - spot.x;
     const dz = player.position.z - spot.z;
-    const d2 = dx * dx + dz * dz;
-    if (d2 < CONFIG.loot.pickupRadius * CONFIG.loot.pickupRadius) {
+    if (dx*dx + dz*dz < CONFIG.loot.pickupRadius * CONFIG.loot.pickupRadius) {
       collectLoot(spot);
       spot.collected = true;
       scene.remove(spot.mesh); scene.remove(spot.halo);
@@ -2648,48 +2221,21 @@ function updateLootSpots(dt) {
     }
   }
 }
-
-// ════════════════════════════════════════════════════════════
-// WEAPON PICKUPS
-// ════════════════════════════════════════════════════════════
 let nearWeapon = null;
 const promptEl = document.getElementById('prompt');
 const promptText = document.getElementById('prompt-text');
-
 function spawnWeaponPickup(weaponId, x, z, y = 0.9, isDrop = false) {
-  const spriteHandle = spawnPickup3D(scene, {
-    weaponId, x, z, y: y + 0.3, isDrop, spinSpeed: 1.2, bobAmp: 0.08,
-  });
-  world.weaponSpots.push({
-    x, y, z,
-    mesh: spriteHandle.group,
-    spriteHandle,
-    ring: spriteHandle.ring,
-    weaponId, bought: false,
-    baseY: y + 0.3, isDrop,
-  });
+  const spriteHandle = spawnPickup3D(scene, { weaponId, x, z, y: y + 0.3, isDrop, spinSpeed: 1.2, bobAmp: 0.08 });
+  world.weaponSpots.push({ x, y, z, mesh: spriteHandle.group, spriteHandle, ring: spriteHandle.ring, weaponId, bought: false, baseY: y + 0.3, isDrop });
 }
 function setupWeaponSpawns() {
-  const openSpots = [
-    { x: 30, z: 30 }, { x: -30, z: 30 }, { x: 30, z: -30 }, { x: -30, z: -30 },
-    { x: 90, z: 0 }, { x: -90, z: 0 }, { x: 0, z: 90 }, { x: 0, z: -90 },
-  ];
+  const openSpots = [{ x: 30, z: 30 }, { x: -30, z: 30 }, { x: 30, z: -30 }, { x: -30, z: -30 }, { x: 90, z: 0 }, { x: -90, z: 0 }, { x: 0, z: 90 }, { x: 0, z: -90 }];
   const meleePool = ['woodenClub', 'pipe', 'cleaver', 'shovel', 'kukri'];
-  openSpots.slice(0, 5).forEach((h, i) =>
-    spawnWeaponPickup(meleePool[i % meleePool.length], h.x, h.z, 0.95));
+  openSpots.slice(0, 5).forEach((h, i) => spawnWeaponPickup(meleePool[i % meleePool.length], h.x, h.z, 0.95));
   const pool = ['pistol', 'pistol', 'smg', 'shotgun', 'revolver', 'rifle', 'launcher'];
   const shuffled = [...pool].sort(() => Math.random() - 0.5);
-  openSpots.slice(5).forEach((h, i) =>
-    spawnWeaponPickup(shuffled[i % shuffled.length], h.x, h.z, 0.95));
-
-  const poiWeapons = {
-    police:     ['rifle', 'shotgun'],
-    hospital:   ['smg', 'pistol'],
-    church:     ['katana'],
-    military:   ['rifle', 'launcher', 'shotgun'],
-    warehouse:  ['kukri', 'pipeWrench', 'revolver'],
-    government: ['reaperScythe'],
-  };
+  openSpots.slice(5).forEach((h, i) => spawnWeaponPickup(shuffled[i % shuffled.length], h.x, h.z, 0.95));
+  const poiWeapons = { police: ['rifle', 'shotgun'], hospital: ['smg', 'pistol'], church: ['katana'], military: ['rifle', 'launcher', 'shotgun'], warehouse: ['kukri', 'pipeWrench', 'revolver'], government: ['reaperScythe'] };
   for (const [poiId, weapons] of Object.entries(poiWeapons)) {
     const p = world.pois[poiId];
     if (!p) continue;
@@ -2705,7 +2251,7 @@ function updateWeaponPickups(dt) {
   world.weaponSpots.forEach(s => {
     if (s.bought) return;
     const dx = player.position.x - s.x, dz = player.position.z - s.z;
-    const d = Math.sqrt(dx * dx + dz * dz);
+    const d = Math.sqrt(dx*dx + dz*dz);
     if (d < closestDist) { closestDist = d; closest = s; }
   });
   nearWeapon = closest;
@@ -2722,8 +2268,7 @@ function updateWeaponPickups(dt) {
   }
   const dxB = player.position.x - brazierGroup.position.x;
   const dzB = player.position.z - brazierGroup.position.z;
-  const nearBrazier = Math.sqrt(dxB * dxB + dzB * dzB) < 3.0;
-  if (nearBrazier && !state.shopOpen) {
+  if (Math.sqrt(dxB*dxB + dzB*dzB) < 3.0 && !state.shopOpen) {
     if (promptEl) promptEl.classList.remove('hidden');
     if (promptText) {
       if (state.brazierBurning) promptText.innerHTML = `Brazeiro <span style="color:#ff6600">ACESO</span>`;
@@ -2735,7 +2280,7 @@ function updateWeaponPickups(dt) {
   if (state.vendorVanActive && !state.shopOpen) {
     const dxV = player.position.x - vendorVan.position.x;
     const dzV = player.position.z - vendorVan.position.z;
-    if (Math.sqrt(dxV * dxV + dzV * dzV) < 4.0) {
+    if (Math.sqrt(dxV*dxV + dzV*dzV) < 4.0) {
       if (promptEl) promptEl.classList.remove('hidden');
       if (promptText) promptText.innerHTML = `Abrir <span style="color:#ffdd00">VENDEDOR AMBULANTE</span>`;
       return;
@@ -2752,35 +2297,20 @@ function tryBuyWeapon() {
   state.inventory[w.slot] = nearWeapon.weaponId;
   if (w.type === 'ranged') {
     const reserveBonus = Math.floor(w.reserveMax * state.reserveAmmoBonus);
-    state.ammo[w.id] = {
-      mag: w.magSize,
-      reserve: Math.min(w.reserveMax * 2, w.reserveMax + reserveBonus),
-    };
+    state.ammo[w.id] = { mag: w.magSize, reserve: Math.min(w.reserveMax * 2, w.reserveMax + reserveBonus) };
   }
   nearWeapon.bought = true;
   if (nearWeapon.spriteHandle) nearWeapon.spriteHandle.dispose();
   if (state.currentSlot === w.slot) setWeaponViewModel(nearWeapon.weaponId);
   else switchToSlot(w.slot);
   Sfx.playBuy();
-  bus.emit(Ev.WEAPON_BUY, {
-    playerId: player.id, weaponId: w.id,
-    cost: nearWeapon.isDrop ? 0 : finalCost, slot: w.slot,
-  });
-  updateHUD();
-  updateWeaponSlotsHUD();
+  bus.emit(Ev.WEAPON_BUY, { playerId: player.id, weaponId: w.id, cost: nearWeapon.isDrop ? 0 : finalCost, slot: w.slot });
+  updateHUD(); updateWeaponSlotsHUD();
 }
-
-// ════════════════════════════════════════════════════════════
-// POI DISCOVERY
-// ════════════════════════════════════════════════════════════
 let poiNotifTimer = null;
 function showPOINotification(name, subtitle) {
   let el = document.getElementById('poi-notification');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'poi-notification';
-    document.body.appendChild(el);
-  }
+  if (!el) { el = document.createElement('div'); el.id = 'poi-notification'; document.body.appendChild(el); }
   el.innerHTML = `${name}<span class="poi-name">${subtitle || ''}</span>`;
   el.classList.add('show');
   clearTimeout(poiNotifTimer);
@@ -2793,18 +2323,9 @@ function checkPOIDiscovery() {
     const poi = world.pois[id];
     const dx = player.position.x - poi.x;
     const dz = player.position.z - poi.z;
-    if (dx * dx + dz * dz < 20 * 20) {
+    if (dx*dx + dz*dz < 20*20) {
       state.discoveredPOIs.add(id);
-      const names = {
-        police:     ['DELEGACIA',      'Autoridades não respondem mais...'],
-        hospital:   ['HOSPITAL',       'Sala de emergência abandonada.'],
-        church:     ['IGREJA CATEDRAL','Algo sombrio reside aqui.'],
-        market:     ['MERCADO',        'Suprimentos ainda nas prateleiras.'],
-        gas:        ['POSTO',          'Combustível e abrigo.'],
-        military:   ['POSTO MILITAR',  'Zona de quarentena fortificada.'],
-        warehouse:  ['ARMAZÉM',        'Suprimentos e cobertura pesada.'],
-        government: ['PREFEITURA',     'O último bastião do poder civil.'],
-      };
+      const names = { police: ['DELEGACIA', 'Autoridades não respondem mais...'], hospital: ['HOSPITAL', 'Sala de emergência abandonada.'], church: ['IGREJA CATEDRAL', 'Algo sombrio reside aqui.'], market: ['MERCADO', 'Suprimentos ainda nas prateleiras.'], gas: ['POSTO', 'Combustível e abrigo.'], military: ['POSTO MILITAR', 'Zona de quarentena fortificada.'], warehouse: ['ARMAZÉM', 'Suprimentos e cobertura pesada.'], government: ['PREFEITURA', 'O último bastião do poder civil.'] };
       const [title, sub] = names[poi.type] || ['ÁREA', ''];
       showPOINotification(title, sub);
       bus.emit(Ev.POI_DISCOVERED, { id, type: poi.type });
@@ -2813,29 +2334,20 @@ function checkPOIDiscovery() {
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// ANIMATE LOOP
-// ════════════════════════════════════════════════════════════
+// ─── ANIMATE ───
 const clock = new THREE.Clock();
 let shadowFrame = 0;
 let lastTimeText = '';
-
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
   const now = performance.now() / 1000;
-
-  if (performance.now() < state.hitstopUntil) {
-    renderer.render(scene, camera);
-    return;
-  }
-
+  if (performance.now() < state.hitstopUntil) { renderer.render(scene, camera); return; }
   if (muzzleLight.intensity > 0) {
     const remain = muzzleLightEnd - now;
     if (remain <= 0) muzzleLight.intensity = 0;
     else muzzleLight.intensity = 3 * (remain / 0.08);
   }
-
   if (state.running && !state.levelUpActive && !state.paused && !state.shopOpen) {
     updateReload(dt);
     updatePlayer(dt);
@@ -2857,55 +2369,34 @@ function animate() {
     updateExplosions(dt);
     updateNoiseRipples(dt);
     updateBossProjectiles(dt);
-
     Daytime.updateDaytime(dt);
     Gore.updateGore(dt);
     Extraction.updateExtraction(dt);
     checkPOIDiscovery();
-
     if (weaponView) {
-      if (state.downed) {
-        weaponView.setVisible(false);
-      } else {
+      if (state.downed) weaponView.setVisible(false);
+      else {
         weaponView.setVisible(true);
-        weaponView.update(dt, {
-          aiming: state.aiming,
-          moving: state.isMoving,
-          bobTime: state.bobTime,
-          mouseDX: state.mouseDX,
-          mouseDY: state.mouseDY,
-        });
+        weaponView.update(dt, { aiming: state.aiming, moving: state.isMoving, bobTime: state.bobTime, mouseDX: state.mouseDX, mouseDY: state.mouseDY });
       }
     }
     state.mouseDX *= 0.75;
     state.mouseDY *= 0.75;
-
     if (state.mouseDown && !state.reload.active) {
       const wid = state.inventory[state.currentSlot] || 'knife';
       const w = WEAPONS[wid];
-      if (w.auto) {
-        if (!state.downed || wid === 'pistol') attack(false);
-      }
+      if (w.auto) { if (!state.downed || wid === 'pistol') attack(false); }
     }
-
     const targetFov = state.aiming ? 50 : 78;
-    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 15);
+    camera.fov += (targetFov - camera.fov) * Math.min(1, dt*15);
     camera.updateProjectionMatrix();
-
     shadowFrame++;
-    if (shadowFrame >= 30) {
-      renderer.shadowMap.needsUpdate = true;
-      shadowFrame = 0;
-    }
-
-    const elapsed = Math.floor((performance.now() - state.startTime) / 1000);
-    const m = Math.floor(elapsed / 60);
+    if (shadowFrame >= 30) { renderer.shadowMap.needsUpdate = true; shadowFrame = 0; }
+    const elapsed = Math.floor((performance.now() - state.startTime)/1000);
+    const m = Math.floor(elapsed/60);
     const s = (elapsed % 60).toString().padStart(2, '0');
     const t = `${m}:${s}`;
-    if (t !== lastTimeText && HUD.timer) {
-      HUD.timer.textContent = t;
-      lastTimeText = t;
-    }
+    if (t !== lastTimeText && HUD.timer) { HUD.timer.textContent = t; lastTimeText = t; }
     const revBtn = document.getElementById('btn-revive');
     if (revBtn) revBtn.classList.toggle('visible', state.downed);
   } else if (!state.running) {
@@ -2916,26 +2407,17 @@ function animate() {
     updateExplosions(dt);
     updatePickups3D(dt, camera);
     for (let i = ragdolls.length - 1; i >= 0; i--) {
-      if (ragdolls[i].update(dt, emitBlood, null)) {
-        ragdolls[i].dispose();
-        ragdolls.splice(i, 1);
-      }
+      if (ragdolls[i].update(dt, emitBlood)) { ragdolls[i].dispose(); ragdolls.splice(i, 1); }
     }
     for (let i = flyingLimbs.length - 1; i >= 0; i--) {
-      if (flyingLimbs[i].update(dt)) {
-        flyingLimbs[i].dispose(scene);
-        flyingLimbs.splice(i, 1);
-      }
+      if (flyingLimbs[i].update(dt)) { flyingLimbs[i].dispose(scene); flyingLimbs.splice(i, 1); }
     }
   }
-
   renderer.render(scene, camera);
 }
 animate();
 
-// ════════════════════════════════════════════════════════════
-// SKIN SELECTOR
-// ════════════════════════════════════════════════════════════
+// ─── SKIN SELECTOR ───
 (function initSkinSelector() {
   const optionsEl = document.getElementById('skin-options');
   const previewEl = document.getElementById('skin-perk-preview');
@@ -2952,8 +2434,7 @@ animate();
     SKINS.forEach(skin => {
       const btn = document.createElement('button');
       btn.className = 'skin-option' + (skin.id === selected ? ' active' : '');
-      btn.innerHTML = `<div class="skin-icon">${skin.icon}</div>
-                       <div class="skin-name">${skin.name}</div>`;
+      btn.innerHTML = `<div class="skin-icon">${skin.icon}</div><div class="skin-name">${skin.name}</div>`;
       btn.addEventListener('click', () => {
         selected = skin.id;
         try { localStorage.setItem('qb_skin', skin.id); } catch {}
@@ -2964,21 +2445,14 @@ animate();
     });
     if (previewEl) {
       const perk = getPerk(selected);
-      previewEl.innerHTML = `
-        <span class="perk-name">${perk.icon} ${perk.name}</span>
-        ${perk.desc}
-      `;
+      previewEl.innerHTML = `<span class="perk-name">${perk.icon} ${perk.name}</span>${perk.desc}`;
     }
   }
   render();
 })();
 
-// ════════════════════════════════════════════════════════════
-// START / GAME OVER
-// ════════════════════════════════════════════════════════════
-function getRecord() {
-  try { return parseInt(localStorage.getItem('qb_record_wave') || '0', 10); } catch { return 0; }
-}
+// ─── START / GAME OVER ───
+function getRecord() { try { return parseInt(localStorage.getItem('qb_record_wave') || '0', 10); } catch { return 0; } }
 function saveRecord(wave, level) {
   try {
     const prev = getRecord();
@@ -3000,83 +2474,37 @@ updateRecordDisplay();
 function startGame() {
   if (state.waveIntervalId !== null) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; }
   if (state.waveStartTimeoutId !== null) { clearTimeout(state.waveStartTimeoutId); state.waveStartTimeoutId = null; }
-  Sfx.initAudio();
-  Sfx.resumeAudio();
+  Sfx.initAudio(); Sfx.resumeAudio();
   randomizeDifficultyRegions();
 
-  state.maxHealth = CONFIG.player.maxHealth;
-  state.health = state.maxHealth;
-  state.coins = 0;
-  state.xp = 0;
-  state.level = 1;
-  state.xpToNextLevel = 50;
-  state.wave = 0;
-  state.zombiesAlive = 0;
-  state.zombiesRemainingInWave = 0;
-  state.running = true;
-  state.paused = false;
-  state.betweenWaves = false;
-  state.startTime = performance.now();
-  state.critChance = CONFIG.crit.baseChance;
-  state.damageMult = 1.0;
-  state.rangeBonus = 0;
-  state.speedMult = 1.0;
-  state.lifesteal = 0;
-  state.coinMult = 1.0;
-  state.xpMult = 1.0;
-  state.damageReduction = 0;
-  state.attackSpeedMult = 1.0;
-  state.critDamageBonus = 0;
-  state.levelUpActive = false;
-  state.pendingLevelUps = 0;
-  state.inventory = { 1:'knife', 2:null, 3:null, 4:null };
-  state.currentSlot = 1;
-  state.mouseDown = false;
-  state.aiming = false;
-  state.shake = 0;
-  state.shopOpen = false;
-  state.downed = false;
-  state.downedElapsed = 0;
-  state.downedHP = 0;
-  state.reviveProgress = 0;
-  state.revivesLeft = CONFIG.downed.maxRevives;
-  state.invulnUntil = 0;
-  state.pingWheelOpen = false;
-  state.pingHighlight = null;
-  state.kills = 0;
-  state.headshots = 0;
-  state.damageTotal = 0;
-  state.bossSpawned = false;
-  state.stamina = CONFIG.player.staminaMax;
-  state.hitstopUntil = 0;
-  state.isGrounded = true;
-  state.velocityY = 0;
-  state.jumpOffset = 0;
-  state.jumpVelX = 0;
-  state.jumpVelZ = 0;
-  state.isSprinting = false;
-  state.brazierFuel = 1;
-  state.brazierBurning = false;
-  state.vendorVanActive = false;
-  state.mouseDX = 0;
-  state.mouseDY = 0;
-  state.staminaBoostUntil = 0;
-  state.discoveredPOIs.clear();
-  state.vaulting = false;
-  state.vaultTimer = 0;
-  state.attackPermission.recentAttackers.clear();
-  survival.reset();
-  cancelReload();
-  state.ammo = {};
+  Object.assign(state, {
+    health: CONFIG.player.maxHealth, maxHealth: CONFIG.player.maxHealth,
+    coins: 0, xp: 0, level: 1, xpToNextLevel: 50,
+    wave: 0, zombiesAlive: 0, zombiesRemainingInWave: 0,
+    running: true, paused: false, betweenWaves: false,
+    startTime: performance.now(),
+    critChance: CONFIG.crit.baseChance,
+    damageMult: 1, rangeBonus: 0, speedMult: 1, lifesteal: 0,
+    coinMult: 1, xpMult: 1, damageReduction: 0,
+    attackSpeedMult: 1, critDamageBonus: 0,
+    inventory: { 1:'knife', 2:null, 3:null, 4:null }, currentSlot: 1,
+    mouseDown: false, aiming: false, shake: 0, shopOpen: false,
+    downed: false, kills: 0, headshots: 0, damageTotal: 0,
+    stamina: CONFIG.player.staminaMax,
+    hitstopUntil: 0, isGrounded: true, velocityY: 0, jumpOffset: 0,
+    jumpVelX: 0, jumpVelZ: 0, isSprinting: false,
+    brazierFuel: 1, brazierBurning: false,
+    vendorVanActive: false, bossSpawned: false, bossPos: null,
+    mouseDX: 0, mouseDY: 0, vaulting: false, vaultTimer: 0,
+    ammo: {}, reload: { active: false, wid: null, elapsed: 0, duration: 0 },
+  });
 
   document.body.classList.remove('downed', 'aiming');
-  const hideIds = ['downed-overlay','ping-wheel','scoreboard','shop','pause'];
-  hideIds.forEach(id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); });
-
-  pings.forEach(p => {
-    scene.remove(p.group);
-    p.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+  ['downed-overlay','ping-wheel','scoreboard','shop','pause'].forEach(id => {
+    const e = document.getElementById(id); if (e) e.classList.add('hidden');
   });
+
+  pings.forEach(p => { scene.remove(p.group); p.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); }); });
   pings.length = 0;
 
   const perk = applyPerk(state.playerSkin || 'default', state, player);
@@ -3097,7 +2525,6 @@ function startGame() {
   for (const spot of world.lootSpots) spot.collected = false;
   initLootSpots();
 
-  // Limpa zumbis + ragdolls + gibs + sangue
   zombies.forEach(z => scene.remove(z.g));
   zombies.length = 0;
   ragdolls.forEach(r => r.dispose());
@@ -3105,7 +2532,7 @@ function startGame() {
   flyingLimbs.forEach(g => g.dispose(scene));
   flyingLimbs.length = 0;
   bloodActive.length = 0;
-  bloodPools.forEach(b => { scene.remove(b.mesh); b.mesh.geometry.dispose(); b.mesh.material.dispose(); });
+  bloodPools.forEach(b => { scene.remove(b.mesh); });
   bloodPools.length = 0;
   tracers.forEach(t => { t.mesh.visible = false; tracerPool.push(t); });
   tracers.length = 0;
@@ -3119,12 +2546,10 @@ function startGame() {
   for (const box of world.furnitureColliders) addStaticBox(box.minX, box.maxX, box.minZ, box.maxZ, 1.2);
 
   player.position.set(70, CONFIG.player.height, 70);
-  player.yaw = 0;
-  player.pitch = 0;
+  player.yaw = 0; player.pitch = 0;
   player.userData._pendingDamage = 0;
   player.userData._dead = false;
 
-  // NPCs decorativos
   if (world._npcs) world._npcs.forEach(m => scene.remove(m));
   world._npcs = [];
   const npcList = [
@@ -3156,37 +2581,30 @@ function startGame() {
   updateHUD();
   startWave();
 }
-
 function gameOver() {
-  bus.emit(Ev.PLAYER_DIED, {
-    playerId: player.id, wave: state.wave, level: state.level,
-    coins: state.coins, xp: state.xp,
-  });
+  bus.emit(Ev.PLAYER_DIED, { playerId: player.id, wave: state.wave, level: state.level, coins: state.coins, xp: state.xp });
   state.running = false;
   state.aiming = false;
   state.downed = false;
   state.paused = false;
   cancelReload();
   document.body.classList.remove('downed');
-  const hideIds = ['downed-overlay','pause'];
-  hideIds.forEach(id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); });
+  ['downed-overlay','pause'].forEach(id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); });
   updateCrosshair();
   if (state.waveIntervalId !== null) { clearInterval(state.waveIntervalId); state.waveIntervalId = null; }
   if (state.waveStartTimeoutId !== null) { clearTimeout(state.waveStartTimeoutId); state.waveStartTimeoutId = null; }
-
   const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   setText('final-wave', state.wave);
   setText('final-level', state.level);
   setText('final-coins', state.coins);
   setText('final-kills', state.kills);
   setText('final-hs', state.headshots);
-  const elapsed = Math.floor((performance.now() - state.startTime) / 1000);
-  const m = Math.floor(elapsed / 60);
+  const elapsed = Math.floor((performance.now() - state.startTime)/1000);
+  const m = Math.floor(elapsed/60);
   const s = (elapsed % 60).toString().padStart(2, '0');
   setText('final-time', `${m}:${s}`);
   const isNewRecord = saveRecord(state.wave, state.level);
   setText('final-record', isNewRecord ? '★ NOVO RECORDE! ★' : 'RECORDE: HORDA ' + getRecord());
-
   const gameover = document.getElementById('gameover');
   const hud = document.getElementById('hud');
   const prompt = document.getElementById('prompt');
@@ -3197,9 +2615,6 @@ function gameOver() {
   updateRecordDisplay();
 }
 
-// ════════════════════════════════════════════════════════════
-// BUTTONS
-// ════════════════════════════════════════════════════════════
 const btnStart = document.getElementById('btn-start');
 if (btnStart) btnStart.addEventListener('click', startGame);
 const btnRestart = document.getElementById('btn-restart');
@@ -3210,8 +2625,7 @@ const btnResume = document.getElementById('btn-resume');
 if (btnResume) btnResume.addEventListener('click', () => { if (state.paused) togglePause(); });
 const btnQuit = document.getElementById('btn-quit');
 if (btnQuit) btnQuit.addEventListener('click', () => {
-  state.paused = false;
-  state.running = false;
+  state.paused = false; state.running = false;
   const pause = document.getElementById('pause');
   const hud = document.getElementById('hud');
   const menu = document.getElementById('menu');
@@ -3226,51 +2640,18 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ════════════════════════════════════════════════════════════
-// MOBILE (setup mínimo)
-// ════════════════════════════════════════════════════════════
-function setupMobile() {
-  if (!isMobile()) return;
-  const mc = document.getElementById('mobile-controls');
-  if (mc) mc.classList.remove('hidden');
-  const atk = document.getElementById('btn-attack');
-  if (atk) atk.addEventListener('touchstart', e => { e.preventDefault(); attack(false); }, { passive: false });
-  const rel = document.getElementById('btn-reload');
-  if (rel) rel.addEventListener('touchstart', e => {
-    e.preventDefault();
-    const wid = state.inventory[state.currentSlot];
-    if (wid && WEAPONS[wid].type === 'ranged') startReload(wid);
-  }, { passive: false });
-}
-setupMobile();
-
-// ════════════════════════════════════════════════════════════
-// MP FEEDBACK
-// ════════════════════════════════════════════════════════════
+// ─── MP FEEDBACK ───
 const playerStats = new Map();
-playerStats.set(player.id, {
-  id: player.id, name: 'VOCÊ',
-  kills: 0, headshots: 0, damage: 0, coins: 0, deaths: 0, local: true,
-});
-
+playerStats.set(player.id, { id: player.id, name: 'VOCÊ', kills: 0, headshots: 0, damage: 0, coins: 0, deaths: 0, local: true });
 const _projV = new THREE.Vector3();
 function worldToScreen(pos) {
   _projV.set(pos.x, pos.y, pos.z).project(camera);
-  return {
-    x: (_projV.x * 0.5 + 0.5) * window.innerWidth,
-    y: (-_projV.y * 0.5 + 0.5) * window.innerHeight,
-    visible: _projV.z < 1 && _projV.z > -1,
-  };
+  return { x: (_projV.x*0.5 + 0.5)*window.innerWidth, y: (-_projV.y*0.5 + 0.5)*window.innerHeight, visible: _projV.z < 1 && _projV.z > -1 };
 }
 function ensureStats(id) {
   let s = playerStats.get(id);
   if (!s) {
-    s = {
-      id,
-      name: id === player.id ? 'VOCÊ' : (id.startsWith('p-') ? 'JOGADOR' : 'INIMIGO'),
-      kills: 0, headshots: 0, damage: 0, coins: 0, deaths: 0,
-      local: id === player.id,
-    };
+    s = { id, name: id === player.id ? 'VOCÊ' : (id.startsWith('p-') ? 'JOGADOR' : 'INIMIGO'), kills: 0, headshots: 0, damage: 0, coins: 0, deaths: 0, local: id === player.id };
     playerStats.set(id, s);
   }
   return s;
@@ -3281,35 +2662,26 @@ function nameOf(id) {
   if (id === player.id) return 'VOCÊ';
   return ensureStats(id).name;
 }
-
 const damageNumbersEl = document.getElementById('damage-numbers');
 const DAMAGE_NUMBERS_MAX = 40;
 let damageNumbersActive = 0;
-
 function spawnDamageNumber(worldPos, amount, kind) {
   if (!damageNumbersEl) return;
   const screen = worldToScreen(worldPos);
   if (!screen.visible) return;
   while (damageNumbersActive >= DAMAGE_NUMBERS_MAX && damageNumbersEl.firstChild) {
-    damageNumbersEl.removeChild(damageNumbersEl.firstChild);
-    damageNumbersActive--;
+    damageNumbersEl.removeChild(damageNumbersEl.firstChild); damageNumbersActive--;
   }
   const el = document.createElement('div');
   el.className = 'dmg-number dmg-' + kind;
   el.textContent = Math.round(amount);
-  const jX = (Math.random() - 0.5) * 30, jY = (Math.random() - 0.5) * 15;
+  const jX = (Math.random()-0.5)*30, jY = (Math.random()-0.5)*15;
   el.style.left = (screen.x + jX) + 'px';
   el.style.top = (screen.y + jY) + 'px';
   damageNumbersEl.appendChild(el);
   damageNumbersActive++;
-  setTimeout(() => {
-    if (el.parentNode) {
-      el.parentNode.removeChild(el);
-      damageNumbersActive--;
-    }
-  }, 850);
+  setTimeout(() => { if (el.parentNode) { el.parentNode.removeChild(el); damageNumbersActive--; } }, 850);
 }
-
 const killFeedEl = document.getElementById('kill-feed');
 const KILL_FEED_MAX = 5, KILL_FEED_LIFE = 4200;
 function spawnKillFeedEntry(killerId, victimId, weaponId, headshot) {
@@ -3318,30 +2690,20 @@ function spawnKillFeedEntry(killerId, victimId, weaponId, headshot) {
   entry.className = 'kill-entry';
   const weapon = (WEAPONS[weaponId] && WEAPONS[weaponId].name) || weaponId || '';
   const weaponShort = weapon.split('-')[0];
-  entry.innerHTML = `
-    <span class="killer">${nameOf(killerId)}</span>
-    <span class="weapon">${weaponShort}</span>
-    ${headshot ? '<span class="hs-badge">HS</span>' : ''}
-    <span class="victim">${nameOf(victimId)}</span>`;
+  entry.innerHTML = `<span class="killer">${nameOf(killerId)}</span><span class="weapon">${weaponShort}</span>${headshot ? '<span class="hs-badge">HS</span>' : ''}<span class="victim">${nameOf(victimId)}</span>`;
   killFeedEl.insertBefore(entry, killFeedEl.firstChild);
-  while (killFeedEl.children.length > KILL_FEED_MAX) {
-    killFeedEl.removeChild(killFeedEl.lastChild);
-  }
+  while (killFeedEl.children.length > KILL_FEED_MAX) killFeedEl.removeChild(killFeedEl.lastChild);
   setTimeout(() => {
     entry.classList.add('fading');
-    setTimeout(() => {
-      if (entry.parentNode) entry.parentNode.removeChild(entry);
-    }, 400);
+    setTimeout(() => { if (entry.parentNode) entry.parentNode.removeChild(entry); }, 400);
   }, KILL_FEED_LIFE);
 }
-
 bus.on(Ev.DAMAGE, p => {
   const s = ensureStats(p.attackerId);
   s.damage += p.amount;
   if (p.attackerId !== player.id || !p.pos) return;
   let kind = 'normal';
-  if (p.headshot) kind = 'headshot';
-  else if (p.isCrit) kind = 'crit';
+  if (p.headshot) kind = 'headshot'; else if (p.isCrit) kind = 'crit';
   spawnDamageNumber(p.pos, p.amount, kind);
 });
 bus.on(Ev.KILL, p => {
@@ -3350,35 +2712,21 @@ bus.on(Ev.KILL, p => {
   if (p.headshot) ks.headshots++;
   spawnKillFeedEntry(p.killerId, p.victimId, p.weaponId, p.headshot);
 });
-bus.on(Ev.COIN_GAIN, p => {
-  const s = playerStats.get(p.playerId);
-  if (s) s.coins = p.total;
-});
-bus.on(Ev.PLAYER_DIED, p => {
-  const s = playerStats.get(p.playerId);
-  if (s) s.deaths++;
-});
-bus.on(Ev.NET_PLAYER_LEAVE, p => {
-  if (p && p.id) playerStats.delete(p.id);
-});
+bus.on(Ev.COIN_GAIN, p => { const s = playerStats.get(p.playerId); if (s) s.coins = p.total; });
+bus.on(Ev.PLAYER_DIED, p => { const s = playerStats.get(p.playerId); if (s) s.deaths++; });
+bus.on(Ev.NET_PLAYER_LEAVE, p => { if (p && p.id) playerStats.delete(p.id); });
 
-// ─── Scoreboard ───
 const scoreboardEl = document.getElementById('scoreboard');
 const scoreboardBody = document.getElementById('scoreboard-body');
 let scoreboardOpen = false;
 function renderScoreboard() {
   if (!scoreboardBody) return;
-  const list = [...playerStats.values()].sort((a, b) =>
-    (b.kills !== a.kills) ? b.kills - a.kills : b.damage - a.damage);
+  const list = [...playerStats.values()].sort((a,b) => (b.kills !== a.kills) ? b.kills - a.kills : b.damage - a.damage);
   scoreboardBody.innerHTML = '';
   list.forEach(s => {
     const tr = document.createElement('tr');
     tr.className = s.local ? 'local-row' : '';
-    tr.innerHTML = `<td>${s.name}</td>
-                    <td>${s.kills}</td>
-                    <td>${s.headshots}</td>
-                    <td>${Math.round(s.damage)}</td>
-                    <td>${s.coins}</td>`;
+    tr.innerHTML = `<td>${s.name}</td><td>${s.kills}</td><td>${s.headshots}</td><td>${Math.round(s.damage)}</td><td>${s.coins}</td>`;
     scoreboardBody.appendChild(tr);
   });
 }
@@ -3399,11 +2747,6 @@ document.addEventListener('keyup', e => {
     if (scoreboardEl) scoreboardEl.classList.add('hidden');
   }
 });
-
 window.addEventListener('beforeunload', () => playerStats.clear());
 
-// ════════════════════════════════════════════════════════════
-// FIM — game.js v16 COMPLETO
-// ════════════════════════════════════════════════════════════
-console.log('[game] ✅ v16 "ZB3 Dismemberment" COMPLETO carregado.');
-console.log('[game] 📋 Partes: 1/3 + 2/3 + 3/3 | ZB3 + ZB2 systems ativos.');
+console.log('[game] ✅ v17 "ZB3 Fixed" carregado.');
