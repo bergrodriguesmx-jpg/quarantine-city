@@ -942,7 +942,9 @@ function raySegmentHit(ro, rd, a, b, radius, minT, maxT) {
 }
 
 function raycastLimbs(origin, dir, maxDist) {
-  let bestZ = null, bestLimb = null, bestS = Infinity;
+  let bestZ = null, bestLimb = null, bestS = Infinity, bestTc = 0;
+  const tmpP = new THREE.Vector3();
+
   for (let zi = 0; zi < zombies.length; zi++) {
     const z = zombies[zi];
     if (z.state === 'Dying' || !z.pts) continue;
@@ -950,21 +952,33 @@ function raycastLimbs(origin, dir, maxDist) {
     const dzZ = z.p.z - origin.z;
     const tProj = dxZ * dir.x + dzZ * dir.z;
     if (tProj < -1 || tProj > maxDist + 1.5) continue;
+
     for (let li = 0; li < LIMBS.length; li++) {
       const l = LIMBS[li];
-      if (z.gone[l[0]]) continue;
+      if (z.gone[l[0]] === true) continue;
+      if (z.gone[l[0]] && z.gone[l[0]].cutT !== undefined) continue;
+
       const a = z.pts[l[1]];
       const b = z.pts[l[2]];
-      const s = raySegmentHit(origin, dir, a, b, l[3] + 0.05, 0.1, maxDist);
-      if (s > 0 && s < bestS) {
-        bestS = s;
+      const hit = raySegmentHitFull(origin, dir, a, b, l[3] + 0.05, 0.1, maxDist);
+      if (hit && hit.s < bestS) {
+        bestS = hit.s;
         bestZ = z;
         bestLimb = l[0];
+        bestTc = hit.tc;
       }
     }
   }
+
   if (!bestZ) return null;
-  return { s: bestS, z: bestZ, limb: bestLimb, point: origin.clone().addScaledVector(dir, bestS) };
+  tmpP.copy(origin).addScaledVector(dir, bestS);
+  return {
+    s: bestS,
+    z: bestZ,
+    limb: bestLimb,
+    tc: bestTc,                       // ← NOVO
+    point: tmpP.clone(),
+  };
 }
 
 // ─── MUZZLE / TRACERS / EXPLOSIONS ───
