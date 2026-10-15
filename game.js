@@ -2093,7 +2093,7 @@ function updateZombies(dt) {
 
     if (z.ai === 'Idle' && z.target) z.ai = 'Chase';
     if (!z.target) z.ai = 'Idle';
-    const reach = player.position.y < 1.2;
+    const reach = state.isGrounded;
     if (z.ai === 'Chase' && reach && d < 2.2) z.ai = 'Combat';
     else if (z.ai === 'Combat' && (d > 2.2 || !reach)) z.ai = 'Chase';
 
