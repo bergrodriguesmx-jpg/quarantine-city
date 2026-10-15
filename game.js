@@ -1,5 +1,5 @@
 // ============================================================
-// game.js — v17 "ZB3 Fixed" + hotfixes de gameplay
+// game.js — v18 "Cartoon"
 // ============================================================
 // Integra:
 //   • Sistema ZB3 de desmembramento (Verlet + gibs + stumps)
@@ -7,7 +7,9 @@
 //   • Correções: raycast O(1), transform local, material clone,
 //     dispose completo, hp/health, spawn robusto
 //   • Hotfix: reach = isGrounded (zumbis atacam), attackPermission
-//     agora respeita limite de atacantes simultâneos
+//     respeita limite de atacantes simultâneos
+//   • Cartoon: createZombieMesh com cabeça+olhos+boca+ferida,
+//     cilindros com flat shading, cores alternadas por segmento
 // ============================================================
 
 import * as THREE from 'three';
@@ -54,7 +56,7 @@ import {
 } from './zb2-zombie-systems.js';
 
 import {
-  LIMBS, L2G, GONE, STUMP, GIBEND, GROUP_CFG,
+  LIMBS, L2G, GONE, STUMP, GIBEND, GROUP_CFG, LIMB_IDX,
   computePose, renderFigure,
   VerletRagdoll, LimbGib, tryDismember,
   raySegmentHitFull,
@@ -560,40 +562,102 @@ function getLimbMats(skinColor) {
   if (!c) {
     c = {
       color: skinColor,
-      SKIN: matL(skinColor),
-      DARK: matL(new THREE.Color(skinColor).multiplyScalar(0.7).getHex()),
-      BODY: matL(0x8aa37b),
-      BLOOD: matL(0x8b1a1a),
+      SKIN: matL(skinColor, { flatShading: true }),
+      DARK: matL(new THREE.Color(skinColor).multiplyScalar(0.7).getHex(), { flatShading: true }),
+      BODY: matL(0x8aa37b, { flatShading: true }),
+      BLOOD: matL(0x8b1a1a, { flatShading: true }),
     };
     _limbMatsCacheMap.set(skinColor, c);
   }
   return c;
 }
 
+// ─── CARTOON ZOMBIE MESH ───
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
   const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey] || { scale: 1 };
   const g = new THREE.Group();
 
-  const skinColor = type.skin || 0x86bd55;
-  const { SKIN, DARK, BODY } = getLimbMats(skinColor);
-  const BOX = SHARED_BOX;
+  const skinHex = type.skin || 0x7fc24f;
+  const skinCol = new THREE.Color(skinHex);
+  const darkHex = skinCol.clone().multiplyScalar(0.7).getHex();
+  const clothHex = type.cloth || 0x556b3d;
+  const clothDark = new THREE.Color(clothHex).multiplyScalar(0.75).getHex();
 
-  const limbs = LIMBS.map(l => {
-    const isExtremity = /Head|Hand|Foot/.test(l[0]);
-    const isRight = /^Right/.test(l[0]);
-    const mat = isExtremity ? SKIN : (isRight ? DARK : BODY);
-    const m = new THREE.Mesh(BOX, mat);
+  const SKIN    = new THREE.MeshLambertMaterial({ color: skinHex, flatShading: true });
+  const SKIN_D  = new THREE.MeshLambertMaterial({ color: darkHex, flatShading: true });
+  const CLOTH   = new THREE.MeshLambertMaterial({ color: clothHex, flatShading: true });
+  const CLOTH_D = new THREE.MeshLambertMaterial({ color: clothDark, flatShading: true });
+
+  // Cache global de geometrias e materiais
+  if (!window.__zombieGeoCache) {
+    window.__zombieGeoCache = {
+      HEAD:    new THREE.SphereGeometry(0.20, 12, 8),
+      TORSO:   new THREE.BoxGeometry(0.48, 0.55, 0.28),
+      BICEP:   new THREE.CylinderGeometry(0.095, 0.095, 1, 8),
+      FOREARM: new THREE.CylinderGeometry(0.080, 0.080, 1, 8),
+      THIGH:   new THREE.CylinderGeometry(0.115, 0.115, 1, 8),
+      SHIN:    new THREE.CylinderGeometry(0.095, 0.095, 1, 8),
+      EYE:     new THREE.SphereGeometry(0.045, 8, 6),
+      PUPIL:   new THREE.SphereGeometry(0.022, 6, 4),
+      MOUTH:   new THREE.BoxGeometry(0.14, 0.035, 0.03),
+      WOUND:   new THREE.SphereGeometry(1, 6, 4),
+    };
+    window.__zombieMatCache = {
+      EYE_W: new THREE.MeshBasicMaterial({ color: 0xffffff }),
+      EYE_B: new THREE.MeshBasicMaterial({ color: 0x000000 }),
+      WOUND: new THREE.MeshLambertMaterial({ color: 0x8b1a1a, flatShading: true }),
+    };
+  }
+  const GEO = window.__zombieGeoCache;
+  const MC  = window.__zombieMatCache;
+
+  // Ordem idêntica a LIMBS em zombie-dismember.js:
+  // [Head, Torso, BicepL, ForearmL, BicepR, ForearmR, ThighL, ShinL, ThighR, ShinR]
+  const defs = [
+    { geo: GEO.HEAD,    mat: SKIN,    kind: 'head'  },
+    { geo: GEO.TORSO,   mat: CLOTH,   kind: 'torso' },
+    { geo: GEO.BICEP,   mat: SKIN_D,  kind: 'cyl'   },
+    { geo: GEO.FOREARM, mat: SKIN,    kind: 'cyl'   },
+    { geo: GEO.BICEP,   mat: SKIN,    kind: 'cyl'   },
+    { geo: GEO.FOREARM, mat: SKIN_D,  kind: 'cyl'   },
+    { geo: GEO.THIGH,   mat: CLOTH_D, kind: 'cyl'   },
+    { geo: GEO.SHIN,    mat: CLOTH,   kind: 'cyl'   },
+    { geo: GEO.THIGH,   mat: CLOTH_D, kind: 'cyl'   },
+    { geo: GEO.SHIN,    mat: CLOTH,   kind: 'cyl'   },
+  ];
+
+  const limbs = defs.map(def => {
+    const m = new THREE.Mesh(def.geo, def.mat);
     m.castShadow = true;
+    m.userData.kind = def.kind;
     g.add(m);
     return m;
   });
 
-  const neck = new THREE.Mesh(BOX, SKIN);
-  neck.castShadow = true;
-  g.add(neck);
+  // Cara do zumbi — filhos do mesh da cabeça
+  const head = limbs[0];
+  const eyeL = new THREE.Mesh(GEO.EYE, MC.EYE_W); eyeL.position.set(-0.07,  0.05, 0.16);
+  const eyeR = new THREE.Mesh(GEO.EYE, MC.EYE_W); eyeR.position.set( 0.07,  0.05, 0.16);
+  const pupL = new THREE.Mesh(GEO.PUPIL, MC.EYE_B); pupL.position.set(-0.07, 0.05, 0.19);
+  const pupR = new THREE.Mesh(GEO.PUPIL, MC.EYE_B); pupR.position.set( 0.07, 0.05, 0.19);
+  const mouth = new THREE.Mesh(GEO.MOUTH, MC.EYE_B); mouth.position.set(0, -0.07, 0.18);
+  head.add(eyeL); head.add(eyeR); head.add(pupL); head.add(pupR); head.add(mouth);
 
-  g.userData = { limbs, neck, gone: {}, gore: new Set(), skinColor, typeKey };
+  // Ferida no torso
+  const wound = new THREE.Mesh(GEO.WOUND, MC.WOUND);
+  wound.position.set(0.15, 0.10, 0.15);
+  wound.scale.set(0.10, 0.06, 0.03);
+  limbs[1].add(wound);
+
+  g.userData = {
+    limbs,
+    neck: head,
+    gone: {},
+    gore: new Set(),
+    skinColor: skinHex,
+    typeKey,
+  };
   return g;
 }
 
@@ -828,7 +892,7 @@ function applyGore(z, group) {
   spawnBloodPool(z.p.clone().setY(0.03));
 }
 
-function damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, sourceType) {
+function damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, sourceType, tAlong) {
   if (z.state === 'Dying' || z.rm) return;
   z.hp -= dmg;
   z.acc += dmg;
@@ -840,20 +904,18 @@ function damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, sourceType) {
   emitBlood(hitPoint, isCrit || part === 'Head');
   if (isCrit || part === 'Head') spawnBloodPool(z.p.clone().setY(0.03));
 
-   if (z.hp <= 0) {
+  if (z.hp <= 0) {
     z.state = 'Dying';
     z.tmr = 0;
 
     if (sourceType === 'explosion') {
-      ['Head','BicepsL','BicepsR','LegL','LegR'].forEach(g => {
-        if (Math.random() < 0.5 && !z.gore.has(g)) applyGore(z, g, 0.5);
+      ['Head','BicepL','BicepR','ThighL','ThighR'].forEach(g => {
+        if (Math.random() < 0.5 && !z.gore.has(g)) applyGore(z, g);
       });
     } else {
-      // Corte PRECISO no ponto de impacto (tAlongLimb = tc do raycast)
       const out = {};
-      const tAlong = (arguments.length > 7) ? arguments[7] : undefined;
       if (tryDismember(z, part, false, out, tAlong)) {
-        applyGore(z, out.group, out.cutT);
+        applyGore(z, out.group);
       }
     }
   } else if (z.state !== 'Attack') {
@@ -963,7 +1025,6 @@ function raycastLimbs(origin, dir, maxDist) {
     for (let li = 0; li < LIMBS.length; li++) {
       const l = LIMBS[li];
       if (z.gone[l[0]] === true) continue;
-      if (z.gone[l[0]] && z.gone[l[0]].cutT !== undefined) continue;
 
       const a = z.pts[l[1]];
       const b = z.pts[l[2]];
@@ -1061,7 +1122,7 @@ function spawnExplosion(pos) {
     const falloff = 1 - Math.min(1, d / radius);
     const dmg = baseDamage * Math.max(0.25, falloff);
     const dir = new THREE.Vector3(dx / Math.max(d, 0.01), 0, dz / Math.max(d, 0.01));
-    damageZombie(z, dmg, false, 'Chest', dir, z.p.clone().setY(1), 'explosion');
+    damageZombie(z, dmg, false, 'Torso', dir, z.p.clone().setY(1), 'explosion');
   }
   const ddx = player.position.x - pos.x, ddz = player.position.z - pos.z;
   const selfD = Math.sqrt(ddx*ddx + ddz*ddz);
@@ -1181,7 +1242,7 @@ function attack(isRightClick = false) {
     const maxHits = weapon.hitCount || 1;
 
     const precise = raycastLimbs(camOrigin, camForward, range);
-      if (precise) {
+    if (precise) {
       const z = precise.z;
       const part = precise.limb;
       const hitPoint = precise.point.clone();
@@ -1195,7 +1256,7 @@ function attack(isRightClick = false) {
       hitDir.subVectors(z.p, camOrigin).setY(0);
       if (hitDir.lengthSq() < 0.0001) hitDir.copy(camForward);
       hitDir.normalize();
-     damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, 'melee', tc);
+      damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, 'melee', tc);
       hitCount++;
       if (maxHits > 1) {
         const minDot = CONFIG.melee.coneDot;
@@ -1214,7 +1275,7 @@ function attack(isRightClick = false) {
           const baseDmg2 = weapon.damage * state.damageMult * 0.6 * (isRightClick ? 1.3 : 1.0);
           const dmg2 = baseDmg2 * (isCrit2 ? (CONFIG.crit.damageMultiplier + state.critDamageBonus) : 1);
           const hd2 = new THREE.Vector3(dx/horiz, 0, dz/horiz);
-          damageZombie(z2, dmg2, isCrit2, 'Chest', hd2, hp, 'melee');
+          damageZombie(z2, dmg2, isCrit2, 'Torso', hd2, hp, 'melee');
           hitCount++;
         }
       }
@@ -1274,7 +1335,7 @@ function attack(isRightClick = false) {
       const headMult = result.limb === 'Head' ? CONFIG.headshotMultiplier : 1;
       const dmg = baseDmg * headMult * (isCrit ? critMult : 1);
       const hd = dir.clone().setY(0).normalize();
-      damageZombie(result.z, dmg, isCrit, result.limb, hd, result.point, 'ranged');
+      damageZombie(result.z, dmg, isCrit, result.limb, hd, result.point, 'ranged', result.tc);
       pierceCount++;
       rayOrigin = result.point.clone().addScaledVector(dir, 0.15);
       remainingDist -= result.s + 0.15;
@@ -2024,9 +2085,8 @@ const POP_TICK_INTERVAL = 2.0;
 const _TMP = new THREE.Vector3();
 function updateZombies(dt) {
   const now = performance.now() / 1000;
-  // FIX: NÃO limpar recentAttackers aqui — o mapa precisa sobreviver entre
-  // frames para o limite de "máx. atacantes simultâneos" funcionar.
-  // A expiração é feita dentro de zombieCanAttack().
+  // FIX: NÃO limpar recentAttackers aqui — precisa sobreviver entre frames
+  // para o limite de "máx. atacantes simultâneos" funcionar.
 
   _lodTickAccum += dt;
   if (_lodTickAccum >= LOD_TICK_INTERVAL) {
@@ -2097,9 +2157,7 @@ function updateZombies(dt) {
 
     if (z.ai === 'Idle' && z.target) z.ai = 'Chase';
     if (!z.target) z.ai = 'Idle';
-    // FIX: usar isGrounded em vez de player.position.y < 1.2
-    // (o player está sempre em y ≈ 1.7, então a condição antiga era sempre false
-    //  e o zumbi nunca entrava em Combat → nunca atacava)
+    // FIX: usar isGrounded — antes era player.position.y < 1.2 (sempre false)
     const reach = state.isGrounded;
     if (z.ai === 'Chase' && reach && d < 2.2) z.ai = 'Combat';
     else if (z.ai === 'Combat' && (d > 2.2 || !reach)) z.ai = 'Chase';
@@ -2777,4 +2835,4 @@ document.addEventListener('keyup', e => {
 });
 window.addEventListener('beforeunload', () => playerStats.clear());
 
-console.log('[game] ✅ v17 "ZB3 Fixed" + hotfixes carregado.');
+console.log('[game] ✅ v18 "Cartoon" carregado.');
