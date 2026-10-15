@@ -52,7 +52,7 @@ import {
 } from './zb2-zombie-systems.js';
 
 import {
-  LIMBS, L2G, GONE, STUMP, GIBEND, GROUP_CFG, LIMB_IDX,
+  LIMBS, L2G, GONE, STUMP, GIBEND, GROUP_CFG, LIMB_IDX, 
   computePose, renderFigure,
   VerletRagdoll, LimbGib, tryDismember,
   raySegmentHitFull,
