@@ -1,7 +1,7 @@
 // ============================================================
-// weapon-models.js — v10
-// Mapeia GLBs do Zumbi Blocks 2 para as armas do jogo.
-// Nomes validados contra o repositório real.
+// weapon-models.js — v11 "SINGLE-CANDIDATE"
+// Um nome por arma. Se falhar, cai em procedural.
+// Sem tentativas múltiplas = sem spam de 404.
 // ============================================================
 
 import * as THREE from 'three';
@@ -15,55 +15,28 @@ try {
   gltfLoader.setDRACOLoader(draco);
 } catch (_) {}
 
-export const GLB_CANDIDATES = {
-  // ════════ MELEE ════════
-  knife:        ['knife.glb', 'Knife_3D.glb', 'CombatKnife.glb'],
-  woodenClub:   ['WoodenClub.glb', 'Club_3D.glb', 'Club_ML.glb'],
-  pipe:         ['Pipe_3D.glb', 'Pipe_ML.glb'],
-  pipeWrench:   ['PipeWrench_3D.glb', 'PipeWrench_ML.glb'],
-  cleaver:      ['Cleaver_ML.glb'],
-  katana:       ['Katana_3D.glb', 'Katana_ML.glb'],
-  kukri:        ['Kukri.glb', 'Kukri_3D.glb', 'Kukri_ML.glb'],
-  shovel:       ['Shovel_3D.glb', 'Shovel_ML.glb'],
-  reaperScythe: ['ReaperScythe.glb', 'ReaperScythe_3D.glb', 'ReaperScythe_ML.glb'],
-
-  // ════════ RANGED ════════
-  pistol:   ['pistol.glb', '1911_Gun.glb', '1911_3D.glb', 'HiPoint_Gun.glb', 'Welrod_Gun.glb'],
-  revolver: ['revolver.glb', 'C96_Gun.glb', 'Type26_Gun.glb'],
-  smg:      ['smg.glb', 'AkSu_Gun.glb', 'Bizon_Gun.glb', 'Mp5_Gun.glb', 'Skorpion_Gun.glb'],
-  rifle:    ['rifle.glb', 'AmericanPredator_Gun.glb', 'Ar16_Gun.glb', 'AsVal_Gun.glb', 'M14_Gun.glb'],
-  shotgun:  ['shotgun.glb', 'Shotgun_Gun.glb', 'Coach_Gun.glb', 'Spas_Gun.glb', 'TrenchShotgun_Gun.glb'],
-  launcher: ['He40mm_3D.glb', 'RiotShotgun_Gun.glb'], // fallback razoável
+// ════════ UM NOME POR ARMA ════════
+export const GLB_PATHS = {
+  knife:        'knife.glb',
+  woodenClub:   'club.glb',
+  pipe:         'pipe.glb',
+  pipeWrench:   'pipe_wrench.glb',
+  cleaver:      'cleaver.glb',
+  katana:       'katana.glb',
+  kukri:        'kukri.glb',
+  shovel:       'shovel.glb',
+  reaperScythe: 'scythe.glb',
+  pistol:       'pistol.glb',
+  revolver:     'revolver.glb',
+  smg:          'smg.glb',
+  rifle:        'rifle.glb',
+  shotgun:      'shotgun.glb',
+  launcher:     'launcher.glb',
 };
 
 const MODELS_BASE = 'assets/models/';
-const glbPromises = new Map();
-const glbReady = new Map();
-const glbSourceName = new Map();
-
-function loadFirstAvailable(weaponId) {
-  const candidates = GLB_CANDIDATES[weaponId];
-  if (!candidates || candidates.length === 0) {
-    return Promise.reject(new Error('Sem candidatos: ' + weaponId));
-  }
-  if (glbPromises.has(weaponId)) return glbPromises.get(weaponId);
-
-  const promise = (async () => {
-    for (const filename of candidates) {
-      try {
-        const gltf = await gltfLoader.loadAsync(MODELS_BASE + filename);
-        glbSourceName.set(weaponId, filename);
-        console.log(`[weapon-models] ✅ ${weaponId} ← ${filename}`);
-        return gltf.scene;
-      } catch (_) {}
-    }
-    console.warn(`[weapon-models] ⚠️ ${weaponId} — procedural`);
-    throw new Error('Nenhum candidato: ' + weaponId);
-  })();
-
-  glbPromises.set(weaponId, promise);
-  return promise;
-}
+const glbReady = new Map();        // weaponId -> THREE.Group pronto
+const glbFailed = new Set();       // weaponId -> true (não tentar de novo)
 
 function prepareModel(model) {
   model.updateMatrixWorld(true);
@@ -90,56 +63,55 @@ function prepareModel(model) {
   return model;
 }
 
-export async function getWeaponGLB(weaponId) {
-  const raw = await loadFirstAvailable(weaponId);
-  const cloned = raw.clone(true);
-  cloned.traverse(c => {
-    if (c.isMesh && c.material) {
-      if (Array.isArray(c.material)) c.material = c.material.map(m => m.clone());
-      else c.material = c.material.clone();
-    }
-  });
-  return prepareModel(cloned);
-}
-
 export async function precacheWeaponGLB(weaponId) {
+  if (glbReady.has(weaponId)) return true;
+  if (glbFailed.has(weaponId)) return false;
+  const file = GLB_PATHS[weaponId];
+  if (!file) { glbFailed.add(weaponId); return false; }
+
   try {
-    const model = await getWeaponGLB(weaponId);
-    glbReady.set(weaponId, model);
+    const gltf = await gltfLoader.loadAsync(MODELS_BASE + file);
+    const cloned = gltf.scene.clone(true);
+    cloned.traverse(c => {
+      if (c.isMesh && c.material) {
+        if (Array.isArray(c.material)) c.material = c.material.map(m => m.clone());
+        else c.material = c.material.clone();
+      }
+    });
+    prepareModel(cloned);
+    glbReady.set(weaponId, cloned);
+    console.log(`[weapon-models] ✅ ${weaponId} ← ${file}`);
     return true;
-  } catch (_) { return false; }
+  } catch (_) {
+    glbFailed.add(weaponId);
+    return false;
+  }
 }
 
 export async function precacheAllWeaponGLBs(onProgress) {
-  const ids = Object.keys(GLB_CANDIDATES);
+  const ids = Object.keys(GLB_PATHS);
   const results = {};
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
     results[id] = await precacheWeaponGLB(id);
     if (onProgress) onProgress(i + 1, ids.length, id, results[id]);
   }
-  console.log('[weapon-models] 📦 Precache completo:');
-  console.table(Object.keys(results).map(id => ({
-    arma: id,
-    carregado: results[id] ? '✅' : '❌',
-    arquivo: glbSourceName.get(id) || '— (procedural)',
-  })));
+  const ok = Object.values(results).filter(Boolean).length;
+  console.log(`[weapon-models] 📦 ${ok}/${ids.length} GLBs carregados (resto procedural)`);
   return results;
 }
 
 export function hasGLB(weaponId) { return glbReady.has(weaponId); }
-export function getSourceName(weaponId) { return glbSourceName.get(weaponId) || null; }
+export function getSourceName(weaponId) { return glbReady.has(weaponId) ? GLB_PATHS[weaponId] : null; }
 export function getStatus() {
   const out = {};
-  for (const id of Object.keys(GLB_CANDIDATES)) {
-    out[id] = { loaded: glbReady.has(id), file: glbSourceName.get(id) || null };
+  for (const id of Object.keys(GLB_PATHS)) {
+    out[id] = { loaded: glbReady.has(id), file: glbReady.has(id) ? GLB_PATHS[id] : null };
   }
   return out;
 }
 
-// ============================================================
-// FALLBACK PROCEDURAL (mantido igual)
-// ============================================================
+// ════════ FALLBACK PROCEDURAL ════════
 const MAT = {
   gunMetal: new THREE.MeshStandardMaterial({ color: 0x1a1c20, metalness: 0.9, roughness: 0.38 }),
   gunMetalLight: new THREE.MeshStandardMaterial({ color: 0x2c3038, metalness: 0.85, roughness: 0.42 }),
@@ -163,12 +135,6 @@ function mesh(geo, mat, x = 0, y = 0, z = 0) {
   const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
   return m;
-}
-function screw(r, h, mat) {
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 8), mat));
-  g.add(new THREE.Mesh(new THREE.BoxGeometry(r*1.8, h*1.05, r*0.2), MAT.black));
-  return g;
 }
 function curvedMag(w, h, curve, mat) {
   const g = new THREE.Group(); const segs = 8, sh = h / segs;
