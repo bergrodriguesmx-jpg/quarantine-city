@@ -1,251 +1,145 @@
 // ============================================================
-// zb2-zombie-systems.js — v1.2 "hp fix + spawn robusto"
-// ============================================================
-// FIXES v1.2:
-//   • z.health → z.hp (bug crítico: NaN)
-//   • 'dying' → 'Dying' (case mismatch)
-//   • Removido throttle interno (game.js já faz)
-//   • Spawn: weighted POI + min dist do player + boss pos
-//   • Removido _cellForPosition (não era O(1))
-//   • _nearActiveBoss usa posição real do boss
+// zb2-zombie-systems.js — v3 "STABLE"
+// LOD 3-state + sleep + população por POI + dano de água.
 // ============================================================
 
 import * as THREE from 'three';
 
 export const ZombieLoadState = Object.freeze({
-  UNLOADED: 'Unloaded',
-  PROP:     'Prop',
-  REAL:     'Real',
+  REAL:     'REAL',
+  PROP:     'PROP',
+  UNLOADED: 'UNLOADED',
 });
 
-const CFG = {
-  unloadDistance: 200,
-  sleepDistance: 65,
-  paddingDistance: 5,
-  baseZombieCountMultiplier: 1.0,
-  baseZombieRespawnTime: 10.0,
-  maxZombieCountGlobal: 20,
-  indoorZombieRate: 0.35,
-  bossActiveRespawnFactor: 0.1,
-  nearBossAvoidRadius: 40,
-  minSpawnDistanceFromPlayer: 30,
-  waterDamagePerTick: 15,
-  waterTickInterval: 0.5,
+// Distâncias de LOD (em metros)
+const LOD = {
+  REAL_MAX:     60,
+  PROP_MAX:     140,
+  SLEEP_AFTER:  3.0,
+  WAKE_DIST:    45,
 };
 
-const _state = {
-  pois: [],
-  respawnTimer: 0,
-  totalRealZombies: 0,
-  totalPropZombies: 0,
-  totalUnloadedZombies: 0,
-  worldRef: null,
-  sceneRef: null,
-  configRef: null,
-  cavesRef: null,
-  playerRef: null,
-};
+let _scene = null;
+let _world = null;
+let _config = null;
+let _caves = null;
+let _player = null;
 
 export function initZombieSystems({ world, scene, config, caves, player }) {
-  _state.worldRef  = world;
-  _state.sceneRef  = scene;
-  _state.configRef = config;
-  _state.cavesRef  = caves;
-  _state.playerRef = player;
-
-  // Constrói lista de POIs com capacidade máxima
-  _state.pois = [];
-  if (world && world.pois) {
-    for (const id in world.pois) {
-      const poi = world.pois[id];
-      const w = poi.bounds?.w || 16;
-      const d = poi.bounds?.d || 14;
-      const max = Math.max(2, Math.floor((w * d) / 400 * CFG.baseZombieCountMultiplier));
-      _state.pois.push({ id, x: poi.x, z: poi.z, max });
-    }
-  }
-  if (_state.pois.length === 0) {
-    _state.pois.push({ id: 'center', x: 0, z: 0, max: 4 });
-  }
-
-  console.log(`[zb2-zombies] ✅ ${_state.pois.length} POIs registrados para spawn`);
+  _scene = scene;
+  _world = world;
+  _config = config;
+  _caves = caves;
+  _player = player;
 }
 
-// ════════════════════════════════════════════════════════════
-// LOD 3-STATE (sem throttle interno)
-// ════════════════════════════════════════════════════════════
-export function updateZombieLOD(zombies, playerPos, dt, fogFar = 200) {
-  const unloadDist = Math.min(CFG.unloadDistance, fogFar);
-  const sleepDist  = CFG.sleepDistance;
-  const pad = CFG.paddingDistance;
-
-  let realCount = 0, propCount = 0, unloadedCount = 0;
-
-  for (let i = 0; i < zombies.length; i++) {
-    const z = zombies[i];
-    if (!z || z.hp <= 0) continue;
-
+// ============================================================
+// LOD — escolhe REAL / PROP / UNLOADED por distância
+// ============================================================
+export function updateZombieLOD(zombies, playerPos, dt, maxDistance = 140) {
+  if (!playerPos) return;
+  for (const z of zombies) {
+    if (z.hp <= 0) continue;
     const dx = z.p.x - playerPos.x;
     const dz = z.p.z - playerPos.z;
     const d = Math.hypot(dx, dz);
 
-    let target = z._loadState;
-    if (!target) {
-      target = ZombieLoadState.REAL;
-      z._loadState = target;
+    let newState;
+    if (d < LOD.REAL_MAX) newState = ZombieLoadState.REAL;
+    else if (d < Math.min(LOD.PROP_MAX, maxDistance)) newState = ZombieLoadState.PROP;
+    else newState = ZombieLoadState.UNLOADED;
+
+    if (z._loadState !== newState) {
+      z._loadState = newState;
+      // Esconde a mesh se está UNLOADED
+      if (z.g) z.g.visible = (newState !== ZombieLoadState.UNLOADED);
     }
-
-    let next = target;
-    if (target === ZombieLoadState.REAL) {
-      if (d > sleepDist + pad && z._canSleep) next = ZombieLoadState.PROP;
-      if (d > unloadDist + pad) next = ZombieLoadState.UNLOADED;
-    } else if (target === ZombieLoadState.PROP) {
-      if (d < sleepDist - pad) next = ZombieLoadState.REAL;
-      if (d > unloadDist + pad) next = ZombieLoadState.UNLOADED;
-    } else {
-      if (d < sleepDist - pad) next = ZombieLoadState.REAL;
-      else if (d < unloadDist - pad) next = ZombieLoadState.PROP;
-    }
-
-    if (next !== target) {
-      z._loadState = next;
-      _applyLoadState(z, next);
-    }
-
-    if (next === ZombieLoadState.REAL) realCount++;
-    else if (next === ZombieLoadState.PROP) propCount++;
-    else unloadedCount++;
-  }
-
-  _state.totalRealZombies = realCount;
-  _state.totalPropZombies = propCount;
-  _state.totalUnloadedZombies = unloadedCount;
-}
-
-function _applyLoadState(z, newState) {
-  if (newState === ZombieLoadState.REAL) {
-    if (z.g) z.g.visible = true;
-    z._isReal = true;
-  } else if (newState === ZombieLoadState.PROP) {
-    if (z.g) z.g.visible = true;
-    z._isReal = false;
-  } else {
-    if (z.g) z.g.visible = false;
-    z._isReal = false;
   }
 }
 
+// ============================================================
+// SLEEP — desativa IA quando longe/parado há muito tempo
+// ============================================================
 export function updateZombieSleepState(z) {
-  const now = performance.now() / 1000;
-  const speed2 = (z.vx || 0) * (z.vx || 0) + (z.vz || 0) * (z.vz || 0);
-  const isMoving = speed2 > 0.04;
-  const isIdle = (z.aiState === 'IDLE' || z.aiState === 'PATROL' ||
-                  z.aiState === 'Idle' || z.aiState === 'Wander');
-  const isDying = z.state === 'Dying' || z.hp <= 0;
-  z._canSleep = !isMoving && isIdle && !isDying &&
-                (now - (z.lastAttackTime || 0) > 2);
-}
+  if (!_player) return;
+  if (z.hp <= 0) return;
 
-// ════════════════════════════════════════════════════════════
-// POPULAÇÃO / RESPAWN (spawn robusto)
-// ════════════════════════════════════════════════════════════
-export function tickZombiePopulation(dt, { spawnZombie, state, bossPos, bossActive }) {
-  _state.respawnTimer += dt;
-  if (_state.respawnTimer < CFG.baseZombieRespawnTime) return;
-  _state.respawnTimer = 0;
+  const dx = z.p.x - _player.position.x;
+  const dz = z.p.z - _player.position.z;
+  const d = Math.hypot(dx, dz);
 
-  if (state.zombiesAlive >= CFG.maxZombieCountGlobal) return;
-
-  const player = _state.playerRef;
-  if (!player) return;
-
-  const zombiesRef = state.zombiesRef || [];
-
-  // Conta zumbis por POI
-  const poiCounts = new Map();
-  for (const poi of _state.pois) poiCounts.set(poi.id, 0);
-  for (const z of zombiesRef) {
-    if (!z || z.hp <= 0) continue;
-    let nearestId = null, nearestD = Infinity;
-    for (const poi of _state.pois) {
-      const d = Math.hypot(z.p.x - poi.x, z.p.z - poi.z);
-      if (d < nearestD) { nearestD = d; nearestId = poi.id; }
-    }
-    if (nearestId) poiCounts.set(nearestId, (poiCounts.get(nearestId) || 0) + 1);
-  }
-
-  // Candidatos com espaço
-  const candidates = [];
-  for (const poi of _state.pois) {
-    const count = poiCounts.get(poi.id) || 0;
-    if (count < poi.max) candidates.push(poi);
-  }
-  if (candidates.length === 0) return;
-
-  const poi = candidates[Math.floor(Math.random() * candidates.length)];
-
-  // Tenta até 5 posições
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const angle = Math.random() * Math.PI * 2;
-    const r = 3 + Math.random() * 12;
-    const x = poi.x + Math.cos(angle) * r;
-    const z = poi.z + Math.sin(angle) * r;
-
-    // Distância mínima do player
-    const dP = Math.hypot(x - player.position.x, z - player.position.z);
-    if (dP < CFG.minSpawnDistanceFromPlayer) continue;
-
-    // Não spawna perto de boss ativo
-    if (bossActive && bossPos) {
-      const dB = Math.hypot(x - bossPos.x, z - bossPos.z);
-      if (dB < CFG.nearBossAvoidRadius) continue;
-    }
-
-    // Não spawna na água
-    if (_state.worldRef && _state.worldRef.island) {
-      const waterLimit = _state.worldRef.island.innerRadius - 4;
-      if (Math.hypot(x, z) > waterLimit) continue;
-    }
-
-    spawnZombie(undefined, x, z);
+  // Sempre acorda se está perto do player
+  if (d < LOD.WAKE_DIST) {
+    z.sleep = false;
+    z._sleepTimer = 0;
     return;
   }
+
+  // Adormece se ficou parado por SLEEP_AFTER segundos
+  if (Math.abs(z.v || 0) < 0.3 && !z.sleep) {
+    z._sleepTimer = (z._sleepTimer || 0) + 0.016;
+    if (z._sleepTimer > LOD.SLEEP_AFTER) {
+      z.sleep = true;
+    }
+  } else if (!z.sleep) {
+    z._sleepTimer = 0;
+  }
+
+  // Acorda se tomou dano recente
+  if (z.hitReactEndTime && performance.now() / 1000 < z.hitReactEndTime) {
+    z.sleep = false;
+    z._sleepTimer = 0;
+  }
 }
 
-// ════════════════════════════════════════════════════════════
-// DANO DE ÁGUA (FIX: z.hp em vez de z.health)
-// ════════════════════════════════════════════════════════════
+// ============================================================
+// POPULAÇÃO — spawna extras baseado no que está vivo perto do player
+// ============================================================
+let _spawnAccum = 0;
+
+export function tickZombiePopulation(dt, ctx) {
+  if (!_player || !ctx || !ctx.spawnZombie) return;
+  if (!ctx.state || !ctx.state.running) return;
+
+  _spawnAccum += dt;
+
+  const MAX_ZOMBIES = 40;
+  const spawnZ = ctx.zombiesRef || [];
+
+  // Conta quantos zumbis REAL estão vivos
+  let alive = 0;
+  for (const z of spawnZ) {
+    if (z.hp > 0 && z._loadState === ZombieLoadState.REAL) alive++;
+  }
+
+  // Se tem poucos zumbis REAL e o player está longe da horda, não força spawn
+  // O spawn principal já vem do `startWave`, este tick só completa se
+  // a população ficar abaixo de 60% do esperado.
+  if (alive >= MAX_ZOMBIES * 0.6) return;
+  if (alive === 0) return; // deixa a wave cuidar
+
+  // Spawna 1 zumbi a cada 3s se estiver abaixo do mínimo
+  if (_spawnAccum > 3.0) {
+    _spawnAccum = 0;
+    try {
+      ctx.spawnZombie(null);
+    } catch (e) { /* silencioso */ }
+  }
+}
+
+// ============================================================
+// ÁGUA — zumbi toma dano contínuo se ficar na água
+// ============================================================
 export function applyZombieWaterDamage(z, dt, waterY) {
-  if (!z || z.hp <= 0) return;
-  if (z.state === 'Dying') return;
-
-  const y = z.p ? z.p.y : (z.mesh ? z.mesh.position.y : 0);
-  if (y >= waterY) {
-    z._waterAccum = 0;
-    return;
-  }
+  if (z.hp <= 0) return;
+  if (z.p.y > waterY + 0.3) return;
   z._waterAccum = (z._waterAccum || 0) + dt;
-  if (z._waterAccum >= CFG.waterTickInterval) {
-    z._waterAccum -= CFG.waterTickInterval;
-    z.hp -= CFG.waterDamagePerTick;
+  if (z._waterAccum > 0.5) {
+    z._waterAccum = 0;
+    z.hp -= 5;
     if (z.hp <= 0) {
       z.state = 'Dying';
       z.tmr = 0;
     }
   }
 }
-
-// ════════════════════════════════════════════════════════════
-// STATS
-// ════════════════════════════════════════════════════════════
-export function getZombieSystemStats() {
-  return {
-    pois: _state.pois.length,
-    realZombies: _state.totalRealZombies,
-    propZombies: _state.totalPropZombies,
-    unloadedZombies: _state.totalUnloadedZombies,
-  };
-}
-
-export function setMaxZombiesGlobal(n) { CFG.maxZombieCountGlobal = Math.max(1, n); }
-export function setIndoorRate(r) { CFG.indoorZombieRate = Math.max(0, Math.min(1, r)); }
