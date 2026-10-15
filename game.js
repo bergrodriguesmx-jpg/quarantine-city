@@ -838,16 +838,21 @@ function damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, sourceType) {
   emitBlood(hitPoint, isCrit || part === 'Head');
   if (isCrit || part === 'Head') spawnBloodPool(z.p.clone().setY(0.03));
 
-  if (z.hp <= 0) {
+   if (z.hp <= 0) {
     z.state = 'Dying';
     z.tmr = 0;
+
     if (sourceType === 'explosion') {
       ['Head','BicepsL','BicepsR','LegL','LegR'].forEach(g => {
-        if (Math.random() < 0.5 && !z.gore.has(g)) applyGore(z, g);
+        if (Math.random() < 0.5 && !z.gore.has(g)) applyGore(z, g, 0.5);
       });
     } else {
+      // Corte PRECISO no ponto de impacto (tAlongLimb = tc do raycast)
       const out = {};
-      if (tryDismember(z, part, false, out)) applyGore(z, out.group);
+      const tAlong = (arguments.length > 7) ? arguments[7] : undefined;
+      if (tryDismember(z, part, false, out, tAlong)) {
+        applyGore(z, out.group, out.cutT);
+      }
     }
   } else if (z.state !== 'Attack') {
     z.state = 'Stagger';
