@@ -1,7 +1,6 @@
 // ============================================================
-// gib-models.js
-// Pedaços de zumbi (cabeça, braços, pernas).
-// Nomes validados contra o repositório real.
+// gib-models.js — v2 "SINGLE-CANDIDATE"
+// Um nome por gib. Sem tentativas múltiplas.
 // ============================================================
 
 import * as THREE from 'three';
@@ -9,27 +8,24 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const loader = new GLTFLoader();
 
-// Usa os arquivos "Severed" que são maiores e mais completos
-// que os "Gib". O "BlownHead" é a cabeça explodida.
-export const GIB_CANDIDATES = {
-  head:  ['BasicZombieBlownHead.glb', 'CombatantZombieHead.glb', 'BasicZombieSplitHeadGib.glb'],
-  torso: ['ZombieDoll.glb'], // não há torso dedicado; Doll é um boneco pequeno
-  armL:  ['BasicZombieSeveredArmLeft.glb', 'BasicZombieArmGibLeft.glb', 'MinerZombieLeftForearmGib.glb'],
-  armR:  ['BasicZombieSeveredArmRight.glb', 'BasicZombieArmGibRight.glb', 'MinerZombieRightForearmGib.glb'],
-  legL:  ['BasicZombieSeveredLegLeft.glb', 'BasicZombieLeftLegGib.glb'],
-  legR:  ['BasicZombieSeveredLegRight.glb', 'BasicZombieRightLegGib.glb'],
+const GIB_FILES = {
+  head:  'BasicZombieBlownHead.glb',
+  torso: 'ZombieDoll.glb',
+  armL:  'BasicZombieSeveredArmLeft.glb',
+  armR:  'BasicZombieSeveredArmRight.glb',
+  legL:  'BasicZombieSeveredLegLeft.glb',
+  legR:  'BasicZombieSeveredLegRight.glb',
 };
 
 const MODELS_BASE = 'assets/models/';
 const readyCache = new Map();
-const sourceCache = new Map();
+const failedSet = new Set();
 
 function prepare(model) {
   model.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(model);
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
-
   model.position.sub(center);
 
   model.traverse(c => {
@@ -53,39 +49,33 @@ function prepare(model) {
 
 async function tryLoad(type) {
   if (readyCache.has(type)) return readyCache.get(type);
-  const candidates = GIB_CANDIDATES[type] || [];
+  if (failedSet.has(type)) return null;
+  const file = GIB_FILES[type];
+  if (!file) { failedSet.add(type); return null; }
 
-  for (const file of candidates) {
-    try {
-      const gltf = await loader.loadAsync(MODELS_BASE + file);
-      const cloned = gltf.scene.clone(true);
-      cloned.traverse(c => {
-        if (c.isMesh && c.material) {
-          if (Array.isArray(c.material)) c.material = c.material.map(m => m.clone());
-          else c.material = c.material.clone();
-        }
-      });
-      prepare(cloned);
-      readyCache.set(type, cloned);
-      sourceCache.set(type, file);
-      console.log(`[gib-models] ✅ ${type} ← ${file}`);
-      return cloned;
-    } catch (_) {}
+  try {
+    const gltf = await loader.loadAsync(MODELS_BASE + file);
+    const cloned = gltf.scene.clone(true);
+    cloned.traverse(c => {
+      if (c.isMesh && c.material) {
+        if (Array.isArray(c.material)) c.material = c.material.map(m => m.clone());
+        else c.material = c.material.clone();
+      }
+    });
+    prepare(cloned);
+    readyCache.set(type, cloned);
+    console.log(`[gib-models] ✅ ${type} ← ${file}`);
+    return cloned;
+  } catch (_) {
+    failedSet.add(type);
+    return null;
   }
-
-  console.warn(`[gib-models] ⚠️ ${type} — nenhum GLB`);
-  readyCache.set(type, null);
-  return null;
 }
 
 export async function preloadGibs() {
-  const types = Object.keys(GIB_CANDIDATES);
-  for (const t of types) await tryLoad(t);
-  console.log('[gib-models] 📦 Preload completo:');
-  console.table(Object.keys(GIB_CANDIDATES).map(t => ({
-    tipo: t, carregado: hasGib(t) ? '✅' : '❌',
-    arquivo: sourceCache.get(t) || '—',
-  })));
+  for (const t of Object.keys(GIB_FILES)) await tryLoad(t);
+  const ok = [...readyCache.values()].filter(Boolean).length;
+  console.log(`[gib-models] 📦 ${ok}/${Object.keys(GIB_FILES).length} gibs GLB (resto procedural)`);
 }
 
 export function createGib(type) {
@@ -103,8 +93,8 @@ export function hasGib(type) {
 
 export function getGibStatus() {
   const out = {};
-  for (const t of Object.keys(GIB_CANDIDATES)) {
-    out[t] = { loaded: hasGib(t), file: sourceCache.get(t) || null };
+  for (const t of Object.keys(GIB_FILES)) {
+    out[t] = { loaded: hasGib(t), file: hasGib(t) ? GIB_FILES[t] : null };
   }
   return out;
 }
