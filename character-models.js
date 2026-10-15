@@ -1,8 +1,6 @@
 // ============================================================
-// character-models.js
-// Carrega Angel, BusinessMale e BusinessFemale.
-// Usados como NPCs decorativos no mapa (sem animação).
-// Nomes validados contra o repositório real.
+// character-models.js — v2 "SINGLE-CANDIDATE"
+// Um nome por personagem. Sem tentativas múltiplas.
 // ============================================================
 
 import * as THREE from 'three';
@@ -10,16 +8,16 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const loader = new GLTFLoader();
 
-export const CHARACTER_CANDIDATES = {
-  angel:          ['Angel.glb', 'Angel_Gun.glb', 'Angel_3D.glb', 'AngelLowPoly.glb'],
-  businessMale:   ['BusinessMale.glb', 'BusinessMale_Gun.glb', 'BusinessMale_3D.glb', 'Businessman.glb'],
-  businessFemale: ['BusinessFemale.glb', 'BusinessFemale_Gun.glb', 'BusinessFemale_3D.glb', 'Businesswoman.glb'],
+const CHARACTER_FILES = {
+  angel:          'Angel.glb',
+  businessMale:   'BusinessMale.glb',
+  businessFemale: 'BusinessFemale.glb',
 };
 
 const MODELS_BASE = 'assets/models/';
 const readyCache = new Map();
-const sourceCache = new Map();
 const animCache = new Map();
+const failedSet = new Set();
 
 function prepare(model) {
   model.updateMatrixWorld(true);
@@ -27,12 +25,10 @@ function prepare(model) {
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
 
-  // Centraliza X/Z, pés no chão
   model.position.x -= center.x;
   model.position.z -= center.z;
   model.position.y -= box.min.y;
 
-  // Escala pra 1.8m
   const scale = 1.8 / (size.y || 1);
   model.scale.setScalar(scale);
   model.position.multiplyScalar(scale);
@@ -50,41 +46,40 @@ function prepare(model) {
       }
     }
   });
-
   return model;
 }
 
 async function tryLoad(id) {
   if (readyCache.has(id)) return readyCache.get(id);
-  const candidates = CHARACTER_CANDIDATES[id] || [];
+  if (failedSet.has(id)) return null;
 
-  for (const file of candidates) {
-    try {
-      const gltf = await loader.loadAsync(MODELS_BASE + file);
-      const scene = gltf.scene.clone(true);
-      scene.traverse(c => {
-        if (c.isMesh && c.material) {
-          if (Array.isArray(c.material)) c.material = c.material.map(m => m.clone());
-          else c.material = c.material.clone();
-        }
-      });
-      prepare(scene);
-      readyCache.set(id, scene);
-      sourceCache.set(id, file);
-      animCache.set(id, gltf.animations || []);
-      console.log(`[character-models] ✅ ${id} ← ${file} (${(gltf.animations||[]).length} anims)`);
-      return scene;
-    } catch (_) {}
+  const file = CHARACTER_FILES[id];
+  if (!file) { failedSet.add(id); return null; }
+
+  try {
+    const gltf = await loader.loadAsync(MODELS_BASE + file);
+    const scene = gltf.scene.clone(true);
+    scene.traverse(c => {
+      if (c.isMesh && c.material) {
+        if (Array.isArray(c.material)) c.material = c.material.map(m => m.clone());
+        else c.material = c.material.clone();
+      }
+    });
+    prepare(scene);
+    readyCache.set(id, scene);
+    animCache.set(id, gltf.animations || []);
+    console.log(`[character-models] ✅ ${id} ← ${file}`);
+    return scene;
+  } catch (_) {
+    failedSet.add(id);
+    return null;
   }
-
-  console.warn(`[character-models] ⚠️ ${id} — nenhum GLB`);
-  readyCache.set(id, null);
-  return null;
 }
 
 export async function preloadCharacters() {
-  for (const id of Object.keys(CHARACTER_CANDIDATES)) await tryLoad(id);
-  console.log('[character-models] 📦 Preload completo');
+  for (const id of Object.keys(CHARACTER_FILES)) await tryLoad(id);
+  const ok = [...readyCache.values()].filter(Boolean).length;
+  console.log(`[character-models] 📦 ${ok}/${Object.keys(CHARACTER_FILES).length} NPCs carregados`);
 }
 
 export function createCharacter(id) {
@@ -100,12 +95,8 @@ export function hasCharacter(id) { return readyCache.has(id) && readyCache.get(i
 
 export function getCharacterStatus() {
   const out = {};
-  for (const id of Object.keys(CHARACTER_CANDIDATES)) {
-    out[id] = {
-      loaded: hasCharacter(id),
-      file: sourceCache.get(id) || null,
-      animations: (animCache.get(id) || []).length,
-    };
+  for (const id of Object.keys(CHARACTER_FILES)) {
+    out[id] = { loaded: hasCharacter(id), file: hasCharacter(id) ? CHARACTER_FILES[id] : null };
   }
   return out;
 }
