@@ -1,15 +1,11 @@
 // ============================================================
-// game.js — v18 "Cartoon"
+// game.js — v19 "STABLE"
 // ============================================================
-// Integra:
-//   • Sistema ZB3 de desmembramento (Verlet + gibs + stumps)
-//   • ZB2 Zombie Systems (LOD 3-state + população por POI)
-//   • Correções: raycast O(1), transform local, material clone,
-//     dispose completo, hp/health, spawn robusto
-//   • Hotfix: reach = isGrounded (zumbis atacam), attackPermission
-//     respeita limite de atacantes simultâneos
-//   • Cartoon: createZombieMesh com cabeça+olhos+boca+ferida,
-//     cilindros com flat shading, cores alternadas por segmento
+// Correções v19:
+//   • createZombieMesh usa skinPalette/shirtPalette/pantsPalette
+//   • reach = state.isGrounded (zumbi ataca)
+//   • recentAttackers NÃO é limpo por frame (limite de atacantes)
+//   • Importa zombie-dismember v4 (LIMB_IDX + cartoon mesh)
 // ============================================================
 
 import * as THREE from 'three';
@@ -21,11 +17,6 @@ import * as bus from './src/core/bus.js';
 import { Ev } from './src/core/events.js';
 import { nextId } from './src/core/ids.js';
 import { LocalAdapter } from './src/net/adapter.js';
-import { springStep, springKick } from './src/core/spring.js';
-import { SpatialGrid } from './src/core/spatial-grid.js';
-import { geoBox, geoSphere, geoCyl, matL, matB, zMat } from './src/core/geo-cache.js';
-import { enrichWeapons, MELEE_TYPES, ZOMBIE_LORE, formatWeaponTooltip } from './src/core/lore.js';
-import { initPhysics, stepPhysics, addStaticBox, clearPhysics } from './src/core/ragdoll-physics.js';
 import { Action, getControls } from './save-controls.js';
 import { ControlsUI } from './controls-ui.js';
 import * as Daytime from './src/core/daytime.js';
@@ -35,16 +26,18 @@ import * as BossAI from './src/core/boss-ai.js';
 import * as Extraction from './src/core/extraction.js';
 import { survival } from './src/core/survival.js';
 import { ZOMBIE_TYPES, pickZombieType, BOSS_ROTATION } from './src/core/zombie-types.js';
-import { initStuckState, updateStuckDetection, applyStuckPhysics } from './src/core/zombie-stuck.js';
+import { initStuckState, updateStuckDetection } from './src/core/zombie-stuck.js';
 import { Weapon3DView } from './src/render/viewmodel-3d.js';
 import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pickup-3d.js';
-import { getWeaponIconURL, getAmmoIconURL } from './src/render/weapon-icon-renderer.js';
 import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
 import { preloadGibs } from './gib-models.js';
 import { preloadGibGLBs } from './gib-glb.js';
 import { preloadCharacters, createCharacter } from './character-models.js';
 import { precacheAllWeaponGLBs } from './src/render/weapon-models.js';
 import { applyPerk, getPerk } from './perks-system.js';
+import { geoBox, geoCyl, matL, matB } from './src/core/geo-cache.js';
+import { enrichWeapons, ZOMBIE_LORE, formatWeaponTooltip } from './src/core/lore.js';
+import { initPhysics, stepPhysics, addStaticBox, clearPhysics } from './src/core/ragdoll-physics.js';
 
 import {
   ZombieLoadState,
@@ -63,6 +56,7 @@ import {
   SHARED_BOX, SHARED_STUMP_GEO,
 } from './zombie-dismember.js';
 
+// ─── BOOT ───
 bus.setAdapter(new LocalAdapter());
 window.ZOMBIE_TYPES_FROM_MODULE = ZOMBIE_TYPES;
 const controls = getControls();
@@ -89,9 +83,6 @@ function geoRoundBox(w, h, d, radius = 0.03) {
   }
   return g;
 }
-const MAT_EYE_WHITE = matB(0xFFFFFF);
-const MAT_EYE_BLACK = matB(0x000000);
-const MAT_WOUND = matB(0xC0392B);
 
 // ─── WEAPONS ───
 const WEAPONS = {
@@ -139,9 +130,8 @@ const WAVE_PACKAGES = [
 ];
 
 const CONFIG = {
-  player: { speed:7.0, height:1.7, maxHealth:100, radius:0.4, staminaMax:100, staminaRegen:25, staminaDrainRun:14, sprintMult:1.55, jumpForce:7.0, jumpForwardForce:6.5, jumpAirDecay:2.2, gravity:22, vaultSpeed:8.5, vaultDuration:0.55, vaultHeightMax:1.6 },
-  zombie: { speed:3.0, maxHealth:40, damage:8, attackRange:1.6, attackCooldown:1.2, xpReward:10, coinReward:2, knockbackStagger:0.25, radius:0.4 },
-  pursuit: { responsiveness:3.8, arrivalRadius:1.15 },
+  player: { speed:7.0, height:1.7, maxHealth:100, radius:0.4, staminaMax:100, staminaRegen:25, staminaDrainRun:14, sprintMult:1.55, jumpForce:7.0, jumpForwardForce:6.5, jumpAirDecay:2.2, gravity:22, vaultSpeed:8.5, vaultDuration:0.55 },
+  zombie: { speed:3.0, maxHealth:40, damage:8, attackRange:1.6, attackCooldown:1.2, xpReward:10, coinReward:2, radius:0.4 },
   scaling: { hpPerWave:0.10, dmgPerWave:0.05, speedPerWave:0.02, speedCap:1.30 },
   aggro: { alertRadius:8.0, alertDuration:3.0, alertSpeedMult:1.4 },
   wave: { breakTime:5, bossEvery:5, clearBonusBase:15, clearBonusPerWave:5, clearHealFrac:0.15, clearAmmoFrac:0.30, maxZombies:16 },
@@ -216,14 +206,7 @@ const state = {
   vaulting: false, vaultTimer: 0, vaultVelX: 0, vaultVelZ: 0, vaultTargetY: 0,
   attackPermission: { recentAttackers: new Map() },
   zombiesRef: [],
-  zombiesToRemove: [],
 };
-
-(function validateHUD() {
-  const expected = ['hp-fill','hp-text','xp-fill','coins','wave','level','zombies','revives','weapon-name','weapon-class','weapon-tooltip','ammo-current','ammo-reserve','timer'];
-  const missing = expected.filter(id => !document.getElementById(id));
-  if (missing.length > 0) console.error(`[game] ❌ IDs HUD faltando:`, missing);
-})();
 
 const HUD = {
   hpFill:        document.getElementById('hp-fill'),
@@ -342,13 +325,11 @@ const caves = [];
 function createCave(x, z, rotationY) {
   const g = new THREE.Group();
   const rockMat = matL(0x5A5A5A, { flatShading:true });
-  const darkRock = matL(0x3A3A3A, { flatShading:true });
   const holeMat = matB(0x000000);
   function rock(px, py, pz, sx, sy, sz, mat) {
     const m = new THREE.Mesh(geoBox(sx, sy, sz, 1), mat||rockMat);
     m.position.set(px, py, pz);
     m.receiveShadow = true;
-    m.matrixAutoUpdate = false; m.updateMatrix();
     g.add(m);
   }
   rock(-1.8, 1.4, 0.2, 1.8, 2.8, 2.0, rockMat);
@@ -356,10 +337,8 @@ function createCave(x, z, rotationY) {
   rock(0, 3.6, 0.2, 3.6, 0.9, 2.0, rockMat);
   const hole = new THREE.Mesh(geoBox(2.6, 2.6, 0.4, 1), holeMat);
   hole.position.set(0, 1.3, -1.0);
-  hole.matrixAutoUpdate = false; hole.updateMatrix();
   g.add(hole);
   g.position.set(x, 0, z); g.rotation.y = rotationY;
-  g.matrixAutoUpdate = false; g.updateMatrix();
   return g;
 }
 
@@ -504,8 +483,6 @@ const TIER_ZOMBIE_TYPES = {
 };
 
 // ─── HELPERS ───
-function smoothstep(x) { if (x < 0) x = 0; else if (x > 1) x = 1; return x*x*(3-2*x); }
-function smoothDamp(current, target, speed, dt) { return current + (target - current) * (1 - Math.exp(-speed * dt)); }
 function rollCrit() { return Math.random() < state.critChance; }
 
 // ─── HUD FEEDBACK ───
@@ -513,14 +490,6 @@ const hitMarker = document.getElementById('hit-marker');
 const damageFlash = document.getElementById('damage-flash');
 const waveBanner = document.getElementById('wave-banner');
 
-function showHitMarker(critical = false) {
-  if (!hitMarker) return;
-  hitMarker.classList.remove('active');
-  if (critical) hitMarker.classList.add('critical'); else hitMarker.classList.remove('critical');
-  void hitMarker.offsetWidth;
-  hitMarker.classList.add('active');
-  setTimeout(() => hitMarker.classList.remove('critical'), 300);
-}
 function showDamageFlash() {
   if (!damageFlash) return;
   damageFlash.classList.add('active');
@@ -556,40 +525,32 @@ const zombies = [];
 const ragdolls = [];
 const flyingLimbs = [];
 
-const _limbMatsCacheMap = new Map();
-function getLimbMats(skinColor) {
-  let c = _limbMatsCacheMap.get(skinColor);
-  if (!c) {
-    c = {
-      color: skinColor,
-      SKIN: matL(skinColor, { flatShading: true }),
-      DARK: matL(new THREE.Color(skinColor).multiplyScalar(0.7).getHex(), { flatShading: true }),
-      BODY: matL(0x8aa37b, { flatShading: true }),
-      BLOOD: matL(0x8b1a1a, { flatShading: true }),
-    };
-    _limbMatsCacheMap.set(skinColor, c);
-  }
-  return c;
-}
-
-// ─── CARTOON ZOMBIE MESH ───
+// ★ CORREÇÃO: usa skinPalette/shirtPalette/pantsPalette do zombie-types.js
 function createZombieMesh(opts = {}) {
   const typeKey = opts.type || 'pt';
   const type = (window.ZOMBIE_TYPES_FROM_MODULE || {})[typeKey] || { scale: 1 };
   const g = new THREE.Group();
 
-  const skinHex = type.skin || 0x7fc24f;
-  const skinCol = new THREE.Color(skinHex);
-  const darkHex = skinCol.clone().multiplyScalar(0.7).getHex();
-  const clothHex = type.cloth || 0x556b3d;
-  const clothDark = new THREE.Color(clothHex).multiplyScalar(0.75).getHex();
+  const pick = (arr, fb) => Array.isArray(arr) && arr.length
+    ? arr[Math.floor(Math.random() * arr.length)]
+    : fb;
 
-  const SKIN    = new THREE.MeshLambertMaterial({ color: skinHex, flatShading: true });
-  const SKIN_D  = new THREE.MeshLambertMaterial({ color: darkHex, flatShading: true });
-  const CLOTH   = new THREE.MeshLambertMaterial({ color: clothHex, flatShading: true });
-  const CLOTH_D = new THREE.MeshLambertMaterial({ color: clothDark, flatShading: true });
+  const skinHex  = pick(type.skinPalette,  type.skin  || 0x7fc24f);
+  const shirtHex = pick(type.shirtPalette, type.cloth || 0x556b3d);
+  const pantsHex = pick(type.pantsPalette, 0x3a3a3a);
 
-  // Cache global de geometrias e materiais
+  const skinCol   = new THREE.Color(skinHex);
+  const skinDark  = skinCol.clone().multiplyScalar(0.72).getHex();
+  const shirtDark = new THREE.Color(shirtHex).multiplyScalar(0.78).getHex();
+  const pantsDark = new THREE.Color(pantsHex).multiplyScalar(0.78).getHex();
+
+  const SKIN    = new THREE.MeshLambertMaterial({ color: skinHex,   flatShading: true });
+  const SKIN_D  = new THREE.MeshLambertMaterial({ color: skinDark,  flatShading: true });
+  const SHIRT   = new THREE.MeshLambertMaterial({ color: shirtHex,  flatShading: true });
+  const SHIRT_D = new THREE.MeshLambertMaterial({ color: shirtDark, flatShading: true });
+  const PANTS   = new THREE.MeshLambertMaterial({ color: pantsHex,  flatShading: true });
+  const PANTS_D = new THREE.MeshLambertMaterial({ color: pantsDark, flatShading: true });
+
   if (!window.__zombieGeoCache) {
     window.__zombieGeoCache = {
       HEAD:    new THREE.SphereGeometry(0.20, 12, 8),
@@ -612,19 +573,18 @@ function createZombieMesh(opts = {}) {
   const GEO = window.__zombieGeoCache;
   const MC  = window.__zombieMatCache;
 
-  // Ordem idêntica a LIMBS em zombie-dismember.js:
-  // [Head, Torso, BicepL, ForearmL, BicepR, ForearmR, ThighL, ShinL, ThighR, ShinR]
+  // Ordem EXATA dos LIMBS em zombie-dismember.js
   const defs = [
     { geo: GEO.HEAD,    mat: SKIN,    kind: 'head'  },
-    { geo: GEO.TORSO,   mat: CLOTH,   kind: 'torso' },
+    { geo: GEO.TORSO,   mat: SHIRT,   kind: 'torso' },
     { geo: GEO.BICEP,   mat: SKIN_D,  kind: 'cyl'   },
     { geo: GEO.FOREARM, mat: SKIN,    kind: 'cyl'   },
     { geo: GEO.BICEP,   mat: SKIN,    kind: 'cyl'   },
     { geo: GEO.FOREARM, mat: SKIN_D,  kind: 'cyl'   },
-    { geo: GEO.THIGH,   mat: CLOTH_D, kind: 'cyl'   },
-    { geo: GEO.SHIN,    mat: CLOTH,   kind: 'cyl'   },
-    { geo: GEO.THIGH,   mat: CLOTH_D, kind: 'cyl'   },
-    { geo: GEO.SHIN,    mat: CLOTH,   kind: 'cyl'   },
+    { geo: GEO.THIGH,   mat: PANTS_D, kind: 'cyl'   },
+    { geo: GEO.SHIN,    mat: PANTS,   kind: 'cyl'   },
+    { geo: GEO.THIGH,   mat: PANTS_D, kind: 'cyl'   },
+    { geo: GEO.SHIN,    mat: PANTS,   kind: 'cyl'   },
   ];
 
   const limbs = defs.map(def => {
@@ -635,20 +595,18 @@ function createZombieMesh(opts = {}) {
     return m;
   });
 
-  // Cara do zumbi — filhos do mesh da cabeça
   const head = limbs[0];
-  const eyeL = new THREE.Mesh(GEO.EYE, MC.EYE_W); eyeL.position.set(-0.07,  0.05, 0.16);
-  const eyeR = new THREE.Mesh(GEO.EYE, MC.EYE_W); eyeR.position.set( 0.07,  0.05, 0.16);
-  const pupL = new THREE.Mesh(GEO.PUPIL, MC.EYE_B); pupL.position.set(-0.07, 0.05, 0.19);
-  const pupR = new THREE.Mesh(GEO.PUPIL, MC.EYE_B); pupR.position.set( 0.07, 0.05, 0.19);
-  const mouth = new THREE.Mesh(GEO.MOUTH, MC.EYE_B); mouth.position.set(0, -0.07, 0.18);
-  head.add(eyeL); head.add(eyeR); head.add(pupL); head.add(pupR); head.add(mouth);
+  const eL = new THREE.Mesh(GEO.EYE,  MC.EYE_W); eL.position.set(-0.07,  0.05, 0.16);
+  const eR = new THREE.Mesh(GEO.EYE,  MC.EYE_W); eR.position.set( 0.07,  0.05, 0.16);
+  const pL = new THREE.Mesh(GEO.PUPIL, MC.EYE_B); pL.position.set(-0.07, 0.05, 0.19);
+  const pR = new THREE.Mesh(GEO.PUPIL, MC.EYE_B); pR.position.set( 0.07, 0.05, 0.19);
+  const mh = new THREE.Mesh(GEO.MOUTH, MC.EYE_B); mh.position.set(0, -0.07, 0.18);
+  head.add(eL); head.add(eR); head.add(pL); head.add(pR); head.add(mh);
 
-  // Ferida no torso
-  const wound = new THREE.Mesh(GEO.WOUND, MC.WOUND);
-  wound.position.set(0.15, 0.10, 0.15);
-  wound.scale.set(0.10, 0.06, 0.03);
-  limbs[1].add(wound);
+  const w = new THREE.Mesh(GEO.WOUND, MC.WOUND);
+  w.position.set(0.15, 0.10, 0.15);
+  w.scale.set(0.10, 0.06, 0.03);
+  limbs[1].add(w);
 
   g.userData = {
     limbs,
@@ -701,46 +659,25 @@ function spawnZombie(forceType, spawnX, spawnZ) {
 
   const z = {
     id: nextId('z'),
-    g: mesh,
-    p: mesh.position,
-    yaw: 0,
-    t: typeKey,
-    type,
+    g: mesh, p: mesh.position, yaw: 0,
+    t: typeKey, type,
     s: { speed: CONFIG.zombie.speed * type.speedMul * spdScale, dmg: baseDamage, hp: baseHP },
-    hp: baseHP,
-    max: baseHP,
-    v: 0,
+    hp: baseHP, max: baseHP, v: 0,
     ph: Math.random() * Math.PI * 2,
-    state: 'Unaware',
-    ai: 'Idle',
-    tmr: 0,
-    tf: Math.random() * 0.3,
-    cd: Math.random(),
-    target: false,
-    aggro: 0,
-    lod: 2,
-    sleep: false,
-    hit: false,
-    hitDir: new THREE.Vector3(1, 0, 0),
-    hitReactEndTime: 0,
+    state: 'Unaware', ai: 'Idle', tmr: 0,
+    tf: Math.random() * 0.3, cd: Math.random(),
+    target: false, aggro: 0, lod: 2, sleep: false,
+    hit: false, hitDir: new THREE.Vector3(1, 0, 0), hitReactEndTime: 0,
     limbs: mesh.userData.limbs,
     neck:  mesh.userData.neck,
     gone:  mesh.userData.gone,
     gore:  mesh.userData.gore,
-    top: 0,
-    acc: 0,
-    pts: null,
-    rm: false,
-    isBoss: false,
-    difficultyTier: tier,
+    top: 0, acc: 0, pts: null, rm: false,
+    isBoss: false, difficultyTier: tier,
     _loadState: ZombieLoadState.REAL,
-    _canSleep: false,
-    _waterAccum: 0,
+    _canSleep: false, _waterAccum: 0,
     walkStyle: Math.random(),
-    armDroopL: -0.05,
-    armDroopR: -0.05,
-    emergeTime: 0,
-    _ragdolled: false,
+    emergeTime: 0, _ragdolled: false,
     mesh,
     speed: CONFIG.zombie.speed * type.speedMul * spdScale,
     scale: type.scale || 1,
@@ -751,11 +688,8 @@ function spawnZombie(forceType, spawnX, spawnZ) {
     xpReward: Math.round(CONFIG.zombie.xpReward * type.xpMul * (1 + (state.wave - 1) * 0.06) * tierMul),
     coinReward: Math.round(CONFIG.zombie.coinReward * type.coinMul * (1 + (state.wave - 1) * 0.05) * tierMul),
     typeKey,
-    alertedUntil: 0,
-    alertUntil: 0,
-    lastAttackTime: 0,
-    vx: 0,
-    vz: 0,
+    alertedUntil: 0, alertUntil: 0, lastAttackTime: 0,
+    vx: 0, vz: 0,
   };
   mesh.userData.zombieRef = z;
   zombies.push(z);
@@ -773,6 +707,8 @@ function maxAttackersForCurrentDifficulty() {
   if (w <= 8) return CONFIG.attackPermission.maxAttackersHard;
   return CONFIG.attackPermission.maxAttackersVeryHard;
 }
+
+// ★ CORREÇÃO: NÃO limpar recentAttackers fora daqui
 function zombieCanAttack(z, now) {
   const maxAttackers = maxAttackersForCurrentDifficulty();
   const recent = state.attackPermission.recentAttackers;
@@ -848,17 +784,21 @@ function updateBloodPools(dt) {
     const b = bloodPools[i];
     b.life -= dt;
     if (b.life < 3) b.mesh.material.opacity = Math.max(0, (b.life/3)*0.75);
-    if (b.life <= 0) {
-      b.mesh.visible = false;
-      bloodPools.splice(i, 1);
-    }
+    if (b.life <= 0) { b.mesh.visible = false; bloodPools.splice(i, 1); }
   }
-  for (const b of bloodPools) {
-    if (b.life >= 3) b.mesh.material.opacity = 0.75;
-  }
+  for (const b of bloodPools) if (b.life >= 3) b.mesh.material.opacity = 0.75;
 }
 
 // ─── GORE / DISMEMBER ───
+function getLimbMats(skinColor) {
+  const c = new THREE.Color(skinColor);
+  return {
+    SKIN:  matL(skinColor, { flatShading: true }),
+    DARK:  matL(c.clone().multiplyScalar(0.7).getHex(), { flatShading: true }),
+    BLOOD: matL(0x8b1a1a, { flatShading: true }),
+  };
+}
+
 function applyGore(z, group) {
   if (z.gore.has(group)) return;
   z.gore.add(group);
@@ -871,7 +811,8 @@ function applyGore(z, group) {
   const gibEndIdx = GIBEND[group];
   if (stumpIdx == null || gibEndIdx == null || !z.pts) return;
   const stumpPos = z.pts[stumpIdx];
-  const stumpMesh = new THREE.Mesh(SHARED_STUMP_GEO, getLimbMats(z.limbs[0]?.material?.color?.getHex() || 0x86bd55).BLOOD);
+  const matSet = getLimbMats(z.limbs[0]?.material?.color?.getHex() || 0x86bd55);
+  const stumpMesh = new THREE.Mesh(SHARED_STUMP_GEO, matSet.BLOOD);
   stumpMesh.position.copy(stumpPos);
   z.g.add(stumpMesh);
   z._stumps = z._stumps || [];
@@ -880,7 +821,7 @@ function applyGore(z, group) {
   const a = z.pts[stumpIdx].clone();
   const b = z.pts[gibEndIdx].clone();
   const len = Math.max(0.15, a.distanceTo(b));
-  const gibMesh = new THREE.Mesh(SHARED_BOX, getLimbMats(z.limbs[0]?.material?.color?.getHex() || 0x86bd55).SKIN);
+  const gibMesh = new THREE.Mesh(SHARED_BOX, matSet.SKIN);
   gibMesh.scale.set(0.12, len, 0.12);
   const gib = new LimbGib(gibMesh, a.clone().add(b).multiplyScalar(0.5), z.hitDir, len);
   scene.add(gibMesh);
@@ -907,7 +848,6 @@ function damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, sourceType, tAlong
   if (z.hp <= 0) {
     z.state = 'Dying';
     z.tmr = 0;
-
     if (sourceType === 'explosion') {
       ['Head','BicepL','BicepR','ThighL','ThighR'].forEach(g => {
         if (Math.random() < 0.5 && !z.gore.has(g)) applyGore(z, g);
@@ -924,18 +864,7 @@ function damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, sourceType, tAlong
   }
 }
 
-// ─── ALERT / NOISE ───
-function alertNearbyZombies(source, position) {
-  const now = performance.now() / 1000;
-  const R2 = 3.0 * 3.0;
-  for (const z of zombies) {
-    if (z === source || z.hp <= 0) continue;
-    const dx = z.p.x - position.x;
-    const dz = z.p.z - position.z;
-    if (dx*dx + dz*dz > R2) continue;
-    z.alertedUntil = now + CONFIG.aggro.alertDuration;
-  }
-}
+// ─── NOISE ───
 function makeNoise(position, radius) {
   if (!radius || radius <= 0) return;
   const now = performance.now() / 1000;
@@ -943,8 +872,7 @@ function makeNoise(position, radius) {
   for (let i = 0; i < zombies.length; i++) {
     const z = zombies[i];
     if (z.hp <= 0) continue;
-    const dx = z.p.x - position.x;
-    const dz = z.p.z - position.z;
+    const dx = z.p.x - position.x, dz = z.p.z - position.z;
     const d2 = dx*dx + dz*dz;
     if (d2 > R2) continue;
     const dist = Math.sqrt(d2);
@@ -981,35 +909,7 @@ function updateNoiseRipples(dt) {
   }
 }
 
-// ─── RAYCAST (O(1) contra segmentos) ───
-function raySegmentHit(ro, rd, a, b, radius, minT, maxT) {
-  const vx = b.x - a.x, vy = b.y - a.y, vz = b.z - a.z;
-  const wx = ro.x - a.x, wy = ro.y - a.y, wz = ro.z - a.z;
-  const ux = rd.x, uy = rd.y, uz = rd.z;
-  const d2 = ux * vx + uy * vy + uz * vz;
-  const d3 = vx * vx + vy * vy + vz * vz;
-  const d4 = ux * wx + uy * wy + uz * wz;
-  const d5 = vx * wx + vy * wy + vz * wz;
-  const denom = d3 - d2 * d2;
-  let sc, tc;
-  if (denom > 1e-6) {
-    sc = (d2 * d5 - d3 * d4) / denom;
-    tc = (d5 - d2 * d4) / denom;
-  } else {
-    sc = 0;
-    tc = d5 / d3;
-  }
-  if (sc < 0) { sc = 0; tc = d5 / d3; }
-  if (tc < 0) { tc = 0; sc = -d4; }
-  else if (tc > 1) { tc = 1; sc = d2 - d4; }
-  if (sc < minT || sc > maxT) return -1;
-  const px = ro.x + ux * sc, py = ro.y + uy * sc, pz = ro.z + uz * sc;
-  const qx = a.x + vx * tc, qy = a.y + vy * tc, qz = a.z + vz * tc;
-  const dx = px - qx, dy = py - qy, dz = pz - qz;
-  if (dx*dx + dy*dy + dz*dz > radius * radius) return -1;
-  return sc;
-}
-
+// ─── RAYCAST ───
 function raycastLimbs(origin, dir, maxDist) {
   let bestZ = null, bestLimb = null, bestS = Infinity, bestTc = 0;
   const tmpP = new THREE.Vector3();
@@ -1017,15 +917,13 @@ function raycastLimbs(origin, dir, maxDist) {
   for (let zi = 0; zi < zombies.length; zi++) {
     const z = zombies[zi];
     if (z.state === 'Dying' || !z.pts) continue;
-    const dxZ = z.p.x - origin.x;
-    const dzZ = z.p.z - origin.z;
+    const dxZ = z.p.x - origin.x, dzZ = z.p.z - origin.z;
     const tProj = dxZ * dir.x + dzZ * dir.z;
     if (tProj < -1 || tProj > maxDist + 1.5) continue;
 
     for (let li = 0; li < LIMBS.length; li++) {
       const l = LIMBS[li];
       if (z.gone[l[0]] === true) continue;
-
       const a = z.pts[l[1]];
       const b = z.pts[l[2]];
       const hit = raySegmentHitFull(origin, dir, a, b, l[3] + 0.05, 0.1, maxDist);
@@ -1040,13 +938,7 @@ function raycastLimbs(origin, dir, maxDist) {
 
   if (!bestZ) return null;
   tmpP.copy(origin).addScaledVector(dir, bestS);
-  return {
-    s: bestS,
-    z: bestZ,
-    limb: bestLimb,
-    tc: bestTc,
-    point: tmpP.clone(),
-  };
+  return { s: bestS, z: bestZ, limb: bestLimb, tc: bestTc, point: tmpP.clone() };
 }
 
 // ─── MUZZLE / TRACERS / EXPLOSIONS ───
@@ -1089,11 +981,7 @@ function updateTracers(dt) {
     const t = tracers[i];
     t.life -= dt;
     t.mesh.material.opacity = Math.max(0, t.life / 0.08);
-    if (t.life <= 0) {
-      t.mesh.visible = false;
-      tracerPool.push(t);
-      tracers.splice(i, 1);
-    }
+    if (t.life <= 0) { t.mesh.visible = false; tracerPool.push(t); tracers.splice(i, 1); }
   }
 }
 
@@ -1397,7 +1285,7 @@ function pickSkill(skillId) {
   updateHUD();
 }
 
-// ─── HUD UPDATE ───
+// ─── HUD ───
 function updateHUD() {
   const hp = Math.max(0, state.health);
   if (HUD.hpFill) HUD.hpFill.style.width = `${(hp/state.maxHealth)*100}%`;
@@ -1458,20 +1346,10 @@ function enterDownedState() {
   document.body.classList.add('downed');
   const overlay = document.getElementById('downed-overlay');
   if (overlay) overlay.classList.remove('hidden');
-  const timer = document.getElementById('downed-timer');
-  if (timer) timer.textContent = '30';
-  const prompt = document.getElementById('downed-prompt');
-  if (prompt) prompt.classList.remove('visible');
-  const pw = document.getElementById('downed-progress-wrap');
-  if (pw) pw.classList.remove('visible');
-  const pb = document.getElementById('downed-progress');
-  if (pb) pb.style.width = '0%';
-  const hpF = document.getElementById('downed-hp-fill');
-  if (hpF) hpF.style.width = '100%';
   Sfx.playPlayerDown();
   addShake(0.4);
   updateHUD();
-  bus.emit(Ev.PLAYER_DOWN, { playerId: player.id, pos: { x: player.position.x, y: player.position.y, z: player.position.z } });
+  bus.emit(Ev.PLAYER_DOWN, { playerId: player.id });
 }
 function exitDownedState(hpFraction) {
   if (!state.downed) return;
@@ -1527,8 +1405,6 @@ const brazierGroup = new THREE.Group();
   base.position.y = 0.6; base.castShadow = true; brazierGroup.add(base);
   const bowl = new THREE.Mesh(geoCyl(1.0, 0.7, 0.5, 8), matL(0x2A2A2A, { flatShading:true }));
   bowl.position.y = 1.35; bowl.castShadow = true; brazierGroup.add(bowl);
-  const dark = new THREE.Mesh(geoBox(1.6, 0.3, 1.6, 1), matB(0x1A1A1A));
-  dark.position.y = 1.55; brazierGroup.add(dark);
   const flame = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.5, 8), new THREE.MeshBasicMaterial({ color:0xFF6600, transparent:true, opacity:0.9 }));
   flame.position.y = 2.4; flame.name = 'flame'; flame.visible = false; brazierGroup.add(flame);
   const flameLight = new THREE.PointLight(0xFF6600, 0, 12, 2);
@@ -1571,7 +1447,7 @@ function startWave() {
   const bossType = isBossWave ? BOSS_ROTATION[Math.floor(state.wave / CONFIG.wave.bossEvery - 1) % BOSS_ROTATION.length] : null;
   state.zombiesRemainingInWave = count + (isBossWave ? 1 : 0);
   state.bossSpawned = false;
-  let waveLabel = isBossWave ? `HORDA CHEFE ${state.wave} — ${bossType.toUpperCase()}` : `HORDA ${state.wave}  ·  PKG ${WAVE_PACKAGES.indexOf(pkg)}`;
+  let waveLabel = isBossWave ? `HORDA CHEFE ${state.wave} — ${bossType.toUpperCase()}` : `HORDA ${state.wave}`;
   if (isBossWave && ZOMBIE_LORE[bossType]) waveLabel += '  ·  ' + ZOMBIE_LORE[bossType];
   showWaveBanner(waveLabel);
   bus.emit(Ev.WAVE_START, { wave:state.wave, count, boss:isBossWave });
@@ -1641,57 +1517,7 @@ function checkWaveComplete() {
   }
 }
 
-// ─── PING ───
-const pings = [];
-const PING_COLORS = { enemy:0xff2020, help:0xffdd00, go:0x22dd22, careful:0xff8800 };
-function updatePingHighlight() {
-  const x = state.pingAccumX, y = state.pingAccumY;
-  const mag = Math.hypot(x, y);
-  if (mag < 25) { state.pingHighlight = null; document.querySelectorAll('.ping-option').forEach(el => el.classList.remove('highlighted')); return; }
-  const angle = Math.atan2(y, x); const pi = Math.PI;
-  let dir;
-  if (angle >= -3*pi/4 && angle < -pi/4) dir = 'top';
-  else if (angle >= -pi/4 && angle < pi/4) dir = 'right';
-  else if (angle >= pi/4 && angle < 3*pi/4) dir = 'bottom';
-  else dir = 'left';
-  const map = { top:'enemy', right:'help', bottom:'go', left:'careful' };
-  state.pingHighlight = map[dir];
-  document.querySelectorAll('.ping-option').forEach(el => { el.classList.toggle('highlighted', el.classList.contains('ping-' + dir)); });
-}
-function getPingPosition() {
-  const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
-  const pos = camera.position.clone();
-  if (dir.y < -0.01) { const t = (0.1 - pos.y)/dir.y; if (t > 0 && t < 60) { pos.addScaledVector(dir, t); pos.y = 0.1; return pos; } }
-  pos.addScaledVector(dir, 15); pos.y = 0.1; return pos;
-}
-function emitPing(type) {
-  const pos = getPingPosition();
-  bus.emit(Ev.PING, { playerId: player.id, type, pos:{ x:pos.x, y:pos.y, z:pos.z } });
-  spawnPingMarker(pos, type);
-  Sfx.playPing();
-}
-function spawnPingMarker(pos, type) {
-  const color = PING_COLORS[type] || 0xffffff;
-  const group = new THREE.Group();
-  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 6, 6, 1, true), new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.4, side:THREE.DoubleSide, depthWrite:false }));
-  pillar.position.y = 3; group.add(pillar);
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.75, 16), new THREE.MeshBasicMaterial({ color, transparent:true, opacity:1, side:THREE.DoubleSide, depthWrite:false }));
-  ring.rotation.x = -Math.PI/2; ring.position.y = 0.15; group.add(ring);
-  group.position.copy(pos); scene.add(group);
-  pings.push({ group, pillar, ring, life:3, maxLife:3 });
-}
-function updatePings(dt) {
-  for (let i = pings.length - 1; i >= 0; i--) {
-    const p = pings[i]; p.life -= dt;
-    const t = Math.max(0, p.life/p.maxLife);
-    p.ring.scale.setScalar(1 + (1-t)*2.2);
-    p.ring.material.opacity = t;
-    p.pillar.material.opacity = t*0.4;
-    if (p.life <= 0) { scene.remove(p.group); p.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); }); pings.splice(i, 1); }
-  }
-}
-
-// ─── SHOP / BRAZIER / VENDOR ───
+// ─── SHOP ───
 const shopEl = document.getElementById('shop');
 const shopItemsEl = document.getElementById('shop-items');
 const shopCoinsEl = document.getElementById('shop-coins');
@@ -1740,6 +1566,7 @@ function renderShop() {
     shopItemsEl.appendChild(el);
   });
 }
+
 function tryLightBrazier() {
   if (state.brazierFuel <= 0 || state.brazierBurning) return;
   state.brazierFuel--;
@@ -1862,11 +1689,6 @@ document.addEventListener('keydown', e => {
     const wid = state.inventory[state.currentSlot];
     if (wid && WEAPONS[wid].type === 'ranged') startReload(wid);
   }
-  if (e.code === controls.getKey(Action.Ping) && state.running && !state.downed && !state.levelUpActive && !state.pingWheelOpen && !state.shopOpen) {
-    state.pingWheelOpen = true; state.pingAccumX = 0; state.pingAccumY = 0; state.pingHighlight = null;
-    const wheel = document.getElementById('ping-wheel');
-    if (wheel) wheel.classList.remove('hidden');
-  }
   if (e.code === controls.getKey(Action.Interact) && state.running && !state.downed && !state.levelUpActive) {
     if (state.shopOpen) { closeShop(); return; }
     const dxB = player.position.x - brazierGroup.position.x;
@@ -1877,7 +1699,7 @@ document.addEventListener('keydown', e => {
       const dzV = player.position.z - vendorVan.position.z;
       if (Math.sqrt(dxV*dxV + dzV*dzV) < 4.0) { openShop(); return; }
     }
-    if (nearWeapon && !nearWeapon.bought) tryBuyWeapon(); else openShop();
+    if (nearWeapon && !nearWeapon.bought) tryBuyWeapon();
   }
   const jumpKey = controls.getKey(Action.Jump);
   if (jumpKey && e.code === jumpKey) {
@@ -1888,16 +1710,6 @@ document.addEventListener('keydown', e => {
     return;
   }
 });
-document.addEventListener('keyup', e => {
-  state.keys[e.code] = false;
-  if (e.code === controls.getKey(Action.Ping) && state.pingWheelOpen) {
-    state.pingWheelOpen = false;
-    const wheel = document.getElementById('ping-wheel');
-    if (wheel) wheel.classList.add('hidden');
-    if (state.pingHighlight) emitPing(state.pingHighlight);
-    state.pingHighlight = null;
-  }
-});
 renderer.domElement.addEventListener('click', () => {
   if (!state.running || isMobile() || state.levelUpActive || state.shopOpen || state.paused) return;
   Sfx.initAudio(); Sfx.resumeAudio();
@@ -1905,7 +1717,6 @@ renderer.domElement.addEventListener('click', () => {
 });
 document.addEventListener('mousemove', e => {
   if (document.pointerLockElement !== renderer.domElement) return;
-  if (state.pingWheelOpen) { state.pingAccumX += e.movementX; state.pingAccumY += e.movementY; updatePingHighlight(); return; }
   const sens = controls.getEffectiveSens(state.aiming);
   player.yaw -= e.movementX * sens;
   player.pitch -= e.movementY * sens;
@@ -2078,15 +1889,14 @@ function resolvePlayerZombieCollision() {
 }
 
 // ─── ZOMBIE UPDATE ───
-let _lodTickAccum = 0;
-let _popTickAccum = 0;
+let _lodTickAccum = 0, _popTickAccum = 0;
 const LOD_TICK_INTERVAL = 0.5;
 const POP_TICK_INTERVAL = 2.0;
 const _TMP = new THREE.Vector3();
+
 function updateZombies(dt) {
   const now = performance.now() / 1000;
-  // FIX: NÃO limpar recentAttackers aqui — precisa sobreviver entre frames
-  // para o limite de "máx. atacantes simultâneos" funcionar.
+  // ★ FIX: NÃO limpar recentAttackers — precisa sobreviver entre frames
 
   _lodTickAccum += dt;
   if (_lodTickAccum >= LOD_TICK_INTERVAL) {
@@ -2098,8 +1908,7 @@ function updateZombies(dt) {
   if (_popTickAccum >= POP_TICK_INTERVAL) {
     _popTickAccum = 0;
     tickZombiePopulation(POP_TICK_INTERVAL, {
-      spawnZombie,
-      state,
+      spawnZombie, state,
       bossPos: state.bossPos,
       bossActive: state.bossSpawned,
     });
@@ -2157,7 +1966,8 @@ function updateZombies(dt) {
 
     if (z.ai === 'Idle' && z.target) z.ai = 'Chase';
     if (!z.target) z.ai = 'Idle';
-    // FIX: usar isGrounded — antes era player.position.y < 1.2 (sempre false)
+
+    // ★ FIX CRÍTICO: reach = isGrounded (antes era player.position.y < 1.2, sempre false)
     const reach = state.isGrounded;
     if (z.ai === 'Chase' && reach && d < 2.2) z.ai = 'Combat';
     else if (z.ai === 'Combat' && (d > 2.2 || !reach)) z.ai = 'Chase';
@@ -2223,16 +2033,10 @@ function updateZombies(dt) {
   }
 
   for (let i = ragdolls.length - 1; i >= 0; i--) {
-    if (ragdolls[i].update(dt, emitBlood)) {
-      ragdolls[i].dispose();
-      ragdolls.splice(i, 1);
-    }
+    if (ragdolls[i].update(dt, emitBlood)) { ragdolls[i].dispose(); ragdolls.splice(i, 1); }
   }
   for (let i = flyingLimbs.length - 1; i >= 0; i--) {
-    if (flyingLimbs[i].update(dt)) {
-      flyingLimbs[i].dispose(scene);
-      flyingLimbs.splice(i, 1);
-    }
+    if (flyingLimbs[i].update(dt)) { flyingLimbs[i].dispose(scene); flyingLimbs.splice(i, 1); }
   }
   for (let i = zombies.length - 1; i >= 0; i--) {
     if (zombies[i].rm) zombies.splice(i, 1);
@@ -2393,15 +2197,6 @@ function tryBuyWeapon() {
   bus.emit(Ev.WEAPON_BUY, { playerId: player.id, weaponId: w.id, cost: nearWeapon.isDrop ? 0 : finalCost, slot: w.slot });
   updateHUD(); updateWeaponSlotsHUD();
 }
-let poiNotifTimer = null;
-function showPOINotification(name, subtitle) {
-  let el = document.getElementById('poi-notification');
-  if (!el) { el = document.createElement('div'); el.id = 'poi-notification'; document.body.appendChild(el); }
-  el.innerHTML = `${name}<span class="poi-name">${subtitle || ''}</span>`;
-  el.classList.add('show');
-  clearTimeout(poiNotifTimer);
-  poiNotifTimer = setTimeout(() => el.classList.remove('show'), 2800);
-}
 function checkPOIDiscovery() {
   if (!world.pois) return;
   for (const id in world.pois) {
@@ -2411,9 +2206,6 @@ function checkPOIDiscovery() {
     const dz = player.position.z - poi.z;
     if (dx*dx + dz*dz < 20*20) {
       state.discoveredPOIs.add(id);
-      const names = { police: ['DELEGACIA', 'Autoridades não respondem mais...'], hospital: ['HOSPITAL', 'Sala de emergência abandonada.'], church: ['IGREJA CATEDRAL', 'Algo sombrio reside aqui.'], market: ['MERCADO', 'Suprimentos ainda nas prateleiras.'], gas: ['POSTO', 'Combustível e abrigo.'], military: ['POSTO MILITAR', 'Zona de quarentena fortificada.'], warehouse: ['ARMAZÉM', 'Suprimentos e cobertura pesada.'], government: ['PREFEITURA', 'O último bastião do poder civil.'] };
-      const [title, sub] = names[poi.type] || ['ÁREA', ''];
-      showPOINotification(title, sub);
       bus.emit(Ev.POI_DISCOVERED, { id, type: poi.type });
       Sfx.playPing();
     }
@@ -2450,7 +2242,6 @@ function animate() {
     checkWaveComplete();
     stepPhysics(dt);
     updateDownedState(dt);
-    updatePings(dt);
     survival.update(dt, state);
     updateExplosions(dt);
     updateNoiseRipples(dt);
@@ -2459,6 +2250,7 @@ function animate() {
     Gore.updateGore(dt);
     Extraction.updateExtraction(dt);
     checkPOIDiscovery();
+    checkLevelUp();
     if (weaponView) {
       if (state.downed) weaponView.setVisible(false);
       else {
@@ -2586,15 +2378,11 @@ function startGame() {
   });
 
   document.body.classList.remove('downed', 'aiming');
-  ['downed-overlay','ping-wheel','scoreboard','shop','pause'].forEach(id => {
+  ['downed-overlay','shop','pause','levelup'].forEach(id => {
     const e = document.getElementById(id); if (e) e.classList.add('hidden');
   });
 
-  pings.forEach(p => { scene.remove(p.group); p.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); }); });
-  pings.length = 0;
-
   const perk = applyPerk(state.playerSkin || 'default', state, player);
-  console.log('[game] 🎯 Perk ativada:', perk.name, '—', perk.desc);
   bus.emit(Ev.PERK_ACTIVATED, { perkId: perk.id, name: perk.name });
   showWaveBanner(`${perk.icon} ${perk.name}`);
 
@@ -2726,113 +2514,25 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ─── MP FEEDBACK ───
-const playerStats = new Map();
-playerStats.set(player.id, { id: player.id, name: 'VOCÊ', kills: 0, headshots: 0, damage: 0, coins: 0, deaths: 0, local: true });
-const _projV = new THREE.Vector3();
-function worldToScreen(pos) {
-  _projV.set(pos.x, pos.y, pos.z).project(camera);
-  return { x: (_projV.x*0.5 + 0.5)*window.innerWidth, y: (-_projV.y*0.5 + 0.5)*window.innerHeight, visible: _projV.z < 1 && _projV.z > -1 };
-}
-function ensureStats(id) {
-  let s = playerStats.get(id);
-  if (!s) {
-    s = { id, name: id === player.id ? 'VOCÊ' : (id.startsWith('p-') ? 'JOGADOR' : 'INIMIGO'), kills: 0, headshots: 0, damage: 0, coins: 0, deaths: 0, local: id === player.id };
-    playerStats.set(id, s);
-  }
-  return s;
-}
-function nameOf(id) {
-  if (typeof id !== 'string') return '???';
-  if (id.startsWith('z-')) return 'ZUMBI';
-  if (id === player.id) return 'VOCÊ';
-  return ensureStats(id).name;
-}
-const damageNumbersEl = document.getElementById('damage-numbers');
-const DAMAGE_NUMBERS_MAX = 40;
-let damageNumbersActive = 0;
-function spawnDamageNumber(worldPos, amount, kind) {
-  if (!damageNumbersEl) return;
-  const screen = worldToScreen(worldPos);
-  if (!screen.visible) return;
-  while (damageNumbersActive >= DAMAGE_NUMBERS_MAX && damageNumbersEl.firstChild) {
-    damageNumbersEl.removeChild(damageNumbersEl.firstChild); damageNumbersActive--;
-  }
-  const el = document.createElement('div');
-  el.className = 'dmg-number dmg-' + kind;
-  el.textContent = Math.round(amount);
-  const jX = (Math.random()-0.5)*30, jY = (Math.random()-0.5)*15;
-  el.style.left = (screen.x + jX) + 'px';
-  el.style.top = (screen.y + jY) + 'px';
-  damageNumbersEl.appendChild(el);
-  damageNumbersActive++;
-  setTimeout(() => { if (el.parentNode) { el.parentNode.removeChild(el); damageNumbersActive--; } }, 850);
-}
+// ─── MP FEEDBACK (simplificado) ───
 const killFeedEl = document.getElementById('kill-feed');
-const KILL_FEED_MAX = 5, KILL_FEED_LIFE = 4200;
-function spawnKillFeedEntry(killerId, victimId, weaponId, headshot) {
+const playerStats = new Map();
+playerStats.set(player.id, { id: player.id, name: 'VOCÊ', kills: 0, headshots: 0, damage: 0, local: true });
+
+bus.on(Ev.KILL, p => {
   if (!killFeedEl) return;
   const entry = document.createElement('div');
   entry.className = 'kill-entry';
-  const weapon = (WEAPONS[weaponId] && WEAPONS[weaponId].name) || weaponId || '';
-  const weaponShort = weapon.split('-')[0];
-  entry.innerHTML = `<span class="killer">${nameOf(killerId)}</span><span class="weapon">${weaponShort}</span>${headshot ? '<span class="hs-badge">HS</span>' : ''}<span class="victim">${nameOf(victimId)}</span>`;
+  const weapon = (WEAPONS[p.weaponId] && WEAPONS[p.weaponId].name) || p.weaponId || '';
+  entry.innerHTML = `<span class="killer">VOCÊ</span><span class="weapon">${weapon}</span>${p.headshot ? '<span class="hs-badge">HS</span>' : ''}<span class="victim">ZUMBI</span>`;
   killFeedEl.insertBefore(entry, killFeedEl.firstChild);
-  while (killFeedEl.children.length > KILL_FEED_MAX) killFeedEl.removeChild(killFeedEl.lastChild);
+  while (killFeedEl.children.length > 5) killFeedEl.removeChild(killFeedEl.lastChild);
   setTimeout(() => {
     entry.classList.add('fading');
     setTimeout(() => { if (entry.parentNode) entry.parentNode.removeChild(entry); }, 400);
-  }, KILL_FEED_LIFE);
-}
-bus.on(Ev.DAMAGE, p => {
-  const s = ensureStats(p.attackerId);
-  s.damage += p.amount;
-  if (p.attackerId !== player.id || !p.pos) return;
-  let kind = 'normal';
-  if (p.headshot) kind = 'headshot'; else if (p.isCrit) kind = 'crit';
-  spawnDamageNumber(p.pos, p.amount, kind);
+  }, 4200);
 });
-bus.on(Ev.KILL, p => {
-  const ks = ensureStats(p.killerId);
-  ks.kills++;
-  if (p.headshot) ks.headshots++;
-  spawnKillFeedEntry(p.killerId, p.victimId, p.weaponId, p.headshot);
-});
-bus.on(Ev.COIN_GAIN, p => { const s = playerStats.get(p.playerId); if (s) s.coins = p.total; });
-bus.on(Ev.PLAYER_DIED, p => { const s = playerStats.get(p.playerId); if (s) s.deaths++; });
-bus.on(Ev.NET_PLAYER_LEAVE, p => { if (p && p.id) playerStats.delete(p.id); });
 
-const scoreboardEl = document.getElementById('scoreboard');
-const scoreboardBody = document.getElementById('scoreboard-body');
-let scoreboardOpen = false;
-function renderScoreboard() {
-  if (!scoreboardBody) return;
-  const list = [...playerStats.values()].sort((a,b) => (b.kills !== a.kills) ? b.kills - a.kills : b.damage - a.damage);
-  scoreboardBody.innerHTML = '';
-  list.forEach(s => {
-    const tr = document.createElement('tr');
-    tr.className = s.local ? 'local-row' : '';
-    tr.innerHTML = `<td>${s.name}</td><td>${s.kills}</td><td>${s.headshots}</td><td>${Math.round(s.damage)}</td><td>${s.coins}</td>`;
-    scoreboardBody.appendChild(tr);
-  });
-}
-document.addEventListener('keydown', e => {
-  if (e.code === controls.getKey(Action.Scoreboard) && state.running && !state.paused) {
-    e.preventDefault();
-    if (!scoreboardOpen) {
-      scoreboardOpen = true;
-      renderScoreboard();
-      if (scoreboardEl) scoreboardEl.classList.remove('hidden');
-    }
-  }
-});
-document.addEventListener('keyup', e => {
-  if (e.code === controls.getKey(Action.Scoreboard) && scoreboardOpen) {
-    e.preventDefault();
-    scoreboardOpen = false;
-    if (scoreboardEl) scoreboardEl.classList.add('hidden');
-  }
-});
 window.addEventListener('beforeunload', () => playerStats.clear());
 
-console.log('[game] ✅ v18 "Cartoon" carregado.');
+console.log('[game] ✅ v19 "STABLE" carregado.');
