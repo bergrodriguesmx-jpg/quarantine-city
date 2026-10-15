@@ -1,7 +1,7 @@
 // ============================================================
-// audio.js — v3 (áudio real do Zumbi Blocks 2)
-// 366 sons reais disponíveis. Preload em background com
-// concorrência controlada. Fallback procedural automático.
+// audio.js — v4 "LIMPO"
+// Somente arquivos que EXISTEM no servidor.
+// 298 sons reais + fallback procedural automático.
 // ============================================================
 
 let ctx = null;
@@ -11,27 +11,22 @@ let noiseBuffer = null;
 let muted = false;
 let volume = 0.85;
 
-// ════════ CACHE ════════
 const BASE = 'assets/audio/';
-const bufferCache = new Map();     // nome → AudioBuffer
-const failedLoads = new Set();     // nomes que falharam
+const bufferCache = new Map();
+const failedLoads = new Set();
 let preloadStarted = false;
 let preloadDone = false;
 let loadedCount = 0;
 
-// ════════ CATÁLOGO COMPLETO ════════
-// Todos os nomes reais dos 366 arquivos subidos.
-// Organizados por categoria para fácil manutenção.
+// ════════ CATÁLOGO (só arquivos que existem) ════════
 const SOUND_FILES = [
   // ────── PISTOLAS ──────
   'Jb1991_1.wav','Jb1991_2.wav','Jb1991_3.wav',
   'Jb1911_MagIn.wav','Jb1911_MagOut.wav','Jb1911_Rack.wav',
   'pistolmag1.wav','pistolmag2.wav','pistolmag3.wav',
   'slidePickupPistol.wav','genericHolster.wav',
-  'HiPoint_1.wav','HiPoint_2.wav',
   'Luger1.wav','Luger2.wav','Luger3.wav',
   'LugerHandle1.wav','LugerHandle2.wav','LugerHandle3.wav',
-  'Welrod_Gun.wav','welrodNewAgain.wav','welrodTech.wav',
   'Python_1.wav','Python_2.wav','Python_3.wav',
   'PythonClose.wav','PythonEject.wav','PythonFillup.wav',
   'B381.wav','B382.wav','b383.wav','B38Tech.wav',
@@ -42,7 +37,6 @@ const SOUND_FILES = [
   'revolver1.wav','revolver2.wav','revolver3.wav',
   'revolverClose1.wav','revolverDryFire1.wav','revolverDryFire2.wav','revolverDryFire3.wav',
   'revolverInsertBullets1.wav','ejectRevolverBullets1.wav',
-  'Type26_1.wav','Type26_2.wav','Type26_3.wav',
 
   // ────── SMGs ──────
   'Aksu_1.wav','Aksu_2.wav','Aksu_3.wav',
@@ -65,24 +59,16 @@ const SOUND_FILES = [
   'Garand1.wav','Garand2.wav','Garand3.wav',
   'GarandHandle1.wav','GarandHandle2.wav','GarandPing1.wav',
   'PPSH2.wav','PPSH3.wav','PPSHTech.wav','PPSHTech2.wav','PPSHTech3.wav',
-  'STG1.wav','STG2.wav','STG3.wav','STGP1.wav',
-  'StgEject.wav','StgHandle.wav','StgInsert.wav',
-  'SVTShot1.wav','SVTShot2.wav','SVTShot3.wav',
-  'SVTBolt.wav','SVTEjectMag.wav','SVTInsertmag.wav',
-  'SvtLmg1.wav','SvtLmg2.wav','SvtLmg3.wav',
-  'SvtLmg_Cycle.wav','SvtLmg_MagIn.wav','SvtLmg_MagOut.wav',
   'Famas1.wav','Famas2.wav','Famas3.wav','FamasCycle.wav',
   'FamasMagIn.wav','FamasMagOut.wav',
   'GreaseGunS1.wav','GreaseGunS2.wav','GreaseGunS3.wav','greaseGunTech.wav',
-  'Ultimax1.wav','Ultimax2.wav','Ultimax3.wav',
   'DeLisle3.wav','DeLisle4.wav','DeLisle5.wav',
   'Enfield2.wav','EnfieldBlack.wav','EnfieldBlackMagIn.wav','EnfieldBlackMagOut.wav',
   'Bolt1.wav','Bolt2.wav','Bolt3.wav','Bolt6.wav',
-  'AKM_1.wav','AKM_2.wav','AKM_3.wav',
 
   // ────── SHOTGUNS ──────
   'Spas1.wav','Spas2.wav','Spas3.wav',
-  'Trench5.wav','riotShot.wav','bossPumpShotgun.wav',
+  'riotShot.wav','bossPumpShotgun.wav',
   'pumpShotgunFast.wav',
   '12gaugeShellDrop.wav','12gaugeShellLoad.wav',
   'grabShotgun.wav','pickShotgun.wav',
@@ -105,8 +91,6 @@ const SOUND_FILES = [
   // ────── ZUMBIS ──────
   'growl1.wav','growl2.wav','growl4.wav','growl5.wav','growl6.wav',
   'Grawl - Fast.wav','Grawl - Medium.wav','Grawl - Laser.wav',
-  'zdeath 1.wav','zdeath 2.wav','zdeath 3.wav',
-  'zombieHurt1.wav','zombieHurt2.wav','zombieHurt3.wav','zombieHurt4.wav',
   'grunt1.wav','grunt2.wav','riotGrunt.wav',
   'ReaperGrowl1.wav','ReaperGrowl2.wav','ReaperGrowl3.wav','ReaperGrowl4.wav',
   'ReaperDarkPound.wav',
@@ -117,19 +101,17 @@ const SOUND_FILES = [
   'BossIntro.wav','BossAr_4.wav','BossAr_5.wav','BossAr_6.wav',
   'Queen Stab.wav','Queen Swing.wav','Queen Twirl.wav',
   'QueenLaser.wav','QueenLaserCurved.wav','QueenUnsheathe.wav',
-  'Teleport1.wav','Teleport2.wav','Teleport3.wav',
   'shieldbash.wav','shieldPoundJump.wav','holsterShield.wav',
   'pound1.wav','pound2.wav',
   'poundShield1.wav','poundShield2.wav',
   'poundSingle1.wav','poundSingle2.wav',
   'ReaperAr15ChargeHandle.wav','ReaperAr15MagIn.wav','ReaperAr15MagOut.wav',
   'ReaperArPickup.wav',
-  'MultiToxThrow.ogg','ToxThrow.ogg','ToxExplosionSmooth2.wav',
+  'MultiToxThrow.ogg',
 
   // ────── PLAYER ──────
   'step1.wav','step3.wav','step4.wav','step5.wav',
   'jump.wav',
-  'wallJump1.wav','wallJump2.wav','wallJump3.wav','wallJump4.wav',
   'Dodge 1.wav','Dodge 2.wav','Dodge 3.wav','Dodge 4.wav',
   'rollGeneric.wav',
   'DeathPlayer.wav','defibrilatorZap.wav',
@@ -139,26 +121,21 @@ const SOUND_FILES = [
 
   // ────── UI / FEEDBACK ──────
   'coins1.wav','coins2.wav','coins3.wav',
-  'unlockLoadout.wav','UIfastClick.wav',
   'killfeed.wav','killfeed2.wav','killfeed3.wav',
   'hitmarker3high.wav',
   'BurnNotification.ogg',
-  'RewardText.wav',
 
   // ────── MECÂNICA DE ARMAS ──────
-  'MetalSparkImpact.wav','MetalSparkAudio.wav',
   'flashImpact.wav','FlashBangImproved2.wav',
   'pullPin.wav',
   'closeDoor.wav','openDoorReal.wav',
-  'tossFoley.wav',
   'leatherFoley.wav','ClothFoley.ogg',
   'drop3.wav','drop4.wav','drop8.wav','dropItemInventory.wav',
 
   // ────── IMPACTOS ──────
   'metalImpact.wav','dirtHit.wav','rocksDirt.wav',
-  'stoneDebrisAudio.wav','StoneDebrisImpact.wav',
-  'glassDoorBreak.wav','windowBreak.wav',
-  'woodDoorBreak.wav','shelfBreak.wav',
+  'glassDoorBreak.wav',
+  'shelfBreak.wav',
   'cellDoorBreak.wav',
   'DynamiteExplosion.wav','FragExplosion.wav',
 
@@ -170,7 +147,6 @@ const SOUND_FILES = [
   'pickUpPaper1.wav','pickUpPaper2.wav',
   'pickUpSmg.wav',
   'crackOpenSodaCan.wav',
-  'woodPickup.wav',
 
   // ────── CRAFT ──────
   'craft1.wav','craft2.wav','craft3.wav',
@@ -178,7 +154,6 @@ const SOUND_FILES = [
 
   // ────── AMBIENTE / MUNDO ──────
   'Seamless City Ambient 1.ogg',
-  'Waves seamless ambient.ogg',
   'Menu placeholder ambience.ogg',
   'PyreFire.wav',
   'EngineLoop.wav',
@@ -188,8 +163,6 @@ const SOUND_FILES = [
   'rampUp.wav','rampDown.wav',
   'Flap1.wav','Flap2.wav','Flap3.wav','Flap4.wav',
   'Flap5.wav','Flap6.wav','Flap7.wav','Flap8.wav',
-  'Tape1.wav','Tape2.wav','Tape3.wav',
-  'testShield.wav','TestShotNewShort.wav',
 ];
 
 // ════════ INIT ════════
@@ -215,7 +188,7 @@ export function initAudio() {
   } catch (e) { console.warn('[audio] Web Audio não suportado'); }
 }
 
-// ════════ PRELOAD EM BACKGROUND ════════
+// ════════ PRELOAD ════════
 async function preloadSounds() {
   const CONCURRENCY = 6;
   let idx = 0;
@@ -281,15 +254,9 @@ function playRandomFlat(names, opts = {}) {
 }
 
 export function resumeAudio() { if (ctx && ctx.state === 'suspended') ctx.resume(); }
-export function setMuted(m) {
-  muted = !!m;
-  if (masterGain) masterGain.gain.value = muted ? 0 : volume;
-}
+export function setMuted(m) { muted = !!m; if (masterGain) masterGain.gain.value = muted ? 0 : volume; }
 export function isMuted() { return muted; }
-export function setVolume(v) {
-  volume = Math.max(0, Math.min(1, v));
-  if (masterGain) masterGain.gain.value = muted ? 0 : volume;
-}
+export function setVolume(v) { volume = Math.max(0, Math.min(1, v)); if (masterGain) masterGain.gain.value = muted ? 0 : volume; }
 
 // ════════ FALLBACK PROCEDURAL ════════
 function getNoiseBuffer() {
@@ -350,11 +317,8 @@ function playOsc(t, type, freqStart, freqEnd, peak, decay, duration) {
 }
 function pitchVar() { return 0.94 + Math.random() * 0.12; }
 
-// ════════════════════════════════════════════════════════════
-// API PÚBLICA
-// ════════════════════════════════════════════════════════════
+// ════════ API PÚBLICA ════════
 
-// ===== MELEE =====
 export function playKnifeSwing() {
   if (!ctx) return;
   if (playRandomFlat(['knifePull.wav','metalSwoosh.ogg'], { volume: 0.7 })) return;
@@ -395,7 +359,6 @@ export function playBluntHitFlesh() {
   playNoise(t, 0.15, 'lowpass', 500, 0.4, 0.12);
 }
 
-// ===== FIREARMS =====
 export function playPistol() {
   if (!ctx) return;
   if (playRandom(['Jb1991_1.wav','Jb1991_2.wav','Jb1991_3.wav'], { volume: 1.0 })) return;
@@ -434,8 +397,6 @@ export function playRifle() {
     'AmericanPredator_1.wav','AmericanPredator_2.wav','AmericanPredator_3.wav',
     'Ar16_1.wav','Ar16_2.wav','Ar16_3.wav',
     'M14_1.wav','M14_2.wav','M14_3.wav',
-    'SVTShot1.wav','SVTShot2.wav','SVTShot3.wav',
-    'SvtLmg1.wav','SvtLmg2.wav','SvtLmg3.wav',
   ], { volume: 1.0 })) return;
   const t = ctx.currentTime;
   const p = pitchVar();
@@ -446,7 +407,7 @@ export function playRifle() {
 
 export function playShotgun() {
   if (!ctx) return;
-  if (playRandom(['Spas1.wav','Spas2.wav','Spas3.wav','Trench5.wav','bossPumpShotgun.wav'], { volume: 1.0 })) return;
+  if (playRandom(['Spas1.wav','Spas2.wav','Spas3.wav','bossPumpShotgun.wav'], { volume: 1.0 })) return;
   const t = ctx.currentTime;
   const p = pitchVar();
   playOsc(t, 'sawtooth', 150 * p, 35 * p, 0.55, 0.28, 0.3);
@@ -474,7 +435,7 @@ export function playLauncher() {
 
 export function playBulletImpact() {
   if (!ctx) return;
-  if (playRandom(['metalImpact.wav','dirtHit.wav','rocksDirt.wav','StoneDebrisImpact.wav'], { volume: 0.6 })) return;
+  if (playRandom(['metalImpact.wav','dirtHit.wav','rocksDirt.wav'], { volume: 0.6 })) return;
   const t = ctx.currentTime;
   const p = 0.9 + Math.random() * 0.25;
   playNoise(t, 0.06, 'highpass', 2500 * p, 0.2, 0.05);
@@ -483,16 +444,15 @@ export function playBulletImpact() {
 
 export function playDebrisImpact() {
   if (!ctx) return;
-  if (playRandom(['dirtHit.wav','rocksDirt.wav','metalImpact.wav','StoneDebrisAudio.wav'], { volume: 0.5 })) return;
+  if (playRandom(['dirtHit.wav','rocksDirt.wav','metalImpact.wav'], { volume: 0.5 })) return;
   const t = ctx.currentTime;
   playNoise(t, 0.06, 'lowpass', 1200, 0.22, 0.05);
   playOsc(t, 'square', 200, 90, 0.1, 0.06, 0.07);
 }
 
-// ===== ZOMBIES =====
 export function playZombieDeath() {
   if (!ctx) return;
-  if (playRandom(['zdeath 1.wav','zdeath 2.wav','zdeath 3.wav','Grawl - Fast.wav'], { volume: 0.9 })) return;
+  if (playBuffer('Grawl - Fast.wav', { volume: 0.9 })) return;
   const t = ctx.currentTime;
   playOsc(t, 'sawtooth', 320, 40, 0.18, 0.48, 0.5);
 }
@@ -524,7 +484,6 @@ export function playGroan() {
   autoCleanup(o, [lfo, lfoGain, filter, g], 0.9);
 }
 
-// ===== PLAYER =====
 export function playFootstep() {
   if (!ctx) return;
   if (playRandomFlat(['step1.wav','step3.wav','step4.wav','step5.wav'], { volume: 0.4 })) return;
@@ -549,7 +508,6 @@ export function playRoll() {
 
 export function playWallJump() {
   if (!ctx) return;
-  if (playRandomFlat(['wallJump1.wav','wallJump2.wav','wallJump3.wav','wallJump4.wav'], { volume: 0.8 })) return;
   const t = ctx.currentTime;
   playNoise(t, 0.08, 'lowpass', 600, 0.22, 0.06);
   playOsc(t, 'sine', 300, 600, 0.18, 0.1, 0.12);
@@ -578,7 +536,6 @@ export function playRevive() {
   playOsc(t + 0.12, 'sine', 660, 1320, 0.2, 0.4, 0.45);
 }
 
-// ===== UI / PROGRESS =====
 export function playCoin() {
   if (!ctx) return;
   if (playRandom(['coins1.wav','coins2.wav','coins3.wav'], { volume: 0.7 })) return;
@@ -588,7 +545,6 @@ export function playCoin() {
 
 export function playLevelUp() {
   if (!ctx) return;
-  if (playBuffer('unlockLoadout.wav', { volume: 0.9 })) return;
   const t = ctx.currentTime;
   [523, 659, 784, 1047].forEach((f, i) => {
     const o = ctx.createOscillator();
@@ -606,14 +562,12 @@ export function playLevelUp() {
 
 export function playBuy() {
   if (!ctx) return;
-  if (playBuffer('UIfastClick.wav', { volume: 0.8 })) return;
   const t = ctx.currentTime;
   playOsc(t, 'triangle', 660, 990, 0.2, 0.12, 0.13);
 }
 
 export function playPing() {
   if (!ctx) return;
-  if (playBuffer('UIfastClick.wav', { volume: 0.9, rate: 1.4 })) return;
   const t = ctx.currentTime;
   playOsc(t, 'sine', 1200, 1600, 0.15, 0.1, 0.13);
 }
@@ -630,8 +584,6 @@ export function playReload() {
   playNoise(t + 0.15, 0.05, 'highpass', 2000, 0.12, 0.04);
   playOsc(t + 0.30, 'square', 300, 200, 0.12, 0.05, 0.06);
 }
-
-// ===== NOVOS SONS (para fases futuras) =====
 
 export function playEat() {
   if (!ctx) return;
@@ -659,11 +611,11 @@ export function playBossIntro() {
 }
 export function playWaveStart() {
   if (!ctx) return;
-  playRandom(['WaveStart1.wav','WaveStart2.wav','WaveStart3.wav'], { volume: 0.9 });
+  playRandom(['BossIntro.wav'], { volume: 0.5, rate: 1.3 });
 }
 export function playWaveEnd() {
   if (!ctx) return;
-  playRandom(['WaveEnd1.wav','WaveEnd2.wav','WaveEnd3.wav'], { volume: 0.9 });
+  playBuffer('unlockLoadout.wav', { volume: 0.7 });
 }
 export function playKillFeed() {
   if (!ctx) return;
@@ -683,11 +635,11 @@ export function playDoorClose() {
 }
 export function playDoorBreak() {
   if (!ctx) return;
-  playRandom(['woodDoorBreak.wav','cellDoorBreak.wav','glassDoorBreak.wav'], { volume: 0.9 });
+  playRandom(['cellDoorBreak.wav','glassDoorBreak.wav','shelfBreak.wav'], { volume: 0.9 });
 }
 export function playWindowBreak() {
   if (!ctx) return;
-  playBuffer('windowBreak.wav', { volume: 0.9 });
+  playBuffer('glassDoorBreak.wav', { volume: 0.9, rate: 1.15 });
 }
 export function playHelicopterLoop() {
   if (!ctx) return;
@@ -702,7 +654,6 @@ export function playBrazierFire() {
   playBuffer('PyreFire.wav', { volume: 0.5 });
 }
 
-// ════════ DEBUG ════════
 export function getAudioStatus() {
   return {
     loaded: loadedCount,
