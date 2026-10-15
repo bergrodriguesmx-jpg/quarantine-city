@@ -1179,10 +1179,11 @@ function attack(isRightClick = false) {
     const maxHits = weapon.hitCount || 1;
 
     const precise = raycastLimbs(camOrigin, camForward, range);
-    if (precise) {
+      if (precise) {
       const z = precise.z;
       const part = precise.limb;
       const hitPoint = precise.point.clone();
+      const tc = precise.tc;  
       const isCrit = rollCrit();
       const baseDmg = weapon.damage * state.damageMult * (isRightClick ? 1.3 : 1.0);
       const critMult = CONFIG.crit.damageMultiplier + state.critDamageBonus;
@@ -1192,7 +1193,7 @@ function attack(isRightClick = false) {
       hitDir.subVectors(z.p, camOrigin).setY(0);
       if (hitDir.lengthSq() < 0.0001) hitDir.copy(camForward);
       hitDir.normalize();
-      damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, 'melee');
+     damageZombie(z, dmg, isCrit, part, hitDir, hitPoint, 'melee', tc);
       hitCount++;
       if (maxHits > 1) {
         const minDot = CONFIG.melee.coneDot;
