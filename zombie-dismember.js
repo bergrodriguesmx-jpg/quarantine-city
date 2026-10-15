@@ -1,17 +1,19 @@
 // ============================================================
-// zombie-dismember.js — v1.0 "ZB3 Verlet dismemberment"
+// zombie-dismember.js — v1.1 "coordinate fix + resource cleanup"
 // ============================================================
-// Porte fiel do demo "Zumbi Blocks 3D":
-//   • Limb-based anatomy (cada membro = caixa entre 2 joints)
-//   • Verlet ragdoll com distance constraints iterativos
-//   • Desmembramento por limiar de HP (ratio no top)
-//   • Stumps + gibs físicos + fountains de sangue
+// FIXES v1.1:
+//   • computePose retorna coords LOCAIS (sem z.p, sem yaw)
+//   • computePose tem flag worldSpace para ragdoll
+//   • VerletRagdoll: cria wrapper próprio + clona materiais
+//   • VerletRagdoll.dispose() libera tudo
+//   • VerletRagdoll colide com world.wallColliders
+//   • tryDismember retorna boolean + out param
+//   • Removido código morto (push/findIndex, vars duplicadas)
+//   • Header corrigido (gore na morte, não por threshold)
 // ============================================================
 
 import * as THREE from 'three';
 
-// Anatomia: [LimbID, jointA, jointB, raio]
-// Os índices correspondem aos points do `pose()` do demo.
 export const LIMBS = [
   ['Head',         0,  0, 0.13],
   ['Chest',        1,  2, 0.14],
@@ -31,7 +33,6 @@ export const LIMBS = [
   ['RightFoot',   11, 13, 0.05],
 ];
 
-// Limb → grupo funcional (para gore flag)
 export const L2G = {
   Head: 'Head',
   LeftBiceps: 'BicepsL', LeftForearm: 'ForearmL', LeftHand: 'ForearmL',
@@ -40,7 +41,6 @@ export const L2G = {
   RightThigh: 'LegR', RightShin: 'LegR', RightFoot: 'LegR',
 };
 
-// O que desaparece quando um grupo é cortado
 export const GONE = {
   Head:     ['Head'],
   BicepsL:  ['LeftBiceps', 'LeftForearm', 'LeftHand'],
@@ -51,11 +51,9 @@ export const GONE = {
   LegR:     ['RightThigh', 'RightShin', 'RightFoot'],
 };
 
-// Joint que mostra o coto + joint onde o gib vai nascer
 export const STUMP  = { Head: 1, BicepsL: 1, BicepsR: 1, ForearmL: 4, ForearmR: 6, LegL: 3, LegR: 3 };
 export const GIBEND = { Head: 0, BicepsL: 5, ForearmL: 5, BicepsR: 7, ForearmR: 7, LegL: 9, LegR: 11 };
 
-// Distance constraints do ragdoll
 export const LINKS = [
   [0, 1], [1, 2], [2, 3],
   [1, 4], [4, 5],
@@ -67,11 +65,12 @@ export const LINKS = [
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _tmp = new THREE.Vector3();
-const _tmp2 = new THREE.Vector3();
 
-/**
- * Place: coloca uma mesh entre dois pontos (limb) — auto-escala e auto-orienta
- */
+// Geometria de box compartilhada por TODOS os limbs de TODOS os zumbis
+const SHARED_BOX = new THREE.BoxGeometry(1, 1, 1);
+const SHARED_STUMP_GEO = new THREE.SphereGeometry(0.07, 6, 4);
+export { SHARED_BOX, SHARED_STUMP_GEO };
+
 export function placeLimb(mesh, a, b, radius, isSameJoint) {
   if (isSameJoint) {
     mesh.position.copy(a);
@@ -87,10 +86,11 @@ export function placeLimb(mesh, a, b, radius, isSameJoint) {
 }
 
 /**
- * Pose: computa os 14 joints no espaço mundo, baseado em walk phase, attack, etc.
- * Retorna array de 14 Vector3.
+ * computePose: retorna 14 joints.
+ *   - Modo padrão: coordenadas LOCAIS (para filhos de z.g)
+ *   - Modo worldSpace: coordenadas de mundo (para VerletRagdoll)
  */
-export function computePose(z, out) {
+export function computePose(z, out, worldSpace = false) {
   const L = out || [];
   for (let i = 0; i < 14; i++) {
     if (!L[i]) L[i] = new THREE.Vector3();
@@ -103,136 +103,150 @@ export function computePose(z, out) {
     ? Math.sin(Math.max(0, Math.min(1, z.tmr / 0.7)) * Math.PI)
     : 0;
 
-  // Lean / bob
   const lean = z.state === 'Dying' ? -0.4
              : (aw ? 0.12 : 0.03) + (z.state === 'Stagger' ? -0.14 : 0);
   const bob = z.state === 'Dying' ? 0.2
             : Math.sin(z.ph) * (w ? 1 : 0.12);
   const bodyBounce = w ? Math.abs(bob) * 0.04 : 0;
-  const armReach = aw ? 0.35 + attackPhase * 0.4 : 0.05;
-  const armY = aw ? 1.32 : 1.05;
-
-  const fx = Math.sin(z.yaw);
-  const fz = Math.cos(z.yaw);
-
-  // Helper local→world
-  const push = (xLocal, y, zLocal) => {
-    _tmp.set(
-      z.p.x + xLocal * fz + zLocal * fx,
-      y - bodyBounce,
-      z.p.z - xLocal * fx + zLocal * fz
-    );
-    const idx = L.findIndex(v => v.lengthSq() === 0 && v.y === 0 && v.x === 0 && v.z === 0);
-    // Simplesmente escrevemos direto no slot correspondente
-  };
 
   const sp = Math.sin(z.ph);
   const s = z.state === 'Dying' ? 0.2 : sp * (w ? 1 : 0.12);
-  const b = w ? Math.abs(s) * 0.04 : 0;
   const f = aw ? 0.35 + attackPhase * 0.4 : 0.05;
   const hy = aw ? 1.32 : 1.05;
 
-  // 14 pontos
+  const fx = Math.sin(z.yaw), fz = Math.cos(z.yaw);
+
   const set = (i, xL, y, zL) => {
-    L[i].set(
-      z.p.x + xL * fz + zL * fx,
-      y - b,
-      z.p.z - xL * fx + zL * fz
-    );
+    const yFinal = y - bodyBounce;
+    if (worldSpace) {
+      L[i].set(
+        z.p.x + xL * fz + zL * fx,
+        yFinal,
+        z.p.z - xL * fx + zL * fz
+      );
+    } else {
+      L[i].set(xL, yFinal, zL);
+    }
   };
 
-  set(0,  0,     1.72,        lean + 0.05);   // Head
-  set(1,  0,     1.50,        lean * 0.7);    // Chest
-  set(2,  0,     1.20,        lean * 0.35);   // Stomach
-  set(3,  0,     0.92,        0);             // Hips
-  set(4,  -0.28, hy - 0.03,   lean * 0.7 + f * 1.2 + s * 0.15);  // LeftForearm (biceps→forearm)
-  set(5,  -0.28, hy - 0.03,   lean * 0.7 + f * 1.2 + s * 0.15);  // LeftHand
-  set(6,   0.28, hy - 0.03,   lean * 0.7 + f * 1.1 - s * 0.15);  // RightForearm
-  set(7,   0.28, hy - 0.03,   lean * 0.7 + f * 1.1 - s * 0.15);  // RightHand
-  set(8,  -0.10, 0.5,         s * 0.25);      // LeftShin
-  set(9,  -0.10, Math.max(0, -s) * 0.12, s * 0.45);  // LeftFoot
-  set(10,  0.10, 0.5,        -s * 0.25);      // RightShin
-  set(11,  0.10, Math.max(0, s) * 0.12, -s * 0.45);  // RightFoot
-  set(12, -0.10, Math.max(0, -s) * 0.12,  s * 0.45 + 0.18); // LeftToe
-  set(13,  0.10, Math.max(0, s) * 0.12,  -s * 0.45 + 0.18); // RightToe
+  set(0,  0,     1.72,        lean + 0.05);
+  set(1,  0,     1.50,        lean * 0.7);
+  set(2,  0,     1.20,        lean * 0.35);
+  set(3,  0,     0.92,        0);
+  set(4,  -0.28, hy - 0.03,   lean * 0.7 + f * 1.2 + s * 0.15);
+  set(5,  -0.28, hy - 0.03,   lean * 0.7 + f * 1.2 + s * 0.15);
+  set(6,   0.28, hy - 0.03,   lean * 0.7 + f * 1.1 - s * 0.15);
+  set(7,   0.28, hy - 0.03,   lean * 0.7 + f * 1.1 - s * 0.15);
+  set(8,  -0.10, 0.5,         s * 0.25);
+  set(9,  -0.10, Math.max(0, -s) * 0.12, s * 0.45);
+  set(10,  0.10, 0.5,        -s * 0.25);
+  set(11,  0.10, Math.max(0, s) * 0.12, -s * 0.45);
+  set(12, -0.10, Math.max(0, -s) * 0.12,  s * 0.45 + 0.18);
+  set(13,  0.10, Math.max(0, s) * 0.12,  -s * 0.45 + 0.18);
 
   return L;
 }
 
-/**
- * Aplica pose nos meshes (limbs + neck).
- */
 export function renderFigure(ps, limbs, neck, gone) {
   for (let i = 0; i < LIMBS.length; i++) {
     const l = LIMBS[i];
-    if (gone[l[0]]) continue;
+    if (gone[l[0]]) {
+      if (limbs[i].visible) limbs[i].visible = false;
+      continue;
+    }
+    if (!limbs[i].visible) limbs[i].visible = true;
     placeLimb(limbs[i], ps[l[1]], ps[l[2]], l[3], l[1] === l[2]);
   }
-  neck.visible = !gone.Head;
-  if (!gone.Head) placeLimb(neck, ps[0], ps[1], 0.04, false);
+  if (neck) {
+    const visible = !gone.Head;
+    if (neck.visible !== visible) neck.visible = visible;
+    if (visible) placeLimb(neck, ps[0], ps[1], 0.04, false);
+  }
 }
 
 // ════════════════════════════════════════════════════════════
-// VERLET RAGDOLL
+// VERLET RAGDOLL v1.1
 // ════════════════════════════════════════════════════════════
 export class VerletRagdoll {
-  constructor(zombie, hitDir) {
+  constructor(zombie, hitDir, scene, world) {
+    this.scene = scene;
+    this.world = world;
     this.life = 25;
-    this.settled = false;
-    this.fadeProgress = 0;
+    this._clonedMats = [];
+    this._limbs = [];
+    this._stumps = [];
+    this._neckClone = null;
 
-    // Pose inicial (congela)
-    this.P = computePose(zombie).map(v => v.clone());
-    const vel = hitDir.clone().setY(0).normalize().multiplyScalar(4 + Math.random() * 4);
+    // Pose em WORLD coords (ragdoll não usa wrapper rotacionado)
+    this.P = computePose(zombie, null, true).map(v => v.clone());
+
+    // Velocidade inicial
+    const vel = hitDir.clone().setY(0);
+    if (vel.lengthSq() < 0.001) vel.set(1, 0, 0);
+    vel.normalize().multiplyScalar(4 + Math.random() * 4);
     vel.y = 2 + Math.random() * 3;
 
-    // Pose anterior = atual - velocity * dt
-    this.O = this.P.map(p => p.clone().addScaledVector(vel, -1/60).add(
+    // Pose anterior = atual - v * dt
+    this.O = this.P.map(p => p.clone().addScaledVector(vel, -1 / 60).add(
       new THREE.Vector3(
-        (Math.random()-0.5)*0.02,
-        Math.random()*0.03,
-        (Math.random()-0.5)*0.02
+        (Math.random() - 0.5) * 0.02,
+        Math.random() * 0.03,
+        (Math.random() - 0.5) * 0.02
       )
     ));
 
-    // Lengths originais
     this.K = LINKS.map(([i, j]) => [i, j, this.P[i].distanceTo(this.P[j])]);
 
-    // Dead joints (removidos)
     this.dead = new Set();
     for (const l of LIMBS) {
       if (zombie.gone[l[0]]) this.dead.add(l[2]);
     }
 
-    // Blood fountains (dos stumps)
+    // ── Remove zombie.g da cena (ele continua na memória até ser GC) ──
+    if (zombie.g && zombie.g.parent) zombie.g.parent.remove(zombie.g);
+
+    // ── Clona limbs como filhos diretos da cena ──
+    for (let i = 0; i < LIMBS.length; i++) {
+      const l = LIMBS[i];
+      if (zombie.gone[l[0]]) continue;
+      const oldLimb = zombie.limbs[i];
+      const matClone = oldLimb.material.clone();
+      const clone = new THREE.Mesh(SHARED_BOX, matClone);
+      clone.castShadow = true;
+      clone.position.copy(this.P[l[1]]);
+      scene.add(clone);
+      this._limbs.push({ mesh: clone, idxA: l[1], idxB: l[2], radius: l[3], isSame: l[1] === l[2] });
+      this._clonedMats.push(matClone);
+    }
+
+    // ── Clona pescoço ──
+    if (!zombie.gone.Head && zombie.neck) {
+      const neckMat = zombie.neck.material.clone();
+      this._neckClone = new THREE.Mesh(SHARED_BOX, neckMat);
+      this._neckClone.castShadow = true;
+      this._neckClone.position.copy(this.P[0]);
+      scene.add(this._neckClone);
+      this._clonedMats.push(neckMat);
+    }
+
+    // ── Stumps (usa geometria compartilhada) ──
+    const stumpMat = new THREE.MeshLambertMaterial({ color: 0x8b1a1a });
+    this._clonedMats.push(stumpMat);
+    for (const g of zombie.gore) {
+      const s = new THREE.Mesh(SHARED_STUMP_GEO, stumpMat);
+      s.position.copy(this.P[STUMP[g]]);
+      scene.add(s);
+      this._stumps.push({ mesh: s, jointIdx: STUMP[g] });
+    }
+
+    // ── Blood fountains ──
     this.fnt = [];
     for (const g of zombie.gore) {
       this.fnt.push({ pt: STUMP[g], t: 1.6 });
     }
-
-    // Mesh visual (copia a hierarquia do zombie procedural)
-    this.wrapper = zombie.g;              // Reutiliza o Group do próprio zombie
-    this.limbs   = zombie.limbs;
-    this.neck    = zombie.neck;
-    this.gone    = zombie.gone;
-
-    // Stumps
-    this.stumps = [];
-    for (const g of zombie.gore) {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 4), RED_MAT);
-      this.wrapper.add(s);
-      this.stumps.push([s, STUMP[g]]);
-    }
-
-    // Esconder prop/dot
-    if (zombie.prop) zombie.prop.visible = false;
-    if (zombie.dot)  zombie.dot.visible  = false;
-    for (let i = 0; i < LIMBS.length; i++) {
-      if (zombie.gone[LIMBS[i][0]]) this.limbs[i].visible = false;
-    }
   }
 
-  update(dt, bloodEmitter, gibEmitter) {
+  update(dt, bloodEmitter) {
     if (this.life <= 0) return true;
     this.life -= dt;
 
@@ -240,27 +254,30 @@ export class VerletRagdoll {
     const step = dt / sub;
     for (let s = 0; s < sub; s++) this._substep(step);
 
-    // Stumps seguem os joints
-    for (const [m, i] of this.stumps) m.position.copy(this.P[i]);
-
     // Render
-    renderFigure(this.P, this.limbs, this.neck, this.gone);
+    for (const l of this._limbs) {
+      placeLimb(l.mesh, this.P[l.idxA], this.P[l.idxB], l.radius, l.isSame);
+    }
+    if (this._neckClone) placeLimb(this._neckClone, this.P[0], this.P[1], 0.04, false);
+
+    // Stumps seguem
+    for (const s of this._stumps) s.mesh.position.copy(this.P[s.jointIdx]);
 
     // Blood fountains
-    for (const f of this.fnt) {
-      if ((f.t -= dt) > 0 && bloodEmitter && Math.random() < 0.4) {
-        bloodEmitter(this.P[f.pt], true);
+    if (bloodEmitter) {
+      for (const f of this.fnt) {
+        if ((f.t -= dt) > 0 && Math.random() < 0.4) {
+          bloodEmitter(this.P[f.pt], true);
+        }
       }
     }
 
     // Fade no fim da vida
     if (this.life < 2) {
       const op = Math.max(0, this.life / 2);
-      for (const l of this.limbs) {
-        if (l.material) {
-          l.material.transparent = true;
-          l.material.opacity = op;
-        }
+      for (const m of this._clonedMats) {
+        m.transparent = true;
+        m.opacity = op;
       }
     }
 
@@ -280,34 +297,60 @@ export class VerletRagdoll {
       p.x += vx;
       p.y += vy - 14 * dt * dt;
       p.z += vz;
+
       // Colisão com chão
       if (p.y < 0) { p.y = 0; o.y = 0; o.x = p.x - vx * 0.6; o.z = p.z - vz * 0.6; }
+
+      // Colisão com paredes (AABB)
+      if (this.world && this.world.wallColliders) {
+        for (let wi = 0; wi < this.world.wallColliders.length; wi++) {
+          const box = this.world.wallColliders[wi];
+          if (p.x > box.minX && p.x < box.maxX &&
+              p.z > box.minZ && p.z < box.maxZ &&
+              p.y < 4) {
+            const dL = p.x - box.minX;
+            const dR = box.maxX - p.x;
+            const dU = p.z - box.minZ;
+            const dD = box.maxZ - p.z;
+            const minD = Math.min(dL, dR, dU, dD);
+            if (minD === dL) p.x = box.minX - 0.05;
+            else if (minD === dR) p.x = box.maxX + 0.05;
+            else if (minD === dU) p.z = box.minZ - 0.05;
+            else p.z = box.maxZ + 0.05;
+          }
+        }
+      }
     }
 
-    // Distance constraints (5 iterações)
+    // Constraints iterativas
     for (let it = 0; it < 5; it++) {
       for (let k = 0; k < this.K.length; k++) {
         const [i, j, len] = this.K[k];
         if (this.dead.has(i) || this.dead.has(j)) continue;
         const a = P[i], b = P[j];
-        _tmp.subVectors(b, a);
-        const l = _tmp.length() || 1;
+        const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+        const l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
         const df = ((l - len) / l) * 0.5;
-        a.addScaledVector(_tmp, df);
-        b.addScaledVector(_tmp, -df);
+        a.x += dx * df; a.y += dy * df; a.z += dz * df;
+        b.x -= dx * df; b.y -= dy * df; b.z -= dz * df;
       }
     }
   }
 
   dispose() {
-    // Nada a fazer — o wrapper é o Group do próprio zombie, o game.js cuida
+    for (const l of this._limbs) this.scene.remove(l.mesh);
+    if (this._neckClone) this.scene.remove(this._neckClone);
+    for (const s of this._stumps) this.scene.remove(s.mesh);
+    for (const m of this._clonedMats) m.dispose();
+    this._clonedMats = [];
+    this._limbs = [];
+    this._stumps = [];
+    this._neckClone = null;
   }
 }
 
-const RED_MAT = new THREE.MeshLambertMaterial({ color: 0x8b1a1a });
-
 // ════════════════════════════════════════════════════════════
-// GIB em física (para membros arrancados)
+// LIMB GIB (voador)
 // ════════════════════════════════════════════════════════════
 export class LimbGib {
   constructor(mesh, initialPos, hitDir, length) {
@@ -343,14 +386,14 @@ export class LimbGib {
   }
   dispose(scene) {
     scene.remove(this.mesh);
-    if (this.mesh.geometry) this.mesh.geometry.dispose();
+    // NÃO dispose geometria (compartilhada com o zombie) nem material (cacheado)
   }
 }
 
 // ════════════════════════════════════════════════════════════
-// Helper: tenta desmembrar baseado em ratio de HP
+// tryDismember — retorna boolean, escreve o grupo em out
 // ════════════════════════════════════════════════════════════
-export function tryDismember(zombie, limbId, isExplosion) {
+export function tryDismember(zombie, limbId, isExplosion, out) {
   if (zombie.state === 'Dying') return false;
   const ratio = zombie.top / zombie.max;
   let shouldCut = false;
@@ -365,5 +408,6 @@ export function tryDismember(zombie, limbId, isExplosion) {
   if (!shouldCut) return false;
   const group = L2G[limbId];
   if (!group) return false;
-  return group;
+  if (out) out.group = group;
+  return true;
 }
