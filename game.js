@@ -1,11 +1,13 @@
 // ============================================================
-// game.js — v17 "ZB3 Fixed"
+// game.js — v17 "ZB3 Fixed" + hotfixes de gameplay
 // ============================================================
 // Integra:
 //   • Sistema ZB3 de desmembramento (Verlet + gibs + stumps)
 //   • ZB2 Zombie Systems (LOD 3-state + população por POI)
 //   • Correções: raycast O(1), transform local, material clone,
 //     dispose completo, hp/health, spawn robusto
+//   • Hotfix: reach = isGrounded (zumbis atacam), attackPermission
+//     agora respeita limite de atacantes simultâneos
 // ============================================================
 
 import * as THREE from 'three';
@@ -981,7 +983,7 @@ function raycastLimbs(origin, dir, maxDist) {
     s: bestS,
     z: bestZ,
     limb: bestLimb,
-    tc: bestTc,                       // ← NOVO
+    tc: bestTc,
     point: tmpP.clone(),
   };
 }
@@ -1183,7 +1185,7 @@ function attack(isRightClick = false) {
       const z = precise.z;
       const part = precise.limb;
       const hitPoint = precise.point.clone();
-      const tc = precise.tc;  
+      const tc = precise.tc;
       const isCrit = rollCrit();
       const baseDmg = weapon.damage * state.damageMult * (isRightClick ? 1.3 : 1.0);
       const critMult = CONFIG.crit.damageMultiplier + state.critDamageBonus;
@@ -2022,7 +2024,9 @@ const POP_TICK_INTERVAL = 2.0;
 const _TMP = new THREE.Vector3();
 function updateZombies(dt) {
   const now = performance.now() / 1000;
-  state.attackPermission.recentAttackers.clear();
+  // FIX: NÃO limpar recentAttackers aqui — o mapa precisa sobreviver entre
+  // frames para o limite de "máx. atacantes simultâneos" funcionar.
+  // A expiração é feita dentro de zombieCanAttack().
 
   _lodTickAccum += dt;
   if (_lodTickAccum >= LOD_TICK_INTERVAL) {
@@ -2093,6 +2097,9 @@ function updateZombies(dt) {
 
     if (z.ai === 'Idle' && z.target) z.ai = 'Chase';
     if (!z.target) z.ai = 'Idle';
+    // FIX: usar isGrounded em vez de player.position.y < 1.2
+    // (o player está sempre em y ≈ 1.7, então a condição antiga era sempre false
+    //  e o zumbi nunca entrava em Combat → nunca atacava)
     const reach = state.isGrounded;
     if (z.ai === 'Chase' && reach && d < 2.2) z.ai = 'Combat';
     else if (z.ai === 'Combat' && (d > 2.2 || !reach)) z.ai = 'Chase';
@@ -2770,4 +2777,4 @@ document.addEventListener('keyup', e => {
 });
 window.addEventListener('beforeunload', () => playerStats.clear());
 
-console.log('[game] ✅ v17 "ZB3 Fixed" carregado.');
+console.log('[game] ✅ v17 "ZB3 Fixed" + hotfixes carregado.');
