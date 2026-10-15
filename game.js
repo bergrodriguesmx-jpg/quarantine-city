@@ -30,6 +30,7 @@ import { initStuckState, updateStuckDetection } from './src/core/zombie-stuck.js
 import { Weapon3DView } from './src/render/viewmodel-3d.js';
 import { spawnPickup3D, updatePickups3D, clearPickups3D } from './src/render/pickup-3d.js';
 import { WeaponCalibrator } from './src/render/weapon-calibrator.js';
+// Gibs GLB opcionais — versão procedural, nunca quebra
 import { preloadGibs } from './gib-models.js';
 import { preloadGibGLBs } from './gib-glb.js';
 import { preloadCharacters, createCharacter } from './character-models.js';
