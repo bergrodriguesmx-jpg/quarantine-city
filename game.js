@@ -52,9 +52,10 @@ import {
 } from './zb2-zombie-systems.js';
 
 import {
-  LIMBS, L2G, GONE, STUMP, GIBEND,
+  LIMBS, L2G, GONE, STUMP, GIBEND, GROUP_CFG, LIMB_IDX,
   computePose, renderFigure,
   VerletRagdoll, LimbGib, tryDismember,
+  raySegmentHitFull,
   SHARED_BOX, SHARED_STUMP_GEO,
 } from './zombie-dismember.js';
 
