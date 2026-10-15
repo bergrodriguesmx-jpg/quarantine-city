@@ -1,35 +1,20 @@
 // ============================================================
-// zombie-dismember.js — v1.2 "New zombie model"
+// zombie-dismember.js — v2.0 "Precise cut"
 // ============================================================
-// NOVO v1.2:
-//   • Esqueleto com 18 joints (ombros e quadris próprios, cotovelo e
-//     pulso separados)
-//   • Animação com IK de 2 ossos: braços e pernas NÃO esticam, joelhos
-//     dobram para a frente, cotovelos para baixo/trás
-//   • Corcunda, cabeça tombada, assimetria por z.walkStyle (perna
-//     arrastando, um braço mais alto), balanço de quadril, passo
-//   • Geometria arredondada/afunilada (lathe) com extremidades
-//     sobrepostas, sem quinas nas dobras
-//   • Roupa por região (camisa, calça, sapato, pele), variação por
-//     zumbi (sem manga, bermuda, descalço, cabelo), rosto com olhos
-//     brilhantes e boca
-//   • Ragdoll clona a geometria de cada limb (inclusive rosto),
-//     dorme quando para (economiza CPU)
-//   • computePose/NJ/localToWorldPose exportados para raycast e gibs
-//
-// JOINTS (NJ = 18):
-//   0 cabeça      1 base do pescoço   2 barriga     3 quadril
-//   4 cotovelo E  5 pulso E           6 cotovelo D  7 pulso D
-//   8 joelho E    9 tornozelo E      10 joelho D   11 tornozelo D
-//  12 ponta pé E 13 ponta pé D       14 ombro E    15 ombro D
-//  16 quadril E  17 quadril D
+// NOVO v2.0:
+//   • Corte PRECISO no ponto de impacto (não mais por joint inteiro)
+//   • Cada limb pode ser cortado em qualquer t (0..1)
+//   • Stump spawna no ponto exato do corte
+//   • Gib contém só a parte decepada (do corte até a ponta do membro)
+//   • renderFigure respeita cortes parciais
+//   • VerletRagdoll honra cortes (limb encurtado visualmente)
+//   • raySegmentHitFull() exportado — retorna { s, tc }
 // ============================================================
 
 import * as THREE from 'three';
 
 export const NJ = 18;
 
-// [LimbID, jointA, jointB, raio]
 export const LIMBS = [
   ['Head',         0,  0, 0.15],
   ['Chest',        1,  2, 0.17],
@@ -49,6 +34,10 @@ export const LIMBS = [
   ['RightFoot',   11, 13, 0.06],
 ];
 
+// Index no array LIMBS (pra acessar .mesh)
+const LIMB_IDX = {};
+for (let i = 0; i < LIMBS.length; i++) LIMB_IDX[LIMBS[i][0]] = i;
+
 export const L2G = {
   Head: 'Head',
   LeftBiceps: 'BicepsL', LeftForearm: 'ForearmL', LeftHand: 'ForearmL',
@@ -67,9 +56,23 @@ export const GONE = {
   LegR:     ['RightThigh', 'RightShin', 'RightFoot'],
 };
 
-// Joint onde nasce o coto / joint onde termina o membro arrancado
-export const STUMP  = { Head: 1, BicepsL: 14, BicepsR: 15, ForearmL: 4, ForearmR: 6, LegL: 16, LegR: 17 };
-export const GIBEND = { Head: 0, BicepsL: 5,  ForearmL: 5,  BicepsR: 7, ForearmR: 7, LegL: 9,  LegR: 11 };
+// Config de corte por grupo:
+//   startLimb = primeiro limb do grupo (onde nasce o corte quando corta no lugar errado)
+//   endJoint  = joint final (usado pra direção do gib)
+//   limbOrder = ordem hierárquica top-down
+export const GROUP_CFG = {
+  Head:     { startLimb: 'Head',        endJoint: 0,  chain: ['Head'],                                    topJoint: 1 },
+  BicepsL:  { startLimb: 'LeftBiceps',  endJoint: 5,  chain: ['LeftBiceps','LeftForearm','LeftHand'],    topJoint: 14 },
+  ForearmL: { startLimb: 'LeftForearm', endJoint: 5,  chain: ['LeftForearm','LeftHand'],                 topJoint: 4 },
+  BicepsR:  { startLimb: 'RightBiceps', endJoint: 7,  chain: ['RightBiceps','RightForearm','RightHand'], topJoint: 15 },
+  ForearmR: { startLimb: 'RightForearm',endJoint: 7,  chain: ['RightForearm','RightHand'],               topJoint: 6 },
+  LegL:     { startLimb: 'LeftThigh',   endJoint: 12, chain: ['LeftThigh','LeftShin','LeftFoot'],        topJoint: 16 },
+  LegR:     { startLimb: 'RightThigh',  endJoint: 13, chain: ['RightThigh','RightShin','RightFoot'],     topJoint: 17 },
+};
+
+// Compatibilidade: STUMP/GIBEND apontam pro joint inicial/final de cada grupo
+export const STUMP  = { Head: 1,  BicepsL: 14, BicepsR: 15, ForearmL: 4,  ForearmR: 6,  LegL: 16, LegR: 17 };
+export const GIBEND = { Head: 0,  BicepsL: 5,  BicepsR: 7,  ForearmL: 5,  ForearmR: 7,  LegL: 12, LegR: 13 };
 
 export const LINKS = [
   [0, 1], [1, 2], [2, 3],
@@ -89,12 +92,10 @@ function lathe(profile, seg = 8) {
   return new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), seg);
 }
 
-// Cápsula unitária (altura 1, raio 0.5), pontas arredondadas
 export const CAPSULE_GEO = lathe([
   [0, -0.5], [0.30, -0.47], [0.46, -0.40], [0.5, -0.30],
   [0.5, 0.30], [0.46, 0.40], [0.30, 0.47], [0, 0.5],
 ]);
-// Afunilada: larga no início (jointA), estreita no fim (jointB)
 export const TAPER_GEO = lathe([
   [0, -0.5], [0.30, -0.47], [0.46, -0.40], [0.5, -0.30],
   [0.36, 0.30], [0.33, 0.40], [0.22, 0.47], [0, 0.5],
@@ -102,9 +103,8 @@ export const TAPER_GEO = lathe([
 export const SPHERE_GEO = new THREE.SphereGeometry(0.5, 10, 8);
 const BOX_GEO = new THREE.BoxGeometry(1, 1, 1);
 
-// Mantidos por compatibilidade com o game.js
 export const SHARED_BOX = BOX_GEO;
-export const SHARED_STUMP_GEO = new THREE.SphereGeometry(0.07, 6, 4);
+export const SHARED_STUMP_GEO = new THREE.SphereGeometry(0.075, 8, 6);
 
 const GEO_BY_LIMB = {
   Head: SPHERE_GEO, Hips: SPHERE_GEO,
@@ -117,13 +117,11 @@ const GEO_BY_LIMB = {
   RightThigh: TAPER_GEO, RightShin: TAPER_GEO,
 };
 
-// Achatamento em profundidade (torso mais largo que fundo)
 const SQUASH = { Chest: 0.70, Stomach: 0.75, Hips: 0.85 };
 const LIMB_SQUASH = LIMBS.map(l => SQUASH[l[0]] || 1);
 
 /**
- * placeLimb: coloca a mesh entre dois joints.
- * Extremidades se sobrepõem em radius*0.6 para esconder as juntas.
+ * placeLimb: posiciona mesh entre dois joints.
  */
 export function placeLimb(mesh, a, b, radius, isSameJoint, squash = 1) {
   if (isSameJoint) {
@@ -133,7 +131,7 @@ export function placeLimb(mesh, a, b, radius, isSameJoint, squash = 1) {
   } else {
     _tmp.subVectors(b, a);
     const dist = _tmp.length();
-    const len = dist + radius * 1.2;
+    const len = dist + radius * 1.1;
     mesh.position.copy(a).addScaledVector(_tmp, 0.5);
     mesh.scale.set(radius * 2, len, radius * 2 * squash);
     mesh.quaternion.setFromUnitVectors(UP, _tmp.divideScalar(dist || 1));
@@ -141,7 +139,7 @@ export function placeLimb(mesh, a, b, radius, isSameJoint, squash = 1) {
 }
 
 // ════════════════════════════════════════════════════════════
-// CONSTRUÇÃO DO MODELO (substitui createZombieMesh do game.js)
+// CONSTRUÇÃO DO MODELO
 // ════════════════════════════════════════════════════════════
 const SHIRTS = [0x5b6b7a, 0x7a5b4a, 0x4d6b4a, 0x8a8a7a, 0x6b4a5b, 0x3f4f6b, 0x9a8f6a, 0x7a2f2f, 0x2f2f33];
 const PANTS  = [0x2f3a4f, 0x3a3a32, 0x4a3f33, 0x2a2a2a, 0x40506a, 0x55503a];
@@ -154,14 +152,14 @@ function lambert(hex) {
   if (!m) { m = new THREE.MeshLambertMaterial({ color: hex }); _matCache.set(hex, m); }
   return m;
 }
-const EYE_MAT   = new THREE.MeshBasicMaterial({ color: 0xf2e85a });
+const EYE_MAT   = new THREE.MeshBasicMaterial({ color: 0xf8ea5a });
 const MOUTH_MAT = new THREE.MeshBasicMaterial({ color: 0x1a0505 });
 
 const _pick = (arr) => arr[(Math.random() * arr.length) | 0];
 
-export function buildZombieModel(skinColor = 0x86bd55, typeKey = 'pt') {
+export function buildZombieModel(skinColor = 0x8ec253, typeKey = 'pt') {
   const shade = (((Math.random() * 5) | 0) - 2) * 0.03;
-  const skin  = lambert(new THREE.Color(skinColor).offsetHSL(0, 0, shade).getHex());
+  const skin  = lambert(new THREE.Color(skinColor).offsetHSL(0, 0.05, shade).getHex());
   const shirt = lambert(_pick(SHIRTS));
   const pants = lambert(_pick(PANTS));
   const shoe  = Math.random() < 0.25 ? skin : lambert(_pick(SHOES));
@@ -178,29 +176,29 @@ export function buildZombieModel(skinColor = 0x86bd55, typeKey = 'pt') {
     else if (/Biceps/.test(id))             mat = sleeveless ? skin : shirt;
     else if (/Shin/.test(id))               mat = shorts ? skin : pants;
     else if (/Thigh|Hips/.test(id))         mat = pants;
-    else                                    mat = shirt; // Chest, Stomach
+    else                                    mat = shirt;
     const m = new THREE.Mesh(GEO_BY_LIMB[id], mat);
     m.castShadow = true;
     g.add(m);
     return m;
   });
 
-  // ── Rosto (filhos da cabeça, em espaço unitário de raio 0.5) ──
+  // Rosto (filhos da cabeça, espaço unitário de raio 0.5)
   const head = limbs[0];
   for (const sx of [-1, 1]) {
     const eye = new THREE.Mesh(SPHERE_GEO, EYE_MAT);
-    eye.scale.setScalar(0.17);
-    eye.position.set(sx * 0.17, 0.10, 0.43);
+    eye.scale.setScalar(0.18);
+    eye.position.set(sx * 0.18, 0.11, 0.44);
     head.add(eye);
   }
   const mouth = new THREE.Mesh(BOX_GEO, MOUTH_MAT);
-  mouth.scale.set(0.34, 0.07, 0.10);
-  mouth.position.set(0, -0.20, 0.44);
+  mouth.scale.set(0.36, 0.08, 0.12);
+  mouth.position.set(0, -0.22, 0.44);
   head.add(mouth);
   if (hairMat) {
     const hair = new THREE.Mesh(SPHERE_GEO, hairMat);
-    hair.scale.set(1.06, 0.42, 1.06);
-    hair.position.set(0, 0.27, -0.04);
+    hair.scale.set(1.06, 0.44, 1.06);
+    hair.position.set(0, 0.28, -0.04);
     head.add(hair);
   }
 
@@ -208,17 +206,59 @@ export function buildZombieModel(skinColor = 0x86bd55, typeKey = 'pt') {
   neck.castShadow = true;
   g.add(neck);
 
-  g.userData = { limbs, neck, gone: {}, gore: new Set(), skinColor, typeKey };
+  g.userData = { limbs, neck, gone: {}, gore: new Set(), skinColor, typeKey, cuts: {} };
   return g;
 }
 
 // ════════════════════════════════════════════════════════════
-// POSE (IK de 2 ossos)
+// RAY-SEGMENT (retorna t do raio E tc do segmento)
+// ════════════════════════════════════════════════════════════
+const _rsp = new THREE.Vector3(), _rsq = new THREE.Vector3();
+
+/**
+ * Retorna { s, tc } ou null.
+ *   s  = distância do raio
+ *   tc = posição 0..1 ao longo do segmento (a→b)
+ */
+export function raySegmentHitFull(ro, rd, a, b, radius, minT = 0.1, maxT = Infinity) {
+  const vx = b.x - a.x, vy = b.y - a.y, vz = b.z - a.z;
+  const wx = ro.x - a.x, wy = ro.y - a.y, wz = ro.z - a.z;
+  const ux = rd.x, uy = rd.y, uz = rd.z;
+
+  const d2 = ux * vx + uy * vy + uz * vz;
+  const d3 = vx * vx + vy * vy + vz * vz;
+  const d4 = ux * wx + uy * wy + uz * wz;
+  const d5 = vx * wx + vy * wy + vz * wz;
+
+  const denom = d3 - d2 * d2;
+  let sc, tc;
+  if (denom > 1e-6) {
+    sc = (d2 * d5 - d3 * d4) / denom;
+    tc = (d5 - d2 * d4) / denom;
+  } else {
+    sc = 0;
+    tc = d5 / d3;
+  }
+
+  if (sc < 0) { sc = 0; tc = d5 / d3; }
+  if (tc < 0) { tc = 0; sc = -d4; }
+  else if (tc > 1) { tc = 1; sc = d2 - d4; }
+
+  if (sc < minT || sc > maxT) return null;
+
+  const px = ro.x + ux * sc, py = ro.y + uy * sc, pz = ro.z + uz * sc;
+  const qx = a.x + vx * tc, qy = a.y + vy * tc, qz = a.z + vz * tc;
+  const dx = px - qx, dy = py - qy, dz = pz - qz;
+  if (dx*dx + dy*dy + dz*dz > radius * radius) return null;
+  return { s: sc, tc };
+}
+
+// ════════════════════════════════════════════════════════════
+// POSE (IK 2 ossos) — LOCAL por padrão, WORLD se worldSpace=true
 // ════════════════════════════════════════════════════════════
 const _u = new THREE.Vector3(), _w = new THREE.Vector3();
 const _t = new THREE.Vector3(), _pole = new THREE.Vector3();
 
-/** Resolve root→mid→end com ossos l1, l2. end é limitado ao alcance. */
 function ik2(root, target, l1, l2, pole, midOut, endOut) {
   _u.subVectors(target, root);
   const d = _u.length() || 1e-4;
@@ -238,35 +278,29 @@ function armIK(L, side, aware, atk, lean, swing, raise, dying) {
   const elbow = L[side < 0 ? 4 : 6];
   const wrist = L[side < 0 ? 5 : 7];
   if (aware) {
-    _t.set(side * 0.19,
-           1.16 + raise + atk * 0.16 + (dying ? 0.3 : 0),
-           0.50 + lean * 0.5 + atk * 0.22 + swing * 0.04);
+    _t.set(side * 0.20,
+           1.20 + raise + atk * 0.18 + (dying ? 0.32 : 0),
+           0.52 + lean * 0.5 + atk * 0.24 + swing * 0.05);
     _pole.set(side * 0.6, -1, 0);
   } else {
-    _t.set(side * 0.25, 0.88, 0.06 + swing * 0.14 + lean * 0.4);
+    _t.set(side * 0.26, 0.90, 0.07 + swing * 0.15 + lean * 0.4);
     _pole.set(side * 0.4, -0.3, -1);
   }
-  ik2(S, _t, 0.30, 0.28, _pole, elbow, wrist);
+  ik2(S, _t, 0.31, 0.29, _pole, elbow, wrist);
 }
 
 function legIK(L, hip, knee, ankle, toe, phase, amp, drag) {
   const H = L[hip];
-  const stride = 0.26 * amp * (1 - 0.5 * drag);
-  const lift   = Math.max(0, Math.cos(phase)) * 0.13 * amp * (1 - 0.7 * drag);
+  const stride = 0.28 * amp * (1 - 0.5 * drag);
+  const lift   = Math.max(0, Math.cos(phase)) * 0.14 * amp * (1 - 0.7 * drag);
   _t.set(H.x, 0.08 + lift, Math.sin(phase) * stride + 0.02);
-  _pole.set(0, 0, 1); // joelho dobra para a frente
-  ik2(H, _t, 0.45, 0.43, _pole, L[knee], L[ankle]);
+  _pole.set(0, 0, 1);
+  ik2(H, _t, 0.46, 0.44, _pole, L[knee], L[ankle]);
   L[toe].set(L[ankle].x,
              Math.max(0.045, L[ankle].y - 0.025 + lift * 0.4),
-             L[ankle].z + 0.17);
+             L[ankle].z + 0.19);
 }
 
-/**
- * computePose: retorna NJ joints.
- *   worldSpace=false → LOCAL (filhos de z.g)
- *   worldSpace=true  → MUNDO (ragdoll)
- * Passe `out` próprio por zumbi (não compartilhe o array entre zumbis!)
- */
 export function computePose(z, out, worldSpace = false) {
   const L = out || [];
   for (let i = 0; i < NJ; i++) if (!L[i]) L[i] = new THREE.Vector3();
@@ -287,23 +321,19 @@ export function computePose(z, out, worldSpace = false) {
   const twist = sn * 0.05 * amp;
   const tilt  = (ws - 0.5) * 0.14;
 
-  // Coluna (corcunda: cabeça bem à frente dos ombros)
   L[3].set(sway,        0.92 + dip, 0);
   L[2].set(sway * 0.5,  1.18 + dip, lean * 0.30);
   L[1].set(0,           1.42 + dip, lean * 0.62);
   L[0].set(tilt,        1.60 + dip, lean + 0.09 + atk * 0.14);
-  // Ombros e quadris
   L[14].set(-0.21,        1.40 + dip, lean * 0.55 + twist);
   L[15].set( 0.21,        1.40 + dip, lean * 0.55 - twist);
   L[16].set(-0.11 + sway, 0.90 + dip, 0);
   L[17].set( 0.11 + sway, 0.90 + dip, 0);
 
-  // Braços
   const raise = (ws - 0.5) * 0.25;
   armIK(L, -1, aware, atk, lean,  sn * amp,  raise, dying);
   armIK(L,  1, aware, atk, lean, -sn * amp, -raise, dying);
 
-  // Pernas (uma pode arrastar, conforme walkStyle)
   const dragL = ws > 0.7 ? (ws - 0.7) / 0.3 : 0;
   const dragR = ws < 0.3 ? (0.3 - ws) / 0.3 : 0;
   legIK(L, 16, 8,  9,  12, ph,           amp, dragL);
@@ -320,7 +350,6 @@ export function computePose(z, out, worldSpace = false) {
   return L;
 }
 
-/** Converte uma pose local em mundo (para raycast e gibs). */
 export function localToWorldPose(z, local, out) {
   const fx = Math.sin(z.yaw), fz = Math.cos(z.yaw);
   for (let i = 0; i < NJ; i++) {
@@ -331,25 +360,45 @@ export function localToWorldPose(z, local, out) {
   return out;
 }
 
+/**
+ * renderFigure: respeita cortes parciais.
+ * gone[limbId] pode ser:
+ *   true                          → limb totalmente removido
+ *   { cutT: number }              → limb encurtado: desenha de jointA até lerp(a,b,cutT)
+ */
 export function renderFigure(ps, limbs, neck, gone) {
   for (let i = 0; i < LIMBS.length; i++) {
     const l = LIMBS[i];
-    if (gone[l[0]]) {
+    const state = gone[l[0]];
+
+    if (state === true) {
       if (limbs[i].visible) limbs[i].visible = false;
       continue;
     }
+
+    if (state && typeof state === 'object' && state.cutT !== undefined) {
+      // Limb parcialmente cortado — desenha só o pedaço antes do corte
+      const a = ps[l[1]];
+      const b = ps[l[2]];
+      const cut = _tmp.copy(a).lerp(b, state.cutT).clone();
+      if (!limbs[i].visible) limbs[i].visible = true;
+      placeLimb(limbs[i], a, cut, l[3], l[1] === l[2], LIMB_SQUASH[i]);
+      continue;
+    }
+
     if (!limbs[i].visible) limbs[i].visible = true;
     placeLimb(limbs[i], ps[l[1]], ps[l[2]], l[3], l[1] === l[2], LIMB_SQUASH[i]);
   }
+
   if (neck) {
-    const visible = !gone.Head;
+    const visible = !gone.Head || (typeof gone.Head === 'object' && gone.Head.cutT > 0.5);
     if (neck.visible !== visible) neck.visible = visible;
     if (visible) placeLimb(neck, ps[0], ps[1], 0.055, false);
   }
 }
 
 // ════════════════════════════════════════════════════════════
-// VERLET RAGDOLL v1.2
+// VERLET RAGDOLL v2.0
 // ════════════════════════════════════════════════════════════
 export class VerletRagdoll {
   constructor(zombie, hitDir, scene, world) {
@@ -363,6 +412,7 @@ export class VerletRagdoll {
     this._stumps = [];
     this._neckClone = null;
 
+    // Pose em WORLD coords
     this.P = computePose(zombie, null, true).map(v => v.clone());
 
     const vel = hitDir.clone().setY(0);
@@ -380,20 +430,27 @@ export class VerletRagdoll {
 
     this.K = LINKS.map(([i, j]) => [i, j, this.P[i].distanceTo(this.P[j])]);
 
+    // Marca joints mortos (limbs totalmente removidos)
     this.dead = new Set();
-    for (const l of LIMBS) if (zombie.gone[l[0]]) this.dead.add(l[2]);
+    for (const l of LIMBS) {
+      if (zombie.gone[l[0]] === true) this.dead.add(l[2]);
+    }
 
     if (zombie.g && zombie.g.parent) zombie.g.parent.remove(zombie.g);
 
-    // Clona cada limb (geometria compartilhada, material próprio) + filhos (rosto)
+    // Clona limbs sobreviventes (respeitando cuts parciais)
     for (let i = 0; i < LIMBS.length; i++) {
       const l = LIMBS[i];
-      if (zombie.gone[l[0]]) continue;
+      const state = zombie.gone[l[0]];
+      if (state === true) continue;
+
       const old = zombie.limbs[i];
       const matClone = old.material.clone();
       const clone = new THREE.Mesh(old.geometry, matClone);
       clone.castShadow = true;
       this._clonedMats.push(matClone);
+
+      // Clona filhos (rosto)
       for (const c of old.children) {
         const cm = c.material.clone();
         this._clonedMats.push(cm);
@@ -402,14 +459,17 @@ export class VerletRagdoll {
         cc.scale.copy(c.scale);
         clone.add(cc);
       }
+
       scene.add(clone);
       this._limbs.push({
         mesh: clone, idxA: l[1], idxB: l[2], radius: l[3],
         isSame: l[1] === l[2], squash: LIMB_SQUASH[i],
+        cutT: (state && typeof state === 'object' && state.cutT !== undefined)
+              ? state.cutT : 1,
       });
     }
 
-    if (!zombie.gone.Head && zombie.neck) {
+    if (zombie.neck && zombie.gone.Head !== true) {
       const neckMat = zombie.neck.material.clone();
       this._neckClone = new THREE.Mesh(zombie.neck.geometry, neckMat);
       this._neckClone.castShadow = true;
@@ -417,27 +477,48 @@ export class VerletRagdoll {
       this._clonedMats.push(neckMat);
     }
 
+    // Stumps — posicionados no ponto EXATO do corte (se houver cutT)
     const stumpMat = new THREE.MeshLambertMaterial({ color: 0x8b1a1a });
     this._clonedMats.push(stumpMat);
     for (const g of zombie.gore) {
+      const cfg = GROUP_CFG[g];
+      if (!cfg) continue;
+      const startLimb = LIMBS[LIMB_IDX[cfg.startLimb]];
+      if (!startLimb) continue;
+
+      const cutInfo = zombie.gone[cfg.startLimb];
+      const cutT = (cutInfo && typeof cutInfo === 'object' && cutInfo.cutT !== undefined)
+                   ? cutInfo.cutT : 0;
+      const cutPos = this.P[startLimb[1]].clone().lerp(this.P[startLimb[2]], cutT);
+
       const s = new THREE.Mesh(SHARED_STUMP_GEO, stumpMat);
-      s.position.copy(this.P[STUMP[g]]);
+      s.position.copy(cutPos);
       scene.add(s);
-      this._stumps.push({ mesh: s, jointIdx: STUMP[g] });
+      this._stumps.push({ mesh: s, jointA: startLimb[1], jointB: startLimb[2], cutT });
     }
 
     this.fnt = [];
     for (const g of zombie.gore) this.fnt.push({ pt: STUMP[g], t: 1.6 });
 
-    this._render(); // evita 1 frame com escala unitária
+    this._render();
   }
 
   _render() {
     for (const l of this._limbs) {
-      placeLimb(l.mesh, this.P[l.idxA], this.P[l.idxB], l.radius, l.isSame, l.squash);
+      const a = this.P[l.idxA];
+      const b = this.P[l.idxB];
+      if (l.cutT < 1) {
+        const cut = _tmp.copy(a).lerp(b, l.cutT).clone();
+        placeLimb(l.mesh, a, cut, l.radius, l.isSame, l.squash);
+      } else {
+        placeLimb(l.mesh, a, b, l.radius, l.isSame, l.squash);
+      }
     }
     if (this._neckClone) placeLimb(this._neckClone, this.P[0], this.P[1], 0.055, false);
-    for (const s of this._stumps) s.mesh.position.copy(this.P[s.jointIdx]);
+    for (const s of this._stumps) {
+      const cut = _tmp.copy(this.P[s.jointA]).lerp(this.P[s.jointB], s.cutT).clone();
+      s.mesh.position.copy(cut);
+    }
   }
 
   update(dt, bloodEmitter) {
@@ -449,7 +530,6 @@ export class VerletRagdoll {
       const step = dt / sub;
       for (let s = 0; s < sub; s++) this._substep(step);
 
-      // Dorme quando para (economiza colisão com paredes)
       let m = 0;
       for (let i = 0; i < NJ; i++) {
         const p = this.P[i], o = this.O[i];
@@ -535,7 +615,7 @@ export class VerletRagdoll {
 }
 
 // ════════════════════════════════════════════════════════════
-// LIMB GIB (voador)
+// LIMB GIB
 // ════════════════════════════════════════════════════════════
 export class LimbGib {
   constructor(mesh, initialPos, hitDir, length) {
@@ -571,14 +651,19 @@ export class LimbGib {
   }
   dispose(scene) {
     scene.remove(this.mesh);
-    // geometria e material são compartilhados: não dar dispose
   }
 }
 
 // ════════════════════════════════════════════════════════════
-// tryDismember — retorna boolean, escreve o grupo em out.group
+// tryDismember — retorna boolean + escreve em out
 // ════════════════════════════════════════════════════════════
-export function tryDismember(zombie, limbId, isExplosion, out) {
+/**
+ * out = {
+ *   group: 'BicepsL' | 'ForearmL' | 'Head' | 'LegL' | ...
+ *   cutT:  number (0..1) — posição do corte ao longo do PRIMEIRO limb do grupo
+ * }
+ */
+export function tryDismember(zombie, limbId, isExplosion, out, tAlongLimb) {
   if (zombie.state === 'Dying') return false;
   const ratio = zombie.top / zombie.max;
   let shouldCut = false;
@@ -591,8 +676,30 @@ export function tryDismember(zombie, limbId, isExplosion, out) {
   }
 
   if (!shouldCut) return false;
+
   const group = L2G[limbId];
   if (!group) return false;
-  if (out) out.group = group;
+
+  const cfg = GROUP_CFG[group];
+  if (!cfg) return false;
+
+  // Se o limb ferido é o PRIMEIRO da cadeia (ex: LeftBiceps em BicepsL),
+  // o corte é precisamente onde o impacto bateu.
+  // Se for um limb mais abaixo (ex: LeftForearm em BicepsL), o corte
+  // vai pra base do limb atingido (startLimb = LeftForearm).
+  let cutT;
+  if (limbId === cfg.startLimb) {
+    cutT = (tAlongLimb !== undefined && tAlongLimb !== null)
+           ? Math.max(0.05, Math.min(0.95, tAlongLimb))
+           : 0.4 + Math.random() * 0.3;
+  } else {
+    cutT = 0.05;   // corte na base do limb atingido
+  }
+
+  if (out) {
+    out.group = group;
+    out.cutT = cutT;
+    out.startLimb = cfg.startLimb;
+  }
   return true;
 }
